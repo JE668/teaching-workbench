@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { Student, GRADES, SUBJECTS, MASTERY_LEVELS } from '../types/index';
 
 export default function FollowUp() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  
   // 学生列表
   const [students, setStudents] = useState<Student[]>([]);
 
@@ -38,6 +42,24 @@ export default function FollowUp() {
   useEffect(() => {
     loadStudents();
   }, []);
+
+  useEffect(() => {
+    // 从URL参数预选择学生
+    const preSelectId = searchParams.get('studentId');
+    if (preSelectId && students.length > 0) {
+      const studentId = parseInt(preSelectId);
+      const student = students.find((s) => s.id === studentId);
+      if (student) {
+        setFormData((prev) => ({
+          ...prev,
+          studentId: student.id,
+          studentName: student.name,
+          grade: student.grade,
+          subject: student.subject,
+        }));
+      }
+    }
+  }, [searchParams, students]);
 
   useEffect(() => {
     if (formData.studentId) {
@@ -179,7 +201,14 @@ export default function FollowUp() {
       });
 
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      // 如果关联了学生，保存后跳转到学生档案
+      if (formData.studentId) {
+        setTimeout(() => {
+          navigate('/students/' + formData.studentId);
+        }, 1500);
+      } else {
+        setTimeout(() => setSaved(false), 3000);
+      }
     } catch (err: any) {
       alert('保存失败: ' + (err.message || '未知错误'));
     } finally {

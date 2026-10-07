@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Students from './pages/Students';
 import FollowUp from './pages/FollowUp';
 import FollowUpList from './pages/FollowUpList';
+import StudentProfile from './pages/StudentProfile';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -25,6 +26,7 @@ function AppRoutes() {
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route index element={<Dashboard />} />
         <Route path="students" element={<Students />} />
+        <Route path="students/:id" element={<StudentProfile />} />
         <Route path="followups" element={<FollowUp />} />
         <Route path="followups/history" element={<FollowUpList />} />
       </Route>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Student, GRADES, SUBJECTS } from '../types/index';
 
@@ -160,7 +161,11 @@ export default function Students() {
               <tbody className="divide-y divide-gray-100">
                 {students.map((student) => (
                   <tr key={student.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm font-medium text-gray-800">{student.name}</td>
+                    <td className="px-6 py-4 text-sm font-medium text-gray-800">
+                      <Link to={'/students/' + student.id} className="text-indigo-600 hover:text-indigo-800 hover:underline">
+                        {student.name}
+                      </Link>
+                    </td>
                     <td className="px-6 py-4 text-sm text-gray-600">{student.grade}</td>
                     <td className="px-6 py-4">
                       <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">{student.subject}</span>
@@ -174,6 +179,12 @@ export default function Students() {
                       >
                         编辑
                       </button>
+                      <Link
+                        to={'/students/' + student.id}
+                        className="text-green-600 hover:text-green-800 text-sm mr-3"
+                      >
+                        档案
+                      </Link>
                       <button
                         onClick={() => handleDelete(student.id)}
                         className="text-red-500 hover:text-red-700 text-sm"

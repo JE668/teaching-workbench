@@ -92,6 +92,42 @@ router.delete('/:id', (req: any, res) => {
   }
 });
 
+// 获取学生档案（包含所有回访记录）
+router.get('/:id/profile', (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const studentId = parseInt(req.params.id);
+    
+    // 获取学生信息
+    const student = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId) as Student;
+    if (!student) {
+      return res.status(404).json({ error: '学生不存在' });
+    }
+    
+    // 获取所有回访记录
+    const followups = db.prepare(
+      'SELECT * FROM followups WHERE user_id = ? AND student_id = ? ORDER BY created_at DESC'
+    ).all(userId, studentId) as any[];
+    
+    // 解析 images JSON 字符串为数组
+    const followupsParsed = followups.map(f => ({
+      ...f,
+      images: JSON.parse(f.images || '[]'),
+    }));
+    
+    // 统计信息
+    const stats = {
+      totalFollowups: followupsParsed.length,
+      subjects: [...new Set(followupsParsed.map(f => f.subject))],
+      grades: [...new Set(followupsParsed.map(f => f.grade))],
+    };
+    
+    res.json({ student, followups: followupsParsed, stats });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取学生档案失败', message: error.message });
+  }
+});
+
 // 搜索学生
 router.get('/search', (req: any, res) => {
   try {

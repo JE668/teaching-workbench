@@ -63,7 +63,6 @@ teaching-workbench/
 ├── docker-compose.yml             # Docker 编排
 ├── deploy.sh                      # NAS 一键部署脚本
 ├── backup.sh                      # 数据备份脚本
-├── Caddyfile.example              # Caddy 反向代理配置
 ├── .env.production.example        # 生产环境变量模板
 └── README.md
 ```
@@ -131,14 +130,19 @@ docker compose pull
 docker compose up -d
 ```
 
-#### 4. 配置 Caddy 反向代理
+#### 4. Lucky 反向代理配置
 
-```bash
-# 复制配置
-cp Caddyfile.example /etc/caddy/Caddyfile
-# 编辑域名后重启 Caddy
-caddy reload
-```
+在 NAS 的 Lucky 中创建反向代理规则：
+
+| 配置项 | 值 |
+|--------|-----|
+| 名称 | 教学工作台 |
+| 域名 | your-domain.com |
+| 上游地址 | teaching-workbench-frontend:80 |
+| 证书 | 自动申请 Let's Encrypt |
+| 传输 | HTTPS |
+
+> Lucky 负责 SSL 证书申请和续期，前端 nginx 接收 80 端口请求后自动代理 /api 到后端。
 
 #### 5. 日常更新
 
@@ -178,7 +182,7 @@ crontab -e
 ### 生产架构
 
 ```
-Internet → 域名 → Caddy (自动SSL)
+Internet → 域名 → Lucky (反代+SSL)
                     ↓
               frontend:80 (nginx)
                     ↓
