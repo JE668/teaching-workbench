@@ -1,10 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Plus,
+  MessageSquareText,
+  ImageIcon,
+  FileText,
+  Clock,
+  ChevronDown,
+  StickyNote,
+  Phone,
+  FolderOpen,
+} from 'lucide-react';
 import { api } from '../api/client';
 import { MASTERY_LEVELS } from '../types/index';
+import { Card, CardHeader } from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
+import EmptyState from '../components/ui/EmptyState';
+import { PageSkeleton } from '../components/ui/Skeleton';
+import { formatDate, relativeTime, cn } from '../lib/utils';
 
 interface FollowUpRecord {
   id: number;
+  studentId: number | null;
   studentName: string;
   grade: string;
   subject: string;
@@ -17,18 +36,16 @@ interface FollowUpRecord {
   createdAt: string;
 }
 
-interface StudentInfo {
-  id: number;
-  name: string;
-  grade: string;
-  subject: string;
-  phone?: string;
-  notes?: string;
-  createdAt: string;
-}
-
 interface ProfileData {
-  student: StudentInfo;
+  student: {
+    id: number;
+    name: string;
+    grade: string;
+    subject: string;
+    phone?: string;
+    notes?: string;
+    createdAt: string;
+  };
   followups: FollowUpRecord[];
   stats: {
     totalFollowups: number;
@@ -40,244 +57,229 @@ interface ProfileData {
   };
 }
 
+const masteryTone = (v: string) =>
+  v === 'excellent' ? 'success' : v === 'good' ? 'info' : v === 'average' ? 'warning' : 'danger';
+const masteryLabel = (v: string) => MASTERY_LEVELS.find((m) => m.value === v)?.label || v;
+
 export default function StudentProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [data, setData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   useEffect(() => {
-    if (id) {
-      loadProfile();
-    }
+    if (!id) return;
+    api
+      .get('/students/' + id + '/profile')
+      .then(setData)
+      .catch((e) => console.error(e))
+      .finally(() => setLoading(false));
   }, [id]);
 
-  const loadProfile = async () => {
-    try {
-      const res = await api.get('/students/' + id + '/profile');
-      setData(res);
-    } catch (err) {
-      console.error('加载档案失败', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleExpand = (followupId: number) => {
-    setExpandedId(expandedId === followupId ? null : followupId);
-  };
-
-  const getMasteryLabel = (value: string) => {
-    return MASTERY_LEVELS.find((m) => m.value === value)?.label || value;
-  };
-
-  const getMasteryColor = (value: string) => {
-    switch (value) {
-      case 'excellent': return 'bg-green-50 text-green-600 border-green-200';
-      case 'good': return 'bg-blue-50 text-blue-600 border-blue-200';
-      case 'average': return 'bg-yellow-50 text-yellow-600 border-yellow-200';
-      case 'needs_improvement': return 'bg-red-50 text-red-600 border-red-200';
-      default: return 'bg-gray-100 text-gray-600';
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin text-2xl text-indigo-500">加载中...</div>
-      </div>
-    );
-  }
+  if (loading) return <PageSkeleton />;
 
   if (!data) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500">学生档案不存在</p>
-        <Link to="/students" className="text-indigo-600 hover:underline mt-2 inline-block">
-          返回学生列表
-        </Link>
-      </div>
+      <Card>
+        <EmptyState
+          icon={<FolderOpen className="h-7 w-7" />}
+          title="学生档案不存在"
+          description="该学生可能已被删除"
+          action={
+            <Link to="/students">
+              <Button variant="outline">返回学生列表</Button>
+            </Link>
+          }
+        />
+      </Card>
     );
   }
 
   const { student, followups, stats } = data;
 
+  const statCards = [
+    { label: '回访次数', value: stats.totalFollowups, icon: MessageSquareText, color: 'text-brand-600 bg-brand-50' },
+    { label: '归档图片', value: stats.totalImages, icon: ImageIcon, color: 'text-violet-600 bg-violet-50' },
+    { label: '累计字数', value: stats.totalWords, icon: FileText, color: 'text-emerald-600 bg-emerald-50' },
+  ];
+
   return (
-    <div className="fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6 animate-fade-up">
+      {/* 头部 */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <button
             onClick={() => navigate('/students')}
-            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm hover:bg-gray-50 transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-500 shadow-soft ring-1 ring-slate-100 transition-colors hover:text-slate-800"
           >
-            <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+            <ArrowLeft className="h-5 w-5" />
           </button>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">{student.name} 的档案</h1>
-            <p className="text-gray-500 text-sm">
-              {student.grade} · {student.subject}
-              {student.phone && ' · ' + student.phone}
-              {stats.lastFollowUpAt && ' · 最近回访 ' + stats.lastFollowUpAt.split(' ')[0]}
-            </p>
+          <div className="flex items-center gap-3.5">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-violet-600 text-xl font-bold text-white shadow-lift">
+              {student.name?.charAt(0)}
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-800">{student.name}</h1>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+                <span>{student.grade}</span>
+                <span className="text-slate-300">·</span>
+                <span>{student.subject}</span>
+                {student.phone && (
+                  <>
+                    <span className="text-slate-300">·</span>
+                    <span className="flex items-center gap-1">
+                      <Phone className="h-3 w-3" />
+                      {student.phone}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-        <Link
-          to={'/followups?studentId=' + student.id}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 py-2.5 rounded-lg transition-colors shadow-sm flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          新建回访
+        <Link to={'/followups?studentId=' + student.id}>
+          <Button variant="gradient" icon={<Plus className="h-4 w-4" />}>
+            新建回访
+          </Button>
         </Link>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-xl p-5 shadow-sm text-center">
-          <p className="text-3xl font-bold text-indigo-600">{stats.totalFollowups}</p>
-          <p className="text-sm text-gray-500 mt-1">回访次数</p>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm text-center">
-          <p className="text-3xl font-bold text-purple-600">{stats.totalImages}</p>
-          <p className="text-sm text-gray-500 mt-1">归档图片</p>
-        </div>
-        <div className="bg-white rounded-xl p-5 shadow-sm text-center">
-          <p className="text-3xl font-bold text-green-600">{stats.totalWords}</p>
-          <p className="text-sm text-gray-500 mt-1">累计字数</p>
-        </div>
+      {/* 统计 */}
+      <div className="grid grid-cols-3 gap-4">
+        {statCards.map((s) => (
+          <Card key={s.label} className="flex items-center gap-4 p-5">
+            <div className={cn('flex h-11 w-11 items-center justify-center rounded-xl', s.color)}>
+              <s.icon className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold tracking-tight text-slate-800">{s.value}</p>
+              <p className="text-xs text-slate-400">{s.label}</p>
+            </div>
+          </Card>
+        ))}
       </div>
 
-      {/* Student Notes */}
+      {/* 备注 */}
       {student.notes && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
-          <p className="text-xs font-medium text-amber-700 mb-1">学生备注</p>
-          <p className="text-sm text-amber-800">{student.notes}</p>
+        <div className="flex items-start gap-3 rounded-2xl bg-amber-50 px-5 py-4 ring-1 ring-amber-100">
+          <StickyNote className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <div>
+            <p className="text-xs font-semibold text-amber-700">学生备注</p>
+            <p className="mt-0.5 text-sm leading-relaxed text-amber-800">{student.notes}</p>
+          </div>
         </div>
       )}
 
-      {/* Follow-up Timeline */}
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-800">回访记录时间线</h2>
-          <p className="text-xs text-gray-400 mt-1">每次回访的图片与AI内容自动归档</p>
-        </div>
+      {/* 档案时间线 */}
+      <Card>
+        <CardHeader
+          title="回访档案"
+          description={
+            stats.lastFollowUpAt
+              ? '最近回访于 ' + relativeTime(stats.lastFollowUpAt) + ' · 图片与 AI 内容自动归档'
+              : '每次回访的图片与 AI 内容自动归档到此处'
+          }
+          icon={<Clock className="h-4 w-4" />}
+          action={followups.length > 0 ? <Badge tone="brand">{followups.length} 条记录</Badge> : undefined}
+        />
 
         {followups.length === 0 ? (
-          <div className="p-12 text-center text-gray-400">
-            <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p>暂无回访记录</p>
-            <Link to={'/followups?studentId=' + student.id} className="mt-2 inline-block text-indigo-600 hover:underline">
-              创建第一条回访
-            </Link>
-          </div>
+          <EmptyState
+            icon={<MessageSquareText className="h-7 w-7" />}
+            title="暂无回访记录"
+            description="创建第一条回访，记录学生的学习成长"
+            action={
+              <Link to={'/followups?studentId=' + student.id}>
+                <Button variant="gradient" icon={<Plus className="h-4 w-4" />}>
+                  创建回访
+                </Button>
+              </Link>
+            }
+          />
         ) : (
-          <div className="relative">
-            {/* Timeline line */}
-            <div className="absolute left-[24px] top-0 bottom-0 w-0.5 bg-gray-200"></div>
-            
-            {followups.map((followup, index) => {
-              const isExpanded = expandedId === followup.id;
-              return (
-                <div key={followup.id} className="relative pl-14 py-5 border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                  {/* Timeline dot */}
-                  <div className="absolute left-[18px] top-6 w-3 h-3 bg-indigo-500 rounded-full ring-4 ring-white z-10"></div>
-                  
-                  <div
-                    className="cursor-pointer"
-                    onClick={() => toggleExpand(followup.id)}
-                  >
-                    {/* Header */}
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-gray-800 text-sm">
-                          {followup.topic}
-                        </span>
-                        <span className={'px-2 py-0.5 rounded text-xs border ' + getMasteryColor(followup.mastery)}>
-                          {getMasteryLabel(followup.mastery)}
-                        </span>
-                        <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">
-                          {followup.subject}
-                        </span>
-                      </div>
-                      <span className="text-xs text-gray-400 whitespace-nowrap">
-                        {followup.createdAt?.split(' ')[0]}
-                      </span>
-                    </div>
+          <div className="p-5">
+            <div className="relative space-y-4 pl-6">
+              {/* 竖线 */}
+              <div className="absolute bottom-3 left-[7px] top-3 w-px bg-gradient-to-b from-brand-200 via-slate-200 to-transparent" />
 
-                    {/* Performance */}
-                    <p className="text-sm text-gray-600 mb-2">
-                      <span className="text-gray-400">课堂表现：</span>{followup.performance}
-                    </p>
+              {followups.map((f, idx) => {
+                const open = expanded === f.id;
+                return (
+                  <div key={f.id} className="relative">
+                    {/* 节点 */}
+                    <span
+                      className={cn(
+                        'absolute -left-6 top-5 flex h-3.5 w-3.5 items-center justify-center rounded-full ring-4 ring-white',
+                        idx === 0 ? 'bg-gradient-to-br from-brand-500 to-violet-600' : 'bg-slate-300'
+                      )}
+                    />
 
-                    {/* Images preview */}
-                    {followup.images && followup.images.length > 0 && (
-                      <div className="flex gap-2 mb-3">
-                        {followup.images.slice(0, 4).map((img, i) => (
-                          <img
-                            key={i}
-                            src={'/uploads/' + img}
-                            alt={'图片' + (i + 1)}
-                            className="w-16 h-16 object-cover rounded-lg border border-gray-200 hover:ring-2 hover:ring-indigo-400 transition-all"
-                          />
-                        ))}
-                        {followup.images.length > 4 && (
-                          <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-xs text-gray-500">
-                            +{followup.images.length - 4}
+                    <Card className="overflow-hidden transition-shadow hover:shadow-lift">
+                      <div className="p-5">
+                        {/* 标题行 */}
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-sm font-semibold text-slate-800">{f.topic}</h3>
+                            <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
+                            <Badge tone="brand">{f.subject}</Badge>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-slate-400">
+                            <span>{formatDate(f.createdAt)}</span>
+                            <span className="text-slate-300">·</span>
+                            <span>{f.wordCount} 字</span>
+                          </div>
+                        </div>
+
+                        {/* 课堂表现 */}
+                        <p className="mt-3 text-sm leading-relaxed text-slate-500">
+                          <span className="font-medium text-slate-400">课堂表现：</span>
+                          {f.performance}
+                        </p>
+
+                        {/* 图片 */}
+                        {f.images.length > 0 && (
+                          <div className="mt-3.5 flex flex-wrap gap-2">
+                            {f.images.map((img, i) => (
+                              <img
+                                key={i}
+                                src={'/uploads/' + img}
+                                alt={'图片 ' + (i + 1)}
+                                className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200 transition-all hover:scale-[1.04] hover:ring-brand-300"
+                              />
+                            ))}
                           </div>
                         )}
+
+                        {/* AI 内容 */}
+                        <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3.5 ring-1 ring-slate-100">
+                          <p
+                            className={cn(
+                              'whitespace-pre-wrap text-sm leading-[1.9] text-slate-700',
+                              !open && 'line-clamp-3'
+                            )}
+                          >
+                            {f.content}
+                          </p>
+                          <button
+                            onClick={() => setExpanded(open ? null : f.id)}
+                            className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
+                          >
+                            <ChevronDown
+                              className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
+                            />
+                            {open ? '收起' : '展开全文'}
+                          </button>
+                        </div>
                       </div>
-                    )}
-
-                    {/* AI Content preview */}
-                    <div className="text-sm text-gray-700">
-                      <p className="mb-1">
-                        <span className="text-xs font-medium text-gray-400">AI内容：</span>
-                        {isExpanded
-                          ? <span className="whitespace-pre-wrap leading-relaxed">{followup.content}</span>
-                          : <span className="text-gray-500">{followup.content?.substring(0, 100)}{followup.content?.length > 100 ? '...' : ''}</span>
-                        }
-                      </p>
-                    </div>
-
-                    {/* Expand toggle */}
-                    <button
-                      className="mt-2 text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                    >
-                      {isExpanded ? (
-                        <>
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                          </svg>
-                          收起
-                        </>
-                      ) : (
-                        <>
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 15l-7-7-7 7" />
-                          </svg>
-                          展开全文
-                        </>
-                      )}
-                    </button>
-
-                    {/* Meta */}
-                    <p className="text-xs text-gray-400 mt-2">
-                      {followup.wordCount}字 · {followup.images?.length || 0}张图片 · {index === 0 ? '最近' : (index + 1) + '次回访'}
-                    </p>
+                    </Card>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

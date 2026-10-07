@@ -20,8 +20,24 @@
 - 可编辑修改、历史记录查询
 
 ### 4. 工作台仪表盘
-- 学生总数、回访总数、覆盖学科统计
+- 学生总数、回访总数、覆盖学科、归档图片统计
 - 近期回访动态、学生概览
+
+### 5. 界面设计
+- shadcn/ui 风格的设计令牌体系（颜色 / 阴影 / 圆角 / 动效）
+- lucide-react 图标 + framer-motion 微动效
+- 完整组件原语：Button / Card / Badge / Modal / Toast / Skeleton / EmptyState
+- 骨架屏、空状态、轻量通知，替换原生 alert
+
+## 界面预览
+
+| 登录页 | 工作台 |
+|:---:|:---:|
+| ![登录页](docs/screenshots/login.png) | ![工作台](docs/screenshots/dashboard.png) |
+
+| 课后回访 | 学生档案 |
+|:---:|:---:|
+| ![课后回访](docs/screenshots/followup.png) | ![学生档案](docs/screenshots/student-profile.png) |
 
 ## 技术栈
 
@@ -31,7 +47,8 @@
 | 后端 | Node.js + Express + TypeScript |
 | 数据库 | SQLite (better-sqlite3) |
 | AI | SenseNova sensenova-6.8-flash-lite (OpenAI兼容) |
-| 部署 | Docker + Docker Compose + Caddy |
+| 部署 | Docker + Docker Compose + Lucky (反代/证书) |
+| UI | TailwindCSS + lucide-react + framer-motion |
 | CI/CD | GitHub Actions + GHCR |
 
 ## 项目结构

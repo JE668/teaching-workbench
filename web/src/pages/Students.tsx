@@ -1,196 +1,261 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  Plus,
+  Search,
+  Users,
+  Pencil,
+  Trash2,
+  FolderOpen,
+  Phone,
+  StickyNote,
+  UserPlus,
+} from 'lucide-react';
 import { api } from '../api/client';
 import { Student, GRADES, SUBJECTS } from '../types/index';
+import { Card, CardHeader } from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
+import Modal from '../components/ui/Modal';
+import ConfirmDialog from '../components/ui/ConfirmDialog';
+import EmptyState from '../components/ui/EmptyState';
+import { Input, Select, Textarea } from '../components/ui/Field';
+import { ListSkeleton } from '../components/ui/Skeleton';
+import { useToast } from '../components/ui/Toast';
+import { formatDate, cn } from '../lib/utils';
+
+const emptyForm = { name: '', grade: '小学一年级', subject: '数学', phone: '', notes: '' };
 
 export default function Students() {
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-  const [searchKeyword, setSearchKeyword] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Student | null>(null);
+  const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-
-  const [formData, setFormData] = useState({
-    name: '',
-    grade: '小学一年级',
-    subject: '数学',
-    phone: '',
-    notes: '',
-  });
+  const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
-    loadStudents();
+    load();
   }, []);
 
+  // 搜索防抖
   useEffect(() => {
-    if (searchKeyword) {
-      searchStudents(searchKeyword);
-    } else {
-      loadStudents();
-    }
-  }, [searchKeyword]);
+    const t = setTimeout(() => {
+      if (keyword.trim()) search(keyword.trim());
+      else load();
+    }, 300);
+    return () => clearTimeout(t);
+  }, [keyword]);
 
-  const loadStudents = async () => {
+  const load = async () => {
     try {
       const res = await api.get('/students');
       setStudents(res.students || []);
-    } catch (err) {
-      console.error('加载学生失败', err);
+    } catch (err: any) {
+      toast.error('加载学生失败：' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const searchStudents = async (keyword: string) => {
+  const search = async (kw: string) => {
     try {
-      const res = await api.get('/students/search?keyword=' + encodeURIComponent(keyword));
+      const res = await api.get('/students/search?keyword=' + encodeURIComponent(kw));
       setStudents(res.students || []);
-    } catch (err) {
-      console.error('搜索学生失败', err);
+    } catch (err: any) {
+      toast.error('搜索失败：' + err.message);
     }
   };
 
-  const openCreateModal = () => {
-    setEditingStudent(null);
-    setFormData({ name: '', grade: '小学一年级', subject: '数学', phone: '', notes: '' });
-    setShowModal(true);
+  const openCreate = () => {
+    setEditing(null);
+    setForm(emptyForm);
+    setModalOpen(true);
   };
 
-  const openEditModal = (student: Student) => {
-    setEditingStudent(student);
-    setFormData({
-      name: student.name,
-      grade: student.grade,
-      subject: student.subject,
-      phone: student.phone || '',
-      notes: student.notes || '',
+  const openEdit = (s: Student) => {
+    setEditing(s);
+    setForm({
+      name: s.name,
+      grade: s.grade,
+      subject: s.subject,
+      phone: s.phone || '',
+      notes: s.notes || '',
     });
-    setShowModal(true);
+    setModalOpen(true);
   };
 
-  const handleSave = async () => {
-    if (!formData.name || !formData.grade || !formData.subject) {
-      alert('请填写必填项');
+  const save = async () => {
+    if (!form.name.trim()) {
+      toast.error('请填写学生姓名');
       return;
     }
-
     setSaving(true);
     try {
-      if (editingStudent) {
-        const res = await api.put('/students/' + editingStudent.id, formData);
-        setStudents((prev) => prev.map((s) => s.id === res.student.id ? res.student : s));
+      if (editing) {
+        const res = await api.put('/students/' + editing.id, form);
+        setStudents((prev) => prev.map((s) => (s.id === res.student.id ? res.student : s)));
+        toast.success('学生信息已更新');
       } else {
-        const res = await api.post('/students', formData);
+        const res = await api.post('/students', form);
         setStudents((prev) => [res.student, ...prev]);
+        toast.success('学生添加成功');
       }
-      setShowModal(false);
+      setModalOpen(false);
     } catch (err: any) {
-      alert(err.message || '保存失败');
+      toast.error('保存失败：' + err.message);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定要删除该学生吗？')) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await api.delete('/students/' + id);
-      setStudents((prev) => prev.filter((s) => s.id !== id));
+      await api.delete('/students/' + deleteTarget.id);
+      setStudents((prev) => prev.filter((s) => s.id !== deleteTarget.id));
+      toast.success('已删除学生「' + deleteTarget.name + '」');
+      setDeleteTarget(null);
     } catch (err: any) {
-      alert(err.message || '删除失败');
+      toast.error('删除失败：' + err.message);
+    } finally {
+      setDeleting(false);
     }
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-64"><div className="animate-spin text-2xl text-indigo-500">加载中...</div></div>;
-  }
+  const gradeOptions = GRADES.map((g) => ({ value: g, label: g }));
+  const subjectOptions = SUBJECTS.map((s) => ({ value: s, label: s }));
 
   return (
-    <div className="fade-in space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 animate-fade-up">
+      {/* 头部 */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">学生管理</h1>
-          <p className="text-gray-500 text-sm mt-1">共 {students.length} 名学生</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800">学生管理</h1>
+          <p className="mt-1 text-sm text-slate-400">共 {students.length} 名学生</p>
         </div>
-        <button
-          onClick={openCreateModal}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 py-2.5 rounded-lg transition-colors shadow-sm flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
+        <Button variant="gradient" icon={<UserPlus className="h-4 w-4" />} onClick={openCreate}>
           添加学生
-        </button>
+        </Button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm">
-        <div className="p-4 border-b border-gray-100">
-          <input
-            type="text"
-            placeholder="搜索学生姓名、学科、年级..."
-            value={searchKeyword}
-            onChange={(e) => setSearchKeyword(e.target.value)}
-            className="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          />
-        </div>
+      <Card>
+        <CardHeader
+          title="学生列表"
+          description="点击姓名查看完整档案与回访记录"
+          icon={<Users className="h-4 w-4" />}
+          action={
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                placeholder="搜索姓名 / 学科 / 年级"
+                className="h-9 w-60 rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none transition-all placeholder:text-slate-400 hover:border-slate-300 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
+              />
+            </div>
+          }
+        />
 
-        {students.length === 0 ? (
-          <div className="p-12 text-center text-gray-400">
-            <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1z" />
-            </svg>
-            <p>暂无学生数据</p>
-            <button onClick={openCreateModal} className="mt-2 text-indigo-600 hover:underline">
-              点击添加第一位学生
-            </button>
+        {loading ? (
+          <div className="p-5">
+            <ListSkeleton rows={5} />
           </div>
+        ) : students.length === 0 ? (
+          <EmptyState
+            icon={<Users className="h-7 w-7" />}
+            title={keyword ? '没有找到匹配的学生' : '还没有学生'}
+            description={keyword ? '试试其他关键词' : '添加第一位学生，开始记录学习成长'}
+            action={
+              !keyword && (
+                <Button variant="gradient" icon={<Plus className="h-4 w-4" />} onClick={openCreate}>
+                  添加学生
+                </Button>
+              )
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-500">姓名</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-500">年级</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-500">学科</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-500">联系电话</th>
-                  <th className="text-left px-6 py-3 text-sm font-medium text-gray-500">备注</th>
-                  <th className="text-right px-6 py-3 text-sm font-medium text-gray-500">操作</th>
+                <tr className="border-b border-slate-100 text-left">
+                  <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">学生</th>
+                  <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">学科</th>
+                  <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">联系方式</th>
+                  <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">备注</th>
+                  <th className="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-slate-400">建档</th>
+                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-400">操作</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {students.map((student) => (
-                  <tr key={student.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm font-medium text-gray-800">
-                      <Link to={'/students/' + student.id} className="text-indigo-600 hover:text-indigo-800 hover:underline">
-                        {student.name}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{student.grade}</td>
+              <tbody className="divide-y divide-slate-50">
+                {students.map((s) => (
+                  <tr key={s.id} className="group transition-colors hover:bg-slate-50/70">
                     <td className="px-6 py-4">
-                      <span className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">{student.subject}</span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{student.phone || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-gray-500 max-w-[200px] truncate">{student.notes || '-'}</td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => openEditModal(student)}
-                        className="text-indigo-600 hover:text-indigo-800 text-sm mr-3"
-                      >
-                        编辑
-                      </button>
-                      <Link
-                        to={'/students/' + student.id}
-                        className="text-green-600 hover:text-green-800 text-sm mr-3"
-                      >
-                        档案
+                      <Link to={'/students/' + s.id} className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-50 to-violet-50 text-sm font-semibold text-brand-600 ring-1 ring-brand-100">
+                          {s.name?.charAt(0)}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700 transition-colors group-hover:text-brand-600">
+                            {s.name}
+                          </p>
+                          <p className="text-[11px] text-slate-400">{s.grade}</p>
+                        </div>
                       </Link>
-                      <button
-                        onClick={() => handleDelete(student.id)}
-                        className="text-red-500 hover:text-red-700 text-sm"
-                      >
-                        删除
-                      </button>
+                    </td>
+                    <td className="px-6 py-4">
+                      <Badge tone="brand">{s.subject}</Badge>
+                    </td>
+                    <td className="px-6 py-4">
+                      {s.phone ? (
+                        <span className="flex items-center gap-1.5 text-sm text-slate-600">
+                          <Phone className="h-3.5 w-3.5 text-slate-300" />
+                          {s.phone}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="max-w-[200px] px-6 py-4">
+                      {s.notes ? (
+                        <span className="flex items-center gap-1.5 text-sm text-slate-500">
+                          <StickyNote className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                          <span className="truncate">{s.notes}</span>
+                        </span>
+                      ) : (
+                        <span className="text-sm text-slate-300">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-slate-400">{formatDate(s.createdAt)}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100">
+                        <Link
+                          to={'/students/' + s.id}
+                          title="查看档案"
+                          className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                        >
+                          <FolderOpen className="h-4 w-4" />
+                        </Link>
+                        <button
+                          onClick={() => openEdit(s)}
+                          title="编辑"
+                          className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(s)}
+                          title="删除"
+                          className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -198,99 +263,76 @@ export default function Students() {
             </table>
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl w-full max-w-lg mx-4 shadow-xl fade-in">
-            <div className="p-6 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-800">
-                {editingStudent ? '编辑学生' : '添加学生'}
-              </h2>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  姓名 <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="请输入学生姓名"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    年级 <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.grade}
-                    onChange={(e) => setFormData({ ...formData, grade: e.target.value })}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {GRADES.map((g) => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    学科 <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.subject}
-                    onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    {SUBJECTS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">联系电话</label>
-                <input
-                  type="text"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="请输入联系电话"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                <textarea
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  rows={3}
-                  placeholder="其他备注信息"
-                />
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-100 flex gap-3 justify-end">
-              <button
-                onClick={() => setShowModal(false)}
-                className="px-5 py-2.5 border border-gray-300 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors disabled:opacity-50"
-              >
-                {saving ? '保存中...' : '保存'}
-              </button>
-            </div>
+      {/* 添加 / 编辑 */}
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editing ? '编辑学生' : '添加学生'}
+        description={editing ? '修改学生基本信息' : '填写学生的基本信息'}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setModalOpen(false)} disabled={saving}>
+              取消
+            </Button>
+            <Button variant="primary" onClick={save} loading={saving}>
+              {editing ? '保存修改' : '添加'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="姓名"
+            required
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="请输入学生姓名"
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <Select
+              label="年级"
+              required
+              value={form.grade}
+              onChange={(e) => setForm({ ...form, grade: e.target.value })}
+              options={gradeOptions}
+            />
+            <Select
+              label="学科"
+              required
+              value={form.subject}
+              onChange={(e) => setForm({ ...form, subject: e.target.value })}
+              options={subjectOptions}
+            />
           </div>
+          <Input
+            label="联系电话"
+            value={form.phone}
+            onChange={(e) => setForm({ ...form, phone: e.target.value })}
+            placeholder="选填，便于家长沟通"
+          />
+          <Textarea
+            label="备注"
+            rows={3}
+            value={form.notes}
+            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            placeholder="学习特点、薄弱环节等"
+          />
         </div>
-      )}
+      </Modal>
+
+      {/* 删除确认 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        danger
+        title={'删除学生「' + (deleteTarget?.name || '') + '」？'}
+        description="删除后该学生信息将无法恢复，已归档的回访记录会保留。"
+        confirmText="删除"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

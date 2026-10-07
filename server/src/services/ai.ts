@@ -33,9 +33,18 @@ interface FollowUpGenerateParams {
  * 将本地图片文件转换为 Base64 Data URL
  */
 function imageToBase64DataUrl(imagePath: string): string {
+  const uploadRoot = path.resolve(env.UPLOAD_DIR);
   const fullPath = path.isAbsolute(imagePath)
     ? imagePath
-    : path.resolve(env.UPLOAD_DIR, imagePath);
+    : path.resolve(uploadRoot, imagePath);
+
+  // 防止路径穿越，且必须位于上传目录内
+  if (!fullPath.startsWith(uploadRoot + path.sep)) {
+    throw new Error('非法的图片路径');
+  }
+  if (!fs.existsSync(fullPath)) {
+    throw new Error('图片文件不存在');
+  }
 
   const ext = path.extname(fullPath).toLowerCase();
   const mimeTypes: Record<string, string> = {
