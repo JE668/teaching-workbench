@@ -3,7 +3,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { db } from '../config/database.js';
 import { env } from '../config/env.js';
-import { UserPublic } from '../types/index.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { mapUser } from '../utils/mappers.js';
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.post('/register', async (req, res) => {
     const result = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username, hashedPassword);
 
     const userId = result.lastInsertRowid;
-    const user = db.prepare('SELECT id, username, created_at FROM users WHERE id = ?').get(userId) as UserPublic;
+    const user = mapUser(db.prepare('SELECT id, username, created_at FROM users WHERE id = ?').get(userId));
 
     const token = jwt.sign({ userId }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN } as jwt.SignOptions);
 
@@ -61,11 +62,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
-    const publicUser: UserPublic = {
-      id: user.id,
-      username: user.username,
-      createdAt: user.created_at,
-    };
+    const publicUser = mapUser(user);
 
     const token = jwt.sign({ userId: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN } as jwt.SignOptions);
 
@@ -75,11 +72,11 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// 获取当前用户信息
-router.get('/me', (req: any, res) => {
+// 获取当前用户信息（需要登录）
+router.get('/me', authMiddleware, (req: any, res) => {
   try {
     const userId = req.userId;
-    const user = db.prepare('SELECT id, username, created_at FROM users WHERE id = ?').get(userId) as UserPublic;
+    const user = mapUser(db.prepare('SELECT id, username, created_at FROM users WHERE id = ?').get(userId));
     res.json({ user });
   } catch (error: any) {
     res.status(500).json({ error: '获取用户信息失败', message: error.message });

@@ -15,8 +15,8 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=7d
       - SENSENOVA_API_KEY=${SENSENOVA_API_KEY}
-      - SENSENOVA_BASE_URL=https://token.sensenova.cn/v1
-      - SENSENOVA_MODEL=sensenova-6.8-flash-lite
+      - SENSENOVA_BASE_URL=${SENSENOVA_BASE_URL:-https://token.sensenova.cn/v1}
+      - SENSENOVA_MODEL=${SENSENOVA_MODEL:-sensenova-6.8-flash-lite}
       - DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-admin}
       - DEFAULT_ADMIN_PASS=${DEFAULT_ADMIN_PASS:-123456}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}

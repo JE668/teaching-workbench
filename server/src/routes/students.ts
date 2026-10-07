@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
-import { Student, StudentCreate, StudentUpdate } from '../types/index.js';
+import { StudentCreate, StudentUpdate } from '../types/index.js';
+import { mapStudent, mapStudents, mapFollowUps } from '../utils/mappers.js';
 
 const router = Router();
 
@@ -8,10 +9,62 @@ const router = Router();
 router.get('/', (req: any, res) => {
   try {
     const userId = req.userId;
-    const students = db.prepare('SELECT * FROM students WHERE user_id = ? ORDER BY created_at DESC').all(userId) as Student[];
-    res.json({ students });
+    const rows = db.prepare('SELECT * FROM students WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+    res.json({ students: mapStudents(rows as any[]) });
   } catch (error: any) {
     res.status(500).json({ error: '获取学生列表失败', message: error.message });
+  }
+});
+
+// 搜索学生（必须放在 /:id 之前，避免被参数路由捕获）
+router.get('/search', (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const keyword = (req.query.keyword as string) || '';
+
+    if (!keyword) {
+      return res.json({ students: [] });
+    }
+
+    const rows = db.prepare(
+      'SELECT * FROM students WHERE user_id = ? AND (name LIKE ? OR subject LIKE ? OR grade LIKE ?) ORDER BY created_at DESC'
+    ).all(userId, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+
+    res.json({ students: mapStudents(rows as any[]) });
+  } catch (error: any) {
+    res.status(500).json({ error: '搜索学生失败', message: error.message });
+  }
+});
+
+// 获取学生档案（学生信息 + 全部回访记录 + 统计）
+router.get('/:id/profile', (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const studentId = parseInt(req.params.id);
+
+    const studentRow = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId);
+    if (!studentRow) {
+      return res.status(404).json({ error: '学生不存在' });
+    }
+
+    const followupRows = db.prepare(
+      'SELECT * FROM followups WHERE user_id = ? AND student_id = ? ORDER BY created_at DESC'
+    ).all(userId, studentId) as any[];
+
+    const followups = mapFollowUps(followupRows);
+
+    const stats = {
+      totalFollowups: followups.length,
+      totalWords: followups.reduce((sum, f) => sum + (f.wordCount || 0), 0),
+      totalImages: followups.reduce((sum, f) => sum + f.images.length, 0),
+      subjects: [...new Set(followups.map((f) => f.subject))],
+      grades: [...new Set(followups.map((f) => f.grade))],
+      lastFollowUpAt: followups[0]?.createdAt ?? null,
+    };
+
+    res.json({ student: mapStudent(studentRow), followups, stats });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取学生档案失败', message: error.message });
   }
 });
 
@@ -20,11 +73,11 @@ router.get('/:id', (req: any, res) => {
   try {
     const userId = req.userId;
     const studentId = parseInt(req.params.id);
-    const student = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId) as Student;
-    if (!student) {
+    const row = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId);
+    if (!row) {
       return res.status(404).json({ error: '学生不存在' });
     }
-    res.json({ student });
+    res.json({ student: mapStudent(row) });
   } catch (error: any) {
     res.status(500).json({ error: '获取学生信息失败', message: error.message });
   }
@@ -44,8 +97,8 @@ router.post('/', (req: any, res) => {
       'INSERT INTO students (user_id, name, grade, subject, phone, notes) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(userId, name, grade, subject, phone || null, notes || null);
 
-    const student = db.prepare('SELECT * FROM students WHERE id = ?').get(result.lastInsertRowid) as Student;
-    res.json({ student });
+    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ student: mapStudent(row) });
   } catch (error: any) {
     res.status(500).json({ error: '创建学生失败', message: error.message });
   }
@@ -58,18 +111,24 @@ router.put('/:id', (req: any, res) => {
     const studentId = parseInt(req.params.id);
     const { name, grade, subject, phone, notes } = req.body as StudentUpdate;
 
-    // 检查学生是否存在
-    const existing = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId);
+    const existing = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId) as any;
     if (!existing) {
       return res.status(404).json({ error: '学生不存在' });
     }
 
     db.prepare(
       'UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime("now", "localtime") WHERE id = ?'
-    ).run(name || existing.name, grade || existing.grade, subject || existing.subject, phone !== undefined ? phone : existing.phone, notes !== undefined ? notes : existing.notes, studentId);
+    ).run(
+      name || existing.name,
+      grade || existing.grade,
+      subject || existing.subject,
+      phone !== undefined ? phone : existing.phone,
+      notes !== undefined ? notes : existing.notes,
+      studentId
+    );
 
-    const student = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId) as Student;
-    res.json({ student });
+    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId);
+    res.json({ student: mapStudent(row) });
   } catch (error: any) {
     res.status(500).json({ error: '更新学生失败', message: error.message });
   }
@@ -89,62 +148,6 @@ router.delete('/:id', (req: any, res) => {
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: '删除学生失败', message: error.message });
-  }
-});
-
-// 获取学生档案（包含所有回访记录）
-router.get('/:id/profile', (req: any, res) => {
-  try {
-    const userId = req.userId;
-    const studentId = parseInt(req.params.id);
-    
-    // 获取学生信息
-    const student = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId) as Student;
-    if (!student) {
-      return res.status(404).json({ error: '学生不存在' });
-    }
-    
-    // 获取所有回访记录
-    const followups = db.prepare(
-      'SELECT * FROM followups WHERE user_id = ? AND student_id = ? ORDER BY created_at DESC'
-    ).all(userId, studentId) as any[];
-    
-    // 解析 images JSON 字符串为数组
-    const followupsParsed = followups.map(f => ({
-      ...f,
-      images: JSON.parse(f.images || '[]'),
-    }));
-    
-    // 统计信息
-    const stats = {
-      totalFollowups: followupsParsed.length,
-      subjects: [...new Set(followupsParsed.map(f => f.subject))],
-      grades: [...new Set(followupsParsed.map(f => f.grade))],
-    };
-    
-    res.json({ student, followups: followupsParsed, stats });
-  } catch (error: any) {
-    res.status(500).json({ error: '获取学生档案失败', message: error.message });
-  }
-});
-
-// 搜索学生
-router.get('/search', (req: any, res) => {
-  try {
-    const userId = req.userId;
-    const keyword = req.query.keyword as string;
-
-    if (!keyword) {
-      return res.json({ students: [] });
-    }
-
-    const students = db.prepare(
-      'SELECT * FROM students WHERE user_id = ? AND (name LIKE ? OR subject LIKE ? OR grade LIKE ?) ORDER BY created_at DESC'
-    ).all(userId, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`) as Student[];
-
-    res.json({ students });
-  } catch (error: any) {
-    res.status(500).json({ error: '搜索学生失败', message: error.message });
   }
 });
 

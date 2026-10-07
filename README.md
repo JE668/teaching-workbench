@@ -107,17 +107,26 @@ git clone https://github.com/je668/teaching-workbench.git
 cd teaching-workbench
 ```
 
-#### 2. 配置环境变量
+#### 2. 配置环境变量（API Key 写这里）
+
+> **重要：API Key 写进 `.env`，不要写进 `docker-compose.yml`。**
+> `docker-compose.yml` 会提交到 GitHub，而 `.env` 已在 `.gitignore` 中排除，密钥不会泄露。
+> `docker-compose.yml` 里的 `${SENSENOVA_API_KEY}` 会自动从同目录的 `.env` 读取。
 
 ```bash
 cp .env.production.example .env
 
 # 编辑 .env 文件：
 # - JWT_SECRET: openssl rand -hex 32 生成
-# - SENSENOVA_API_KEY: 填入你的 SenseNova API Key
-# - CORS_ORIGINS: 你的域名
+# - SENSENOVA_API_KEY: 填入你的 SenseNova API Key（sk- 开头）
+# - CORS_ORIGINS: 你的域名，如 https://jiaoxue.example.com
 # - DEFAULT_ADMIN_PASS: 修改默认密码
 ```
+
+**飞牛 NAS 用户**：飞牛的 Docker Compose 界面支持直接粘贴 `docker-compose.yml`。有两种方式放密钥：
+
+- **方式 A（推荐）**：在 compose 文件同目录新建 `.env` 文件，内容同上，Compose 会自动加载。
+- **方式 B**：用飞牛界面的「环境变量」配置项，逐个添加 `JWT_SECRET`、`SENSENOVA_API_KEY` 等键值对，效果等同。
 
 #### 3. 首次部署
 

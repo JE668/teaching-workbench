@@ -54,7 +54,7 @@ export interface FollowUp {
   topic: string;
   performance: string;
   mastery: string;
-  images: string; // JSON array of image paths
+  images: string[]; // 图片路径数组（API 层已解析）
   content: string;
   wordCount: number;
   createdAt: string;

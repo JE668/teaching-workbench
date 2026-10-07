@@ -32,8 +32,11 @@ interface ProfileData {
   followups: FollowUpRecord[];
   stats: {
     totalFollowups: number;
+    totalWords: number;
+    totalImages: number;
     subjects: string[];
     grades: string[];
+    lastFollowUpAt: string | null;
   };
 }
 
@@ -118,6 +121,7 @@ export default function StudentProfile() {
             <p className="text-gray-500 text-sm">
               {student.grade} · {student.subject}
               {student.phone && ' · ' + student.phone}
+              {stats.lastFollowUpAt && ' · 最近回访 ' + stats.lastFollowUpAt.split(' ')[0]}
             </p>
           </div>
         </div>
@@ -139,14 +143,12 @@ export default function StudentProfile() {
           <p className="text-sm text-gray-500 mt-1">回访次数</p>
         </div>
         <div className="bg-white rounded-xl p-5 shadow-sm text-center">
-          <p className="text-3xl font-bold text-purple-600">{stats.subjects.length}</p>
-          <p className="text-sm text-gray-500 mt-1">涉及学科</p>
+          <p className="text-3xl font-bold text-purple-600">{stats.totalImages}</p>
+          <p className="text-sm text-gray-500 mt-1">归档图片</p>
         </div>
         <div className="bg-white rounded-xl p-5 shadow-sm text-center">
-          <p className="text-3xl font-bold text-green-600">
-            {followups.length > 0 ? Math.round(followups.reduce((acc, f) => acc + (f.wordCount || 0), 0) / followups.length) : 0}
-          </p>
-          <p className="text-sm text-gray-500 mt-1">平均字数</p>
+          <p className="text-3xl font-bold text-green-600">{stats.totalWords}</p>
+          <p className="text-sm text-gray-500 mt-1">累计字数</p>
         </div>
       </div>
 

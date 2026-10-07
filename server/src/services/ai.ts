@@ -136,7 +136,9 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
     });
   }
 
-  const response = await ai.chat.completions.create({
+  // SenseNova 自定义参数（如 reasoning_effort）需直接放入请求体，
+  // OpenAI Node SDK 的类型定义未包含这些字段，因此用 any 透传。
+  const requestBody: any = {
     model: env.SENSENOVA_MODEL,
     messages: [
       {
@@ -150,10 +152,10 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
     ],
     max_tokens: 2000,
     temperature: 0.7,
-    extra_body: {
-      reasoning_effort: 'none',
-    },
-  });
+    reasoning_effort: 'none',
+  };
+
+  const response = await ai.chat.completions.create(requestBody);
 
   return response.choices[0].message.content || '';
 }
