@@ -134,7 +134,7 @@ cd teaching-workbench
 cp .env.production.example .env
 
 # 编辑 .env 文件：
-# - JWT_SECRET: openssl rand -hex 32 生成
+# - JWT_SECRET: 可留空（自动生成并持久化）；如需自管则 openssl rand -hex 32
 # - SENSENOVA_API_KEY: 填入你的 SenseNova API Key（sk- 开头）
 # - CORS_ORIGINS: 你的域名，如 https://jiaoxue.example.com
 # - DEFAULT_ADMIN_PASS: 修改默认密码
@@ -247,7 +247,19 @@ Internet → 域名 → Lucky (反代+SSL)
 | 密钥隔离 | API Key 只存在 `.env`，不进入镜像与仓库 |
 | 生产提示 | 默认账号提示仅在开发环境显示 |
 
-> ⚠️ 首次部署后请立即修改 `DEFAULT_ADMIN_PASS`，并使用 `openssl rand -hex 32` 生成 `JWT_SECRET`。
+### JWT 密钥说明
+
+`JWT_SECRET` 用于签发登录令牌。**一旦泄露，任何人都能伪造登录身份。**
+
+本项目做了三层保护，不会退回源码中公开的默认值：
+
+1. 后端启动时若未检测到 `JWT_SECRET`，会**自动生成 64 位强随机密钥**并持久化到 `data/.jwt_secret`（权限 600），重启与镜像更新后自动复用；
+2. `deploy.sh` 会在部署前检查 `.env`，为空时自动生成并写入；
+3. 若显式配置了 `JWT_SECRET`，则优先使用你的配置（便于备份迁移）。
+
+> **所以：留空也能安全运行。** 若希望自行管理，执行 `openssl rand -hex 32` 生成后填入 `.env`。
+>
+> ⚠️ 无论哪种方式，首次部署后请立即修改 `DEFAULT_ADMIN_PASS`。
 
 ## SenseNova API 说明
 
