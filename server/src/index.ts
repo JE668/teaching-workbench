@@ -24,20 +24,28 @@ const server = http.createServer(app);
 
 // ========== 中间件 ==========
 
-// 生产环境 CORS 白名单
-const allowedOrigins = (env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+// ========== CORS ==========
+// 说明：标准部署下前端 nginx 会把 /api 反代到后端，浏览器看到的是同源请求，
+// 因此 CORS 白名单留空也不影响使用。此白名单仅用于"前后端分域部署"的场景。
+const allowedOrigins = (env.CORS_ORIGINS || '')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // 允许无 origin 的请求（curl、Postman、本地开发）
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('CORS 不允许的来源: ' + origin));
+    // 无 Origin 头（curl、服务端调用）直接放行
+    if (!origin) {
+      return callback(null, true);
     }
+    // 命中白名单则返回 CORS 头
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    // 未命中：不报错，仅不下发 CORS 头。
+    // 同源请求不受影响；跨源请求会因缺少 CORS 头被浏览器拦截（安全）。
+    // 注意：这里绝不能抛错，否则浏览器同源 POST 带上 Origin 时会直接 500。
+    callback(null, false);
   },
   credentials: true,
 }));
@@ -112,7 +120,10 @@ server.listen(env.PORT, env.HOST, () => {
   console.log('=========================================');
   console.log('[Server] 监听 ' + env.HOST + ':' + env.PORT);
   console.log('[Server] SenseNova Model: ' + env.SENSENOVA_MODEL);
-  console.log('[Server] CORS Origins: ' + allowedOrigins.join(', '));
+  console.log(
+    '[Server] CORS 白名单: ' +
+      (allowedOrigins.length ? allowedOrigins.join(', ') : '(未配置，仅同源访问)')
+  );
   console.log('=========================================');
 });
 

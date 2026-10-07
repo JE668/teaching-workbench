@@ -136,7 +136,7 @@ cp .env.production.example .env
 # 编辑 .env 文件：
 # - JWT_SECRET: 可留空（自动生成并持久化）；如需自管则 openssl rand -hex 32
 # - SENSENOVA_API_KEY: 填入你的 SenseNova API Key（sk- 开头）
-# - CORS_ORIGINS: 你的域名，如 https://jiaoxue.example.com
+# - CORS_ORIGINS: 可留空（同源访问无需 CORS）；仅分域部署时才填
 # - DEFAULT_ADMIN_PASS: 修改默认密码
 ```
 

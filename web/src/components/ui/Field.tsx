@@ -37,7 +37,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   icon?: React.ReactNode;
 }
 
-export function Input({ label, required, hint, icon, className, ...props }: InputProps) {
+export function Input({ label, required, hint, icon, className, type = 'text', ...props }: InputProps) {
   const input = (
     <div className="relative">
       {icon && (
@@ -45,7 +45,7 @@ export function Input({ label, required, hint, icon, className, ...props }: Inpu
           {icon}
         </div>
       )}
-      <input className={cn(baseControl, 'h-10 px-3.5', icon && 'pl-10', className)} {...props} />
+      <input type={type} className={cn(baseControl, 'h-10 px-3.5', icon && 'pl-10', className)} {...props} />
     </div>
   );
   if (!label) return input;
