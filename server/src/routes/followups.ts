@@ -2,14 +2,9 @@ import { Router } from 'express';
 import { db } from '../config/database.js';
 import { FollowUpCreate } from '../types/index.js';
 import { mapFollowUp, mapFollowUps, parseImages } from '../utils/mappers.js';
-import { generateFollowUpContent } from '../services/ai.js';
+import { generateFollowUpContent, countWords } from '../services/ai.js';
 
 const router = Router();
-
-// 纯文字计数：去除空白与标点
-function countWords(text: string): number {
-  return text.replace(/[\s\p{P}\p{S}]/gu, '').length;
-}
 
 // 获取回访列表（支持按学生/学科/年级过滤）
 router.get('/', (req: any, res) => {

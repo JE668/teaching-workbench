@@ -234,6 +234,21 @@ Internet → 域名 → Lucky (反代+SSL)
 - 保留策略: 自动保留最近 7 天备份
 - 备份位置: ~/backups/teaching-workbench/
 
+## 安全说明
+
+| 措施 | 说明 |
+|------|------|
+| 密码哈希 | bcrypt (cost 10) 加盐存储 |
+| 鉴权 | JWT Token，默认 7 天有效期 |
+| 登录限流 | 同 IP 15 分钟内最多 20 次尝试，防暴力破解 |
+| 越权防护 | 所有查询按 user_id 隔离；关联学生时校验归属 |
+| 路径穿越防护 | 图片读取限定在上传目录内 |
+| 上传校验 | 仅允许 JPG/PNG/WebP，单张最大 10MB |
+| 密钥隔离 | API Key 只存在 `.env`，不进入镜像与仓库 |
+| 生产提示 | 默认账号提示仅在开发环境显示 |
+
+> ⚠️ 首次部署后请立即修改 `DEFAULT_ADMIN_PASS`，并使用 `openssl rand -hex 32` 生成 `JWT_SECRET`。
+
 ## SenseNova API 说明
 
 - Base URL: https://token.sensenova.cn/v1

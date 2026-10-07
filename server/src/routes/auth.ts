@@ -4,12 +4,20 @@ import jwt from 'jsonwebtoken';
 import { db } from '../config/database.js';
 import { env } from '../config/env.js';
 import { authMiddleware } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { mapUser } from '../utils/mappers.js';
 
 const router = Router();
 
+// 登录/注册限流：15 分钟内同一 IP 最多 20 次，防止暴力破解
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: '登录尝试过于频繁，请 15 分钟后再试',
+});
+
 // 注册
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -43,7 +51,7 @@ router.post('/register', async (req, res) => {
 });
 
 // 登录
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
 

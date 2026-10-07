@@ -8,6 +8,7 @@ import {
   Save,
   Check,
   Pencil,
+  Copy,
   ClipboardList,
   User,
   UploadCloud,
@@ -22,7 +23,7 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
-import { countWords, cn } from '../lib/utils';
+import { countWords, copyText, cn } from '../lib/utils';
 
 const MASTERY_TONE: Record<string, string> = {
   excellent: 'data-[on=true]:bg-emerald-500 data-[on=true]:ring-emerald-500',
@@ -153,6 +154,11 @@ export default function FollowUp() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCopy = async () => {
+    const ok = await copyText(editing ? draft : content);
+    ok ? toast.success('已复制回访内容，可直接发送给家长') : toast.error('复制失败，请手动选择文本复制');
   };
 
   const finalContent = editing ? draft : content;
@@ -407,6 +413,14 @@ export default function FollowUp() {
                       {words} 字
                     </span>
                     <button
+                      onClick={handleCopy}
+                      title="复制全文"
+                      className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-200"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      复制
+                    </button>
+                    <button
                       onClick={() => setEditing((v) => !v)}
                       className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-200"
                     >
@@ -444,11 +458,10 @@ export default function FollowUp() {
                   size="lg"
                   className="mt-4 w-full"
                   loading={saving}
-                  disabled={!wordsOk}
                   onClick={save}
                   icon={!saving ? <Save className="h-4 w-4" /> : undefined}
                 >
-                  {saving ? '保存中…' : '保存并归档到学生档案'}
+                  {saving ? '保存中…' : wordsOk ? '保存并归档到学生档案' : '仍要保存（建议先调整字数）'}
                 </Button>
               </div>
             </Card>

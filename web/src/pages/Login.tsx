@@ -212,10 +212,11 @@ export default function Login() {
             </Button>
           </form>
 
-          {!isRegister && (
+          {/* 仅在开发环境提示默认账号，避免生产环境泄露默认凭据 */}
+          {!isRegister && import.meta.env.DEV && (
             <div className="mt-6 rounded-xl bg-slate-50 px-4 py-3 text-center ring-1 ring-slate-100">
               <p className="text-xs text-slate-400">
-                默认管理员账号
+                开发环境默认账号
                 <span className="ml-1.5 font-mono font-medium text-slate-600">admin / 123456</span>
               </p>
             </div>
