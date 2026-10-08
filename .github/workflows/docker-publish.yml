@@ -133,10 +133,10 @@ jobs:
         with:
           context: ./server
           push: true
+          # 标签策略：latest（部署用）+ 提交 SHA（回滚用，可精确定位）
           tags: |
             ghcr.io/je668/teaching-workbench-backend:latest
             ghcr.io/je668/teaching-workbench-backend:${{ github.sha }}
-            ghcr.io/je668/teaching-workbench-backend:v${{ github.ref_name || '0' }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
           labels: |
@@ -167,10 +167,10 @@ jobs:
         with:
           context: ./web
           push: true
+          # 标签策略：latest（部署用）+ 提交 SHA（回滚用，可精确定位）
           tags: |
             ghcr.io/je668/teaching-workbench-frontend:latest
             ghcr.io/je668/teaching-workbench-frontend:${{ github.sha }}
-            ghcr.io/je668/teaching-workbench-frontend:v${{ github.ref_name || '0' }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
           labels: |
