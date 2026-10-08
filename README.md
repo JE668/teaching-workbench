@@ -257,7 +257,7 @@ Internet → 域名 → Lucky (反代+SSL)
 | 层级 | 技术 | 用例数 | 命令 |
 |------|------|--------|------|
 | 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 80 | `cd server && npm test` |
-| 前端 | Vitest + Testing Library + jsdom | 58 | `cd web && npm test` |
+| 前端 | Vitest + Testing Library + jsdom | 104 | `cd web && npm test` |
 | 端到端 | Playwright（复用系统 Chrome） | 14 | `cd web && npm run e2e:full` |
 
 > CI 顺序：后端测试 + 前端测试 → E2E → 构建镜像。
@@ -287,6 +287,11 @@ Internet → 域名 → Lucky (反代+SSL)
 | `context/AuthContext` | **首帧即恢复登录态**（深链接回归）、脏数据容错、登出清理 |
 | `api/client` | SSE 解析：分片边界、分隔符被切开、多事件同片、坏 JSON 容错、中断检测、AbortSignal |
 | UI 组件 | Button / Badge / Field / Modal / ConfirmDialog / EmptyState / Toast |
+| **登录页** | 登录调用、失败提示、注册两次密码不一致 / 密码过短拦截、切换模式清空错误 |
+| **工作台** | 统计取自 `/followups/stats`（非列表长度）、学科去重、空状态、接口异常不白屏 |
+| **学生管理** | 骨架屏、列表渲染、防抖搜索、新增/编辑弹窗预填、删除二次确认、失败 Toast |
+| **回访历史** | 列表与字数着色、筛选带参并重置页码、分页边界禁用、详情、编辑校验、删除确认、复制 |
+| **学生档案** | 时间线渲染、展开/收起、档案不存在兜底、导出弹窗（格式切换 + 日期区间 + 失败提示） |
 
 ### 端到端测试覆盖
 

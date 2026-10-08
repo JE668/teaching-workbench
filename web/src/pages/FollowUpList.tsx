@@ -463,26 +463,27 @@ export default function FollowUpList() {
           </div>
 
           <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-700">
-                回访内容 <span className="text-red-500">*</span>
-              </label>
-              <span
-                className={cn(
-                  'rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
-                  editWordsOk
-                    ? 'bg-emerald-50 text-emerald-600 ring-emerald-200'
-                    : 'bg-amber-50 text-amber-600 ring-amber-200'
-                )}
-              >
-                {editWords} 字
-              </span>
-            </div>
-            <textarea
+            {/* 使用 Textarea 组件而非手写 textarea：组件会把 label 与控件正确关联，
+                屏幕阅读器可读、点击标签可聚焦（手写版本曾漏掉这层关联） */}
+            <Textarea
+              label="回访内容"
+              required
+              rows={14}
               value={editForm.content}
               onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
-              rows={14}
-              className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm leading-[1.9] text-slate-700 outline-none transition-all hover:border-slate-300 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
+              className="leading-[1.9]"
+              hint={
+                <span
+                  className={cn(
+                    'rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+                    editWordsOk
+                      ? 'bg-emerald-50 text-emerald-600 ring-emerald-200'
+                      : 'bg-amber-50 text-amber-600 ring-amber-200'
+                  )}
+                >
+                  {editWords} 字
+                </span>
+              }
             />
             <p className="mt-1 text-xs text-slate-400">
               建议保持三段结构：【课堂内容】【学生收获】【课后任务】，总字数 150–500
