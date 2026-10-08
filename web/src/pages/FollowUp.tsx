@@ -528,7 +528,10 @@ export default function FollowUp() {
                     className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm leading-relaxed outline-none transition-all focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
                   />
                 ) : (
-                  <div className="whitespace-pre-wrap rounded-xl bg-slate-50 px-4 py-3.5 text-sm leading-[1.9] text-slate-700 ring-1 ring-slate-100">
+                  <div
+                    data-testid="generated-content"
+                    className="whitespace-pre-wrap rounded-xl bg-slate-50 px-4 py-3.5 text-sm leading-[1.9] text-slate-700 ring-1 ring-slate-100"
+                  >
                     {content}
                   </div>
                 )}

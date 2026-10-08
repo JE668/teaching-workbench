@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { cn } from '../../lib/utils';
 
 const baseControl =
@@ -12,16 +12,19 @@ export function Label({
   children,
   required,
   hint,
+  htmlFor,
   className,
 }: {
   children: React.ReactNode;
   required?: boolean;
   hint?: React.ReactNode;
+  htmlFor?: string;
   className?: string;
 }) {
   return (
     <div className={cn('mb-1.5 flex items-center justify-between', className)}>
-      <label className="text-sm font-medium text-slate-700">
+      {/* 通过 htmlFor 与控件关联：屏幕阅读器可读，点击标签可聚焦 */}
+      <label htmlFor={htmlFor} className="text-sm font-medium text-slate-700">
         {children}
         {required && <span className="ml-0.5 text-red-500">*</span>}
       </label>
@@ -37,7 +40,10 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   icon?: React.ReactNode;
 }
 
-export function Input({ label, required, hint, icon, className, type = 'text', ...props }: InputProps) {
+export function Input({ label, required, hint, icon, className, type = 'text', id, ...props }: InputProps) {
+  const autoId = useId();
+  const inputId = id || autoId;
+
   const input = (
     <div className="relative">
       {icon && (
@@ -45,13 +51,21 @@ export function Input({ label, required, hint, icon, className, type = 'text', .
           {icon}
         </div>
       )}
-      <input type={type} className={cn(baseControl, 'h-10 px-3.5', icon && 'pl-10', className)} {...props} />
+      <input
+        id={inputId}
+        type={type}
+        className={cn(baseControl, 'h-10 px-3.5', icon && 'pl-10', className)}
+        {...props}
+      />
     </div>
   );
+
   if (!label) return input;
   return (
     <div>
-      <Label required={required} hint={hint}>{label}</Label>
+      <Label required={required} hint={hint} htmlFor={inputId}>
+        {label}
+      </Label>
       {input}
     </div>
   );
@@ -63,14 +77,24 @@ interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement
   hint?: React.ReactNode;
 }
 
-export function Textarea({ label, required, hint, className, ...props }: TextareaProps) {
+export function Textarea({ label, required, hint, className, id, ...props }: TextareaProps) {
+  const autoId = useId();
+  const areaId = id || autoId;
+
   const area = (
-    <textarea className={cn(baseControl, 'resize-none px-3.5 py-2.5 leading-relaxed', className)} {...props} />
+    <textarea
+      id={areaId}
+      className={cn(baseControl, 'resize-none px-3.5 py-2.5 leading-relaxed', className)}
+      {...props}
+    />
   );
+
   if (!label) return area;
   return (
     <div>
-      <Label required={required} hint={hint}>{label}</Label>
+      <Label required={required} hint={hint} htmlFor={areaId}>
+        {label}
+      </Label>
       {area}
     </div>
   );
@@ -84,9 +108,16 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   placeholder?: string;
 }
 
-export function Select({ label, required, hint, options, placeholder, className, ...props }: SelectProps) {
+export function Select({ label, required, hint, options, placeholder, className, id, ...props }: SelectProps) {
+  const autoId = useId();
+  const selectId = id || autoId;
+
   const select = (
-    <select className={cn(baseControl, 'h-10 cursor-pointer appearance-none px-3.5 pr-9', className)} {...props}>
+    <select
+      id={selectId}
+      className={cn(baseControl, 'h-10 cursor-pointer appearance-none px-3.5 pr-9', className)}
+      {...props}
+    >
       {placeholder && <option value="">{placeholder}</option>}
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -95,10 +126,13 @@ export function Select({ label, required, hint, options, placeholder, className,
       ))}
     </select>
   );
+
   if (!label) return select;
   return (
     <div>
-      <Label required={required} hint={hint}>{label}</Label>
+      <Label required={required} hint={hint} htmlFor={selectId}>
+        {label}
+      </Label>
       {select}
     </div>
   );

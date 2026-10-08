@@ -33,6 +33,19 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** 触发浏览器下载 Blob（用完即释放 objectURL，避免内存泄漏） */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // 延后释放，确保下载已开始
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /** 格式化日期：2026-10-08 12:30:00 → 10月8日 */
 export function formatDate(dateStr?: string | null): string {
   if (!dateStr) return '-';

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../config/database.js';
 import { StudentCreate, StudentUpdate } from '../types/index.js';
 import { mapStudent, mapStudents, mapFollowUps } from '../utils/mappers.js';
+import { toMarkdown, toCsv, exportFilename } from '../services/export.js';
 
 const router = Router();
 
@@ -65,6 +66,55 @@ router.get('/:id/profile', (req: any, res) => {
     res.json({ student: mapStudent(studentRow), followups, stats });
   } catch (error: any) {
     res.status(500).json({ error: '获取学生档案失败', message: error.message });
+  }
+});
+
+/**
+ * 导出学生档案
+ * GET /api/students/:id/export?format=md|csv&from=YYYY-MM-DD&to=YYYY-MM-DD
+ */
+router.get('/:id/export', (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const studentId = parseInt(req.params.id);
+    const { format = 'md', from, to } = req.query;
+
+    if (format !== 'md' && format !== 'csv') {
+      return res.status(400).json({ error: 'format 仅支持 md 或 csv' });
+    }
+
+    const studentRow = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId);
+    if (!studentRow) {
+      return res.status(404).json({ error: '学生不存在' });
+    }
+
+    let where = 'WHERE user_id = ? AND student_id = ?';
+    const params: any[] = [userId, studentId];
+
+    if (from) {
+      where += ' AND date(created_at) >= date(?)';
+      params.push(from);
+    }
+    if (to) {
+      where += ' AND date(created_at) <= date(?)';
+      params.push(to);
+    }
+
+    const rows = db
+      .prepare('SELECT * FROM followups ' + where + ' ORDER BY created_at ASC, id ASC')
+      .all(...params) as any[];
+
+    const student = mapStudent(studentRow);
+    const followups = mapFollowUps(rows);
+
+    const body = format === 'csv' ? toCsv(student, followups) : toMarkdown(student, followups, { format: 'md' });
+    const contentType = format === 'csv' ? 'text/csv; charset=utf-8' : 'text/markdown; charset=utf-8';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', 'attachment; filename="' + exportFilename(student, format) + '"');
+    res.send(body);
+  } catch (error: any) {
+    res.status(500).json({ error: '导出失败', message: error.message });
   }
 });
 

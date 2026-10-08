@@ -33,7 +33,7 @@ describe('登录限流', () => {
     assert.ok(lastRes.body.retryAfter > 0);
   });
 
-  test('限流窗口内正确密码同样被拦截', async () => {
+  test('锁定后即使密码正确也不放行（额度只按失败计，但已达上限）', async () => {
     const res = await req('POST', '/api/auth/login', {
       body: { username: 'admin', password: 'test-pass-123456' },
     });

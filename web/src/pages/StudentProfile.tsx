@@ -12,6 +12,9 @@ import {
   Phone,
   FolderOpen,
   Copy,
+  Download,
+  Sheet,
+  CalendarRange,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { MASTERY_LEVELS } from '../types/index';
@@ -21,7 +24,9 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { PageSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
-import { formatDate, relativeTime, copyText, cn } from '../lib/utils';
+import Modal from '../components/ui/Modal';
+import { Input } from '../components/ui/Field';
+import { formatDate, relativeTime, copyText, saveBlob, cn } from '../lib/utils';
 
 interface FollowUpRecord {
   id: number;
@@ -70,6 +75,34 @@ export default function StudentProfile() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
   const toast = useToast();
+
+  // 导出
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'md' | 'csv'>('md');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  const doExport = async () => {
+    if (!data) return;
+    setExporting(true);
+    try {
+      const params = new URLSearchParams({ format: exportFormat });
+      if (rangeFrom) params.set('from', rangeFrom);
+      if (rangeTo) params.set('to', rangeTo);
+
+      const blob = await api.download('/students/' + data.student.id + '/export?' + params.toString());
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      saveBlob(blob, data.student.name + '-学习档案-' + stamp + '.' + exportFormat);
+
+      toast.success('档案已导出');
+      setExportOpen(false);
+    } catch (err: any) {
+      toast.error('导出失败：' + err.message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -141,11 +174,21 @@ export default function StudentProfile() {
             </div>
           </div>
         </div>
-        <Link to={'/followups?studentId=' + student.id}>
-          <Button variant="gradient" icon={<Plus className="h-4 w-4" />}>
-            新建回访
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            icon={<Download className="h-4 w-4" />}
+            onClick={() => setExportOpen(true)}
+            disabled={followups.length === 0}
+          >
+            导出档案
           </Button>
-        </Link>
+          <Link to={'/followups?studentId=' + student.id}>
+            <Button variant="gradient" icon={<Plus className="h-4 w-4" />}>
+              新建回访
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* 统计 */}
@@ -297,6 +340,93 @@ export default function StudentProfile() {
           </div>
         )}
       </Card>
+
+      {/* ===== 导出弹窗 ===== */}
+      <Modal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        title="导出学习档案"
+        description={'将「' + student.name + '」的 ' + followups.length + ' 条回访记录导出为文件'}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setExportOpen(false)} disabled={exporting}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={doExport}
+              loading={exporting}
+              icon={!exporting ? <Download className="h-4 w-4" /> : undefined}
+            >
+              导出
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div>
+            <p className="mb-2 text-sm font-medium text-slate-700">导出格式</p>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                {
+                  value: 'md' as const,
+                  icon: FileText,
+                  title: 'Markdown',
+                  desc: '排版清晰，可阅读、可粘贴到 Word',
+                },
+                {
+                  value: 'csv' as const,
+                  icon: Sheet,
+                  title: 'CSV 表格',
+                  desc: '可用 Excel / WPS 打开分析',
+                },
+              ].map((opt) => {
+                const on = exportFormat === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => setExportFormat(opt.value)}
+                    className={cn(
+                      'rounded-xl border p-3.5 text-left transition-all',
+                      on
+                        ? 'border-brand-400 bg-brand-50/60 ring-2 ring-brand-500/20'
+                        : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    )}
+                  >
+                    <opt.icon className={cn('mb-2 h-5 w-5', on ? 'text-brand-600' : 'text-slate-400')} />
+                    <p className={cn('text-sm font-semibold', on ? 'text-brand-700' : 'text-slate-700')}>
+                      {opt.title}
+                    </p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-slate-400">{opt.desc}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+              <CalendarRange className="h-4 w-4 text-slate-400" />
+              日期范围
+              <span className="font-normal text-slate-400">（可选，留空则导出全部）</span>
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label="起始日期"
+                type="date"
+                value={rangeFrom}
+                onChange={(e) => setRangeFrom(e.target.value)}
+              />
+              <Input
+                label="结束日期"
+                type="date"
+                value={rangeTo}
+                onChange={(e) => setRangeTo(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

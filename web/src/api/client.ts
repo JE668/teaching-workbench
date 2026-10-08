@@ -168,6 +168,19 @@ class ApiClient {
     }
   }
 
+  /** 下载文件（返回 Blob，供前端另存） */
+  async download(path: string): Promise<Blob> {
+    const headers: Record<string, string> = {};
+    if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+
+    const res = await fetch(BASE_URL + path, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any));
+      throw new Error(err.error || '下载失败');
+    }
+    return res.blob();
+  }
+
   get(path: string) {
     return this.request(path);
   }

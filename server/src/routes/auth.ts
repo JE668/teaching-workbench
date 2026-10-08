@@ -9,11 +9,13 @@ import { mapUser } from '../utils/mappers.js';
 
 const router = Router();
 
-// 登录/注册限流：15 分钟内同一 IP 最多 20 次，防止暴力破解
+// 登录/注册限流：15 分钟内同一 IP 最多 20 次【失败】尝试，防止暴力破解。
+// 只统计失败：正常用户反复登录（如网络抖动重试）不会被误锁。
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   message: '登录尝试过于频繁，请 15 分钟后再试',
+  countOnlyFailures: true,
 });
 
 // 注册
