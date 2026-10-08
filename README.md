@@ -137,6 +137,7 @@ cp .env.production.example .env
 # - JWT_SECRET: 可留空（自动生成并持久化）；如需自管则 openssl rand -hex 32
 # - SENSENOVA_API_KEY: 填入你的 SenseNova API Key（sk- 开头）
 # - CORS_ORIGINS: 可留空（同源访问无需 CORS）；仅分域部署时才填
+# - FRONTEND_PORT: 默认 80，不想占用 80 就改成如 10880
 # - DEFAULT_ADMIN_PASS: 修改默认密码
 ```
 
@@ -164,9 +165,18 @@ docker compose up -d
 |--------|-----|
 | 名称 | 教学工作台 |
 | 域名 | your-domain.com |
-| 上游地址 | teaching-workbench-frontend:80 |
+| 上游地址 | 见下方说明 |
 | 证书 | 自动申请 Let's Encrypt |
 | 传输 | HTTPS |
+
+**上游地址取决于 Lucky 的部署方式：**
+
+| Lucky 部署方式 | 上游地址 |
+|---|---|
+| Lucky 装在宿主机（非容器） | `http://127.0.0.1:10880` （= 你在 .env 里设的 FRONTEND_PORT） |
+| Lucky 也在 Docker 且与本项目同一网络 | `http://teaching-workbench-frontend:80` |
+
+> 容器内 nginx 固定监听 80，只改宿主机映射端口。
 
 > Lucky 负责 SSL 证书申请和续期，前端 nginx 接收 80 端口请求后自动代理 /api 到后端。
 

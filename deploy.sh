@@ -11,6 +11,13 @@ COMPOSE_FILE="docker-compose.yml"
 BACKUP_DIR="${HOME}/backups/teaching-workbench"
 ROLLBACK_FILE="/tmp/teaching-workbench-last-tag"
 
+# 读取 .env 中的前端端口（健康检查用；默认 80）
+# 注意：set -e 下命令替换失败会终止脚本，故必须兜底；并校验为纯数字。
+FRONTEND_PORT=$(grep -E '^FRONTEND_PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' \r' || true)
+case "$FRONTEND_PORT" in
+  '' | *[!0-9]*) FRONTEND_PORT=80 ;;
+esac
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -94,17 +101,21 @@ docker compose -f "$COMPOSE_FILE" up -d
 
 log "等待服务启动..."
 sleep 5
+# 后端 3000 仅在容器网络内暴露（expose），宿主机访问不到，
+# 因此通过前端已发布端口做端到端健康检查（nginx 会把 /health 反代到后端）。
+HEALTH_URL="http://localhost:${FRONTEND_PORT}/health"
 for i in $(seq 1 10); do
-  if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
-    log "服务已启动并健康"
+  if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+    log "服务已启动并健康 ($HEALTH_URL)"
     break
   fi
   if [ "$i" -eq 10 ]; then
-    warn "服务启动超时，请检查日志"
+    warn "健康检查超时 ($HEALTH_URL)，请查看日志: docker compose -f $COMPOSE_FILE logs"
   fi
   sleep 2
 done
 
 log "========== 部署状态 =========="
 docker compose -f "$COMPOSE_FILE" ps
+log "本地访问: http://localhost:${FRONTEND_PORT}"
 log "========== 部署完成 =========="
