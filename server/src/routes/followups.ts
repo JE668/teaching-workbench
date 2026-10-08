@@ -2,38 +2,97 @@ import { Router } from 'express';
 import { db } from '../config/database.js';
 import { FollowUpCreate } from '../types/index.js';
 import { mapFollowUp, mapFollowUps, parseImages } from '../utils/mappers.js';
-import { generateFollowUpContent, describeAiError, countWords } from '../services/ai.js';
+import {
+  runFollowUpGeneration,
+  runStreamGeneration,
+  retryGeneration,
+  describeAiError,
+  isWordCountOk,
+  countWords,
+  MIN_WORDS,
+  MAX_WORDS,
+} from '../services/ai.js';
 
 const router = Router();
 
-// 获取回访列表（支持按学生/学科/年级过滤）
+/**
+ * 获取回访列表（支持按学生/学科/年级过滤 + 分页）
+ * 返回 { followups, pagination }，followups 键保持向后兼容。
+ */
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 100;
+
 router.get('/', (req: any, res) => {
   try {
     const userId = req.userId;
-    const { studentId, subject, grade } = req.query;
+    const { studentId, subject, grade, page, pageSize } = req.query;
 
-    let query = 'SELECT * FROM followups WHERE user_id = ?';
+    let where = 'WHERE user_id = ?';
     const params: any[] = [userId];
 
     if (studentId) {
-      query += ' AND student_id = ?';
+      where += ' AND student_id = ?';
       params.push(parseInt(studentId as string));
     }
     if (subject) {
-      query += ' AND subject = ?';
+      where += ' AND subject = ?';
       params.push(subject);
     }
     if (grade) {
-      query += ' AND grade = ?';
+      where += ' AND grade = ?';
       params.push(grade);
     }
 
-    query += ' ORDER BY created_at DESC';
+    // 分页参数带边界保护，防止非法入参
+    const p = Math.max(1, parseInt(page as string, 10) || 1);
+    const ps = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(pageSize as string, 10) || DEFAULT_PAGE_SIZE));
 
-    const rows = db.prepare(query).all(...params) as any[];
-    res.json({ followups: mapFollowUps(rows) });
+    const total = (db.prepare('SELECT COUNT(*) AS n FROM followups ' + where).get(...params) as any).n;
+    const totalPages = Math.max(1, Math.ceil(total / ps));
+    const offset = (p - 1) * ps;
+
+    // 注意：created_at 仅精确到秒，同秒记录顺序不稳定会导致分页重复/漏项，
+    // 因此必须追加 id 作为稳定排序键。
+    const rows = db
+      .prepare('SELECT * FROM followups ' + where + ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+      .all(...params, ps, offset) as any[];
+
+    res.json({
+      followups: mapFollowUps(rows),
+      pagination: { page: p, pageSize: ps, total, totalPages },
+    });
   } catch (error: any) {
     res.status(500).json({ error: '获取回访列表失败', message: error.message });
+  }
+});
+
+/**
+ * 汇总统计（必须注册在 /:id 之前，否则 'stats' 会被当成 id）
+ * 供仪表盘使用：分页后无法再从列表长度推算总量。
+ */
+router.get('/stats', (req: any, res) => {
+  try {
+    const userId = req.userId;
+
+    // 仅取 images 一列，避免把全文都拉出来
+    const rows = db
+      .prepare('SELECT images, subject, created_at FROM followups WHERE user_id = ?')
+      .all(userId) as any[];
+
+    const totalImages = rows.reduce((sum, r) => sum + parseImages(r.images).length, 0);
+
+    const recent = db
+      .prepare('SELECT * FROM followups WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 5')
+      .all(userId) as any[];
+
+    res.json({
+      totalFollowUps: rows.length,
+      totalImages,
+      subjects: [...new Set(rows.map((r) => r.subject))].length,
+      recent: mapFollowUps(recent),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取统计失败', message: error.message });
   }
 });
 
@@ -61,7 +120,7 @@ router.post('/generate', async (req: any, res) => {
       return res.status(400).json({ error: '学生姓名、年级、学科、课程主题、课堂表现、掌握程度均为必填项' });
     }
 
-    const content = await generateFollowUpContent({
+    const content = await runFollowUpGeneration({
       studentName,
       grade,
       subject,
@@ -78,6 +137,89 @@ router.post('/generate', async (req: any, res) => {
     const { httpStatus, message } = describeAiError(error);
     console.error('[AI生成失败] ' + httpStatus + ' - ' + message);
     res.status(httpStatus).json({ error: message });
+  }
+});
+
+/** 距离字数区间的距离，用于两版都不达标时择优 */
+function wordsDistance(n: number): number {
+  if (n < MIN_WORDS) return MIN_WORDS - n;
+  if (n > MAX_WORDS) return n - MAX_WORDS;
+  return 0;
+}
+
+/**
+ * AI 生成（SSE 流式）。
+ * 事件：delta -> regenerating? -> done | error
+ * 首轮流式输出，若字数不达标则自动重试一次并以最终版本收尾。
+ */
+router.post('/generate/stream', async (req: any, res) => {
+  const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
+
+  if (!studentName || !grade || !subject || !topic || !performance || !mastery) {
+    return res.status(400).json({ error: '学生姓名、年级、学科、课程主题、课堂表现、掌握程度均为必填项' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  // 关键：禁用 nginx 缓冲，否则流式会被攒成一坨再下发
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  // 客户端提前断开检测。
+  // 注意：不能用 req.on('close') —— 请求体读完后它就会触发，会误判为断连。
+  // res 的 'close' 在响应结束或连接断开时触发，配合 writableEnded 即可区分。
+  let clientGone = false;
+  res.on('close', () => {
+    if (!res.writableEnded) clientGone = true;
+  });
+
+  const send = (event: string, data: any) => {
+    if (clientGone || res.writableEnded) return;
+    try {
+      res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+    } catch {
+      clientGone = true;
+    }
+  };
+
+  const params = { studentName, grade, subject, topic, performance, mastery, images: images || [] };
+
+  try {
+    let full = '';
+    for await (const delta of runStreamGeneration(params)) {
+      if (clientGone) break; // 客户端已断开，停止消耗
+      full += delta;
+      send('delta', { text: delta });
+    }
+
+    let content = full.trim();
+    let wordCount = countWords(content);
+    let regenerated = false;
+
+    // 字数不达标 -> 追加纠偏指令重试一次
+    if (!isWordCountOk(wordCount)) {
+      send('regenerating', { wordCount });
+      try {
+        const retryContent = await retryGeneration(params, '约 ' + wordCount + ' 字');
+        const retryWords = countWords(retryContent);
+        if (isWordCountOk(retryWords) || wordsDistance(retryWords) < wordsDistance(wordCount)) {
+          content = retryContent;
+          wordCount = retryWords;
+          regenerated = true;
+        }
+      } catch (retryError: any) {
+        console.warn('[AI流式] 重试失败，保留首轮结果: ' + retryError.message);
+      }
+    }
+
+    send('done', { content, wordCount, regenerated });
+  } catch (error: any) {
+    const { message } = describeAiError(error);
+    console.error('[AI流式生成失败] ' + message);
+    send('error', { error: message });
+  } finally {
+    if (!res.writableEnded) res.end();
   }
 });
 

@@ -36,6 +36,8 @@ export default function FollowUpList() {
   const [loading, setLoading] = useState(true);
   const [subject, setSubject] = useState('');
   const [grade, setGrade] = useState('');
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 20, total: 0, totalPages: 1 });
   const [detail, setDetail] = useState<FollowUp | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<FollowUp | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -54,21 +56,29 @@ export default function FollowUpList() {
 
   useEffect(() => {
     load();
-  }, [subject, grade]);
+  }, [subject, grade, page]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const params: string[] = [];
+      const params: string[] = ['page=' + page, 'pageSize=20'];
       if (subject) params.push('subject=' + encodeURIComponent(subject));
       if (grade) params.push('grade=' + encodeURIComponent(grade));
-      const res = await api.get('/followups' + (params.length ? '?' + params.join('&') : ''));
+      const res = await api.get('/followups?' + params.join('&'));
       setItems(res.followups || []);
+      if (res.pagination) setPagination(res.pagination);
     } catch (err: any) {
       toast.error('加载失败：' + err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  // 切换筛选时回到第一页（在同一个 setState 批次里修改，避免多打一次请求）
+  const changeFilter = (key: 'subject' | 'grade', value: string) => {
+    if (key === 'subject') setSubject(value);
+    else setGrade(value);
+    setPage(1);
   };
 
   const handleCopy = async (f: FollowUp) => {
@@ -136,7 +146,7 @@ export default function FollowUpList() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-800">回访历史</h1>
-          <p className="mt-1 text-sm text-slate-400">共 {items.length} 条回访记录</p>
+          <p className="mt-1 text-sm text-slate-400">共 {pagination.total} 条回访记录</p>
         </div>
         <Link to="/followups">
           <Button variant="gradient" icon={<Plus className="h-4 w-4" />}>
@@ -153,7 +163,7 @@ export default function FollowUpList() {
           action={
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-slate-300" />
-              <select value={subject} onChange={(e) => setSubject(e.target.value)} className={selectClass}>
+              <select value={subject} onChange={(e) => changeFilter('subject', e.target.value)} className={selectClass}>
                 <option value="">全部学科</option>
                 {SUBJECTS.map((s) => (
                   <option key={s} value={s}>
@@ -161,7 +171,7 @@ export default function FollowUpList() {
                   </option>
                 ))}
               </select>
-              <select value={grade} onChange={(e) => setGrade(e.target.value)} className={selectClass}>
+              <select value={grade} onChange={(e) => changeFilter('grade', e.target.value)} className={selectClass}>
                 <option value="">全部年级</option>
                 {GRADES.map((g) => (
                   <option key={g} value={g}>
@@ -277,6 +287,34 @@ export default function FollowUpList() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* 分页控件 */}
+        {!loading && pagination.totalPages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-5 py-3.5">
+            <p className="text-xs text-slate-400">
+              第 <span className="font-medium text-slate-600">{pagination.page}</span> / {pagination.totalPages} 页
+              · 共 {pagination.total} 条
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pagination.page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                上一页
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pagination.page >= pagination.totalPages}
+                onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+              >
+                下一页
+              </Button>
+            </div>
           </div>
         )}
       </Card>

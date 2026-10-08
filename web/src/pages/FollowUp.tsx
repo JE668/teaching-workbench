@@ -54,6 +54,8 @@ export default function FollowUp() {
 
   const [generating, setGenerating] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [regenerating, setRegenerating] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const [content, setContent] = useState('');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -132,18 +134,48 @@ export default function FollowUp() {
       return;
     }
     setGenerating(true);
+    setRegenerating(false);
     setContent('');
+    setDraft('');
     setEditing(false);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const res = await api.post('/followups/generate', { ...form, images });
-      setContent(res.content);
-      setDraft(res.content);
-      toast.success('AI 生成完成，可编辑后保存');
+      await api.streamPost(
+        '/followups/generate/stream',
+        { ...form, images },
+        {
+          onDelta: (text) => setContent((prev) => prev + text),
+          onRegenerating: () => {
+            setRegenerating(true);
+            toast.info('字数不达标，正在重新生成…');
+          },
+          onDone: ({ content: final, regenerated }) => {
+            setContent(final);
+            setDraft(final);
+            toast.success(regenerated ? '已重新生成并调整字数' : 'AI 生成完成，可编辑后保存');
+          },
+          onError: (msg) => toast.error(msg),
+        },
+        controller.signal
+      );
     } catch (err: any) {
-      toast.error('生成失败：' + err.message);
+      if (err?.name === 'AbortError') {
+        toast.info('已取消生成');
+      } else {
+        toast.error(err?.message || '生成失败');
+      }
     } finally {
       setGenerating(false);
+      setRegenerating(false);
+      abortRef.current = null;
     }
+  };
+
+  const cancelGenerate = () => {
+    abortRef.current?.abort();
   };
 
   const save = async () => {
@@ -406,9 +438,25 @@ export default function FollowUp() {
                   : '生成课后回访内容'}
               </Button>
 
-              {generating && elapsed >= 20 && (
-                <p className="mt-2 text-center text-xs text-amber-600">
-                  响应较慢（已 {elapsed} 秒），通常在 60 秒内返回；若超时会自动提示
+              {generating && (
+                <div className="mt-2 flex items-center justify-center gap-3">
+                  <button
+                    onClick={cancelGenerate}
+                    className="text-xs font-medium text-slate-400 underline-offset-2 transition-colors hover:text-slate-600 hover:underline"
+                  >
+                    取消生成
+                  </button>
+                  {elapsed >= 20 && (
+                    <span className="text-xs text-amber-600">
+                      已 {elapsed} 秒，通常 60 秒内返回
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {regenerating && (
+                <p className="mt-2 text-center text-xs text-brand-600">
+                  首轮字数不达标，正在重新生成…
                 </p>
               )}
             </div>
@@ -433,6 +481,8 @@ export default function FollowUp() {
                     >
                       {words} 字
                     </span>
+                    {!generating && (
+                    <>
                     <button
                       onClick={handleCopy}
                       title="复制全文"
@@ -448,16 +498,25 @@ export default function FollowUp() {
                       {editing ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
                       {editing ? '完成' : '编辑'}
                     </button>
+                    </>
+                    )}
                   </div>
                 }
               />
               <div className="p-5">
-                {!wordsOk && (
+                {!wordsOk && !generating && (
                   <div className="mb-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 ring-1 ring-amber-100">
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                     <p className="text-xs text-amber-700">
                       当前 {words} 字，要求 150–500 字。可点击「重新生成」或手动编辑。
                     </p>
+                  </div>
+                )}
+
+                {generating && (
+                  <div className="mb-3 flex items-center gap-2 text-xs text-brand-600">
+                    <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand-500" />
+                    正在生成中，文字会实时出现…
                   </div>
                 )}
 

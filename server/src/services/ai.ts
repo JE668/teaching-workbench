@@ -34,8 +34,13 @@ export interface FollowUpGenerateParams {
 }
 
 // 字数区间要求
-const MIN_WORDS = 150;
-const MAX_WORDS = 500;
+export const MIN_WORDS = 150;
+export const MAX_WORDS = 500;
+
+/** 字数是否落在要求区间内 */
+export function isWordCountOk(n: number): boolean {
+  return n >= MIN_WORDS && n <= MAX_WORDS;
+}
 
 /** 纯文字计数：去除空白与标点 */
 export function countWords(text: string): number {
@@ -190,15 +195,8 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
   return lines.join('\n');
 }
 
-/**
- * 调用一次模型
- */
-async function callModel(
-  params: FollowUpGenerateParams,
-  correction?: string
-): Promise<string> {
-  const ai = getClient();
-
+/** 组装 user 消息内容块：提示词 + 图片（Base64 Data URL） */
+function buildUserContent(params: FollowUpGenerateParams, correction?: string): any[] {
   const userContent: any[] = [{ type: 'text', text: buildPrompt(params, correction) }];
 
   for (const imagePath of params.images) {
@@ -229,25 +227,56 @@ async function callModel(
     });
   }
 
-  // SenseNova 自定义参数（reasoning_effort）需直接放入请求体，
-  // OpenAI Node SDK 的类型定义未包含该字段，故用 any 透传。
-  const requestBody: any = {
+  return userContent;
+}
+
+/**
+ * 构造请求体。
+ * SenseNova 自定义参数（reasoning_effort）需直接放入请求体，
+ * OpenAI Node SDK 的类型定义未包含该字段，故用 any 透传。
+ */
+function buildRequest(params: FollowUpGenerateParams, correction?: string, stream = false): any {
+  const body: any = {
     model: env.SENSENOVA_MODEL,
     messages: [
       {
         role: 'system',
         content: '你是一位专业的1对1教育咨询师，擅长撰写课后回访反馈。输出简洁、专业、有温度。',
       },
-      { role: 'user', content: userContent },
+      { role: 'user', content: buildUserContent(params, correction) },
     ],
     max_tokens: 2000,
     temperature: 0.7,
     // 思考强度：由 SENSENOVA_REASONING_EFFORT 控制（默认 low）
     reasoning_effort: env.SENSENOVA_REASONING_EFFORT,
   };
+  if (stream) body.stream = true;
+  return body;
+}
 
-  const response = await ai.chat.completions.create(requestBody);
+/** 单次调用（非流式）。供字数重试逻辑复用。 */
+export async function generateOnce(
+  params: FollowUpGenerateParams,
+  correction?: string
+): Promise<string> {
+  const ai = getClient();
+  const response = await ai.chat.completions.create(buildRequest(params, correction));
   return (response.choices[0].message.content || '').trim();
+}
+
+/** 单次调用（流式），逐块产出文本增量 */
+export async function* streamOnce(
+  params: FollowUpGenerateParams,
+  correction?: string
+): AsyncGenerator<string> {
+  const ai = getClient();
+  const stream = (await ai.chat.completions.create(buildRequest(params, correction, true))) as any;
+  for await (const chunk of stream) {
+    const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+      ? chunk.choices[0].delta.content
+      : null;
+    if (delta) yield delta as string;
+  }
 }
 
 /**
@@ -256,7 +285,7 @@ async function callModel(
  * 若仍不达标，返回更接近区间的那一版，交由前端提示用户微调。
  */
 export async function generateFollowUpContent(params: FollowUpGenerateParams): Promise<string> {
-  const first = await callModel(params);
+  const first = await generateOnce(params);
   const firstWords = countWords(first);
 
   if (firstWords >= MIN_WORDS && firstWords <= MAX_WORDS) {
@@ -266,7 +295,7 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
   console.warn('[AI] 首轮字数 ' + firstWords + ' 不在 ' + MIN_WORDS + '-' + MAX_WORDS + ' 区间，触发票重试');
 
   try {
-    const retry = await callModel(params, '约 ' + firstWords + ' 字');
+    const retry = await generateOnce(params, '约 ' + firstWords + ' 字');
     const retryWords = countWords(retry);
 
     // 重试结果达标则采用
@@ -283,4 +312,52 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
     console.warn('[AI] 重试失败，返回首轮结果: ' + error.message);
     return first;
   }
+}
+
+// ============ 测试注入点 ============
+// 路由通过 runFollowUpGeneration 调用生成逻辑，测试可替换实现以避免真实 API 请求。
+type FollowUpGenerator = (params: FollowUpGenerateParams) => Promise<string>;
+type FollowUpStreamer = (params: FollowUpGenerateParams) => AsyncGenerator<string>;
+
+type OnceGenerator = (params: FollowUpGenerateParams, correction?: string) => Promise<string>;
+
+let generatorImpl: FollowUpGenerator = generateFollowUpContent;
+let streamerImpl: FollowUpStreamer = (params) => streamOnce(params);
+// 单次调用（带纠偏指令），流式路由的字数重试走这里
+let onceImpl: OnceGenerator = (params, correction) => generateOnce(params, correction);
+
+/**
+ * 替换非流式生成实现（仅供测试）。
+ * 同时接管单次调用，确保流式路由的"字数重试"路径也可被测试控制。
+ */
+export function setFollowUpGenerator(fn: FollowUpGenerator): void {
+  generatorImpl = fn;
+  onceImpl = async (params) => fn(params);
+}
+
+/** 替换流式生成实现（仅供测试） */
+export function setFollowUpStreamer(fn: FollowUpStreamer): void {
+  streamerImpl = fn;
+}
+
+/** 恢复为真实的 SenseNova 调用 */
+export function resetFollowUpGenerator(): void {
+  generatorImpl = generateFollowUpContent;
+  streamerImpl = (params) => streamOnce(params);
+  onceImpl = (params, correction) => generateOnce(params, correction);
+}
+
+/** 路由统一入口：非流式（含字数重试） */
+export function runFollowUpGeneration(params: FollowUpGenerateParams): Promise<string> {
+  return generatorImpl(params);
+}
+
+/** 路由统一入口：流式 */
+export function runStreamGeneration(params: FollowUpGenerateParams): AsyncGenerator<string> {
+  return streamerImpl(params);
+}
+
+/** 带纠偏指令的单次调用（流式路由用于字数重试） */
+export function retryGeneration(params: FollowUpGenerateParams, correction: string): Promise<string> {
+  return onceImpl(params, correction);
 }

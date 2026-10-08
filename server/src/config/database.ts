@@ -2,13 +2,9 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
-import { fileURLToPath } from 'url';
 import { env } from './env.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const dbPath = path.resolve(__dirname, '../../data/teaching.db');
+const dbPath = path.join(env.DATA_DIR, 'teaching.db');
 
 // 确保目录存在
 const dbDir = path.dirname(dbPath);

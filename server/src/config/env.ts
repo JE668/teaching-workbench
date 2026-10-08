@@ -9,7 +9,10 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
-const DATA_DIR = path.resolve(__dirname, '../../data');
+// 数据目录：允许通过 DATA_DIR 覆盖，便于测试隔离与自定义挂载路径
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.resolve(__dirname, '../../data');
 const SECRET_FILE = path.join(DATA_DIR, '.jwt_secret');
 
 // 源码中公开的占位密钥，绝不能在运行中使用
@@ -89,6 +92,7 @@ if (['123456', 'password', 'admin', ''].includes(DEFAULT_ADMIN_PASS)) {
 }
 
 export const env = {
+  NODE_ENV: process.env.NODE_ENV || 'development',
   PORT: parseInt(process.env.PORT || '3000', 10),
   HOST: process.env.HOST || '0.0.0.0',
   JWT_SECRET: resolveJwtSecret(),

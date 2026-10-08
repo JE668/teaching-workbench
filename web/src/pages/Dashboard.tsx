@@ -35,7 +35,8 @@ const masteryLabel: Record<string, string> = {
 
 export default function Dashboard() {
   const [students, setStudents] = useState<Student[]>([]);
-  const [followups, setFollowups] = useState<FollowUp[]>([]);
+  const [recent, setRecent] = useState<FollowUp[]>([]);
+  const [summary, setSummary] = useState({ totalFollowUps: 0, totalImages: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,9 +45,14 @@ export default function Dashboard() {
 
   const load = async () => {
     try {
-      const [s, f] = await Promise.all([api.get('/students'), api.get('/followups')]);
+      // 用专门的统计接口，避免依赖分页列表的长度
+      const [s, st] = await Promise.all([api.get('/students'), api.get('/followups/stats')]);
       setStudents(s.students || []);
-      setFollowups(f.followups || []);
+      setSummary({
+        totalFollowUps: st.totalFollowUps || 0,
+        totalImages: st.totalImages || 0,
+      });
+      setRecent(st.recent || []);
     } catch (err) {
       console.error('加载失败', err);
     } finally {
@@ -56,8 +62,6 @@ export default function Dashboard() {
 
   if (loading) return <PageSkeleton />;
 
-  const recent = followups.slice(0, 5);
-  const totalImages = followups.reduce((sum, f) => sum + (f.images?.length || 0), 0);
   const stats = [
     {
       label: '学生总数',
@@ -68,7 +72,7 @@ export default function Dashboard() {
     },
     {
       label: '回访次数',
-      value: followups.length,
+      value: summary.totalFollowUps,
       icon: MessageSquareText,
       gradient: 'from-emerald-500 to-teal-600',
       suffix: '次',
@@ -82,7 +86,7 @@ export default function Dashboard() {
     },
     {
       label: '归档图片',
-      value: totalImages,
+      value: summary.totalImages,
       icon: ImageIcon,
       gradient: 'from-sky-500 to-cyan-600',
       suffix: '张',
