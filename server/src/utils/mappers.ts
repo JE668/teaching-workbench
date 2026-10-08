@@ -42,6 +42,7 @@ export function mapFollowUp(row: any): FollowUp {
     topic: row.topic,
     performance: row.performance,
     mastery: row.mastery,
+    sessionCount: normalizeSessionCount(row.session_count),
     images: parseImages(row.images),
     content: row.content,
     wordCount: row.word_count,
@@ -52,6 +53,13 @@ export function mapFollowUp(row: any): FollowUp {
 
 export function mapFollowUps(rows: any[]): FollowUp[] {
   return rows.map(mapFollowUp);
+}
+
+/** 课次数归一化：非法/缺失一律按 1 处理，并限制在 1-3 */
+export function normalizeSessionCount(value: any): number {
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(3, Math.max(1, n));
 }
 
 /** 安全解析 images 字段（数据库存 JSON 字符串，可能为空或损坏） */

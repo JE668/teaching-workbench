@@ -37,6 +37,7 @@ interface FollowUpRecord {
   topic: string;
   performance: string;
   mastery: string;
+  sessionCount: number;
   images: string[];
   content: string;
   wordCount: number;
@@ -269,11 +270,20 @@ export default function StudentProfile() {
                             <h3 className="text-sm font-semibold text-slate-800">{f.topic}</h3>
                             <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                             <Badge tone="brand">{f.subject}</Badge>
+                            {f.sessionCount > 1 && (
+                              <Badge tone="violet">{f.sessionCount} 次课</Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-2 text-xs text-slate-400">
                             <span>{formatDate(f.createdAt)}</span>
                             <span className="text-slate-300">·</span>
                             <span>{f.wordCount} 字</span>
+                            {f.sessionCount > 1 && (
+                              <>
+                                <span className="text-slate-300">·</span>
+                                <span>涵盖 {f.sessionCount} 次课</span>
+                              </>
+                            )}
                           </div>
                         </div>
 

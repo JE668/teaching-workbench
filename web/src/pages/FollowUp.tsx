@@ -16,7 +16,7 @@ import {
   MessageSquareText,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { Student, GRADES, SUBJECTS, MASTERY_LEVELS } from '../types/index';
+import { Student, GRADES, SUBJECTS, MASTERY_LEVELS, SESSION_COUNTS } from '../types/index';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -47,6 +47,7 @@ export default function FollowUp() {
     topic: '',
     performance: '',
     mastery: 'good',
+    sessionCount: 1,
   });
   const [images, setImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -272,12 +273,44 @@ export default function FollowUp() {
                 />
               </div>
 
+              <div>
+                <p className="mb-2 text-sm font-medium text-slate-700">本次回访涵盖</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {SESSION_COUNTS.map((n) => {
+                    const on = form.sessionCount === n;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setForm({ ...form, sessionCount: n })}
+                        className={cn(
+                          'rounded-xl py-2.5 text-sm font-medium ring-1 transition-all duration-200',
+                          on
+                            ? 'bg-brand-600 text-white ring-brand-600 shadow-soft'
+                            : 'bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100'
+                        )}
+                      >
+                        {n} 次课
+                      </button>
+                    );
+                  })}
+                </div>
+                {form.sessionCount > 1 && (
+                  <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                    将把最近 {form.sessionCount} 次课作为一个阶段整体反馈。
+                    课程内容可填这几次课的主题合集（如「分数加减法、分数乘法」）。
+                  </p>
+                )}
+              </div>
+
               <Input
-                label="课程主题"
+                label={form.sessionCount > 1 ? '课程内容（这几次课）' : '课程主题'}
                 required
                 value={form.topic}
                 onChange={(e) => setForm({ ...form, topic: e.target.value })}
-                placeholder="如：分数加减法运算"
+                placeholder={
+                  form.sessionCount > 1 ? '如：分数加减法、分数乘法' : '如：分数加减法运算'
+                }
               />
 
               <Textarea

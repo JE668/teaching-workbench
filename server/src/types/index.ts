@@ -54,6 +54,8 @@ export interface FollowUp {
   topic: string;
   performance: string;
   mastery: string;
+  /** 本次回访涵盖的课次数（1-3） */
+  sessionCount: number;
   images: string[]; // 图片路径数组（API 层已解析）
   content: string;
   wordCount: number;
@@ -69,6 +71,8 @@ export interface FollowUpCreate {
   topic: string;
   performance: string;
   mastery: string;
+  /** 本次回访涵盖的课次数（1-3），不传按 1 处理 */
+  sessionCount?: number;
   images: string[];
   content: string;
 }

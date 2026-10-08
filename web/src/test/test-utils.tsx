@@ -67,6 +67,7 @@ export function makeFollowUp(overrides: Record<string, unknown> = {}) {
     topic: '分数加减法运算',
     performance: '专注度较高，能主动回答问题',
     mastery: 'good',
+    sessionCount: 1,
     images: [],
     content,
     wordCount: 175,

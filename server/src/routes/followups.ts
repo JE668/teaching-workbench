@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
 import { FollowUpCreate } from '../types/index.js';
-import { mapFollowUp, mapFollowUps, parseImages } from '../utils/mappers.js';
+import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount } from '../utils/mappers.js';
 import {
   runFollowUpGeneration,
   runStreamGeneration,
@@ -127,6 +127,7 @@ router.post('/generate', async (req: any, res) => {
       topic,
       performance,
       mastery,
+      sessionCount: normalizeSessionCount(req.body.sessionCount),
       images: images || [],
     });
 
@@ -183,7 +184,16 @@ router.post('/generate/stream', async (req: any, res) => {
     }
   };
 
-  const params = { studentName, grade, subject, topic, performance, mastery, images: images || [] };
+  const params = {
+    studentName,
+    grade,
+    subject,
+    topic,
+    performance,
+    mastery,
+    sessionCount: normalizeSessionCount(req.body.sessionCount),
+    images: images || [],
+  };
 
   try {
     let full = '';
@@ -227,7 +237,9 @@ router.post('/generate/stream', async (req: any, res) => {
 router.post('/', (req: any, res) => {
   try {
     const userId = req.userId;
-    const { studentId, studentName, grade, subject, topic, performance, mastery, images, content } = req.body as FollowUpCreate;
+    const { studentId, studentName, grade, subject, topic, performance, mastery, images, content } =
+      req.body as FollowUpCreate;
+    const sessionCount = normalizeSessionCount(req.body.sessionCount);
 
     if (!studentName || !grade || !subject || !topic || !performance || !mastery || !content) {
       return res.status(400).json({ error: '所有字段为必填项' });
@@ -247,9 +259,12 @@ router.post('/', (req: any, res) => {
     const imagesJson = JSON.stringify(images || []);
 
     const result = db.prepare(
-      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, images, content, word_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(userId, linkedStudentId, studentName, grade, subject, topic, performance, mastery, imagesJson, content, wordCount);
+      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, images, content, word_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      userId, linkedStudentId, studentName, grade, subject, topic, performance, mastery,
+      sessionCount, imagesJson, content, wordCount
+    );
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(result.lastInsertRowid);
     res.json({ followup: mapFollowUp(row) });
@@ -272,9 +287,12 @@ router.put('/:id', (req: any, res) => {
 
     const wordCount = countWords(content ?? existing.content);
     const imagesJson = JSON.stringify(images ?? parseImages(existing.images));
+    const sessionCount = normalizeSessionCount(
+      req.body.sessionCount !== undefined ? req.body.sessionCount : existing.session_count
+    );
 
     db.prepare(
-      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`
+      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`
     ).run(
       studentId ?? existing.student_id,
       studentName ?? existing.student_name,
@@ -283,6 +301,7 @@ router.put('/:id', (req: any, res) => {
       topic ?? existing.topic,
       performance ?? existing.performance,
       mastery ?? existing.mastery,
+      sessionCount,
       imagesJson,
       content ?? existing.content,
       wordCount,

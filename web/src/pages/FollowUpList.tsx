@@ -15,7 +15,7 @@ import {
   Save,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { FollowUp, GRADES, SUBJECTS, MASTERY_LEVELS } from '../types/index';
+import { FollowUp, GRADES, SUBJECTS, MASTERY_LEVELS, SESSION_COUNTS } from '../types/index';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -48,6 +48,7 @@ export default function FollowUpList() {
     topic: '',
     performance: '',
     mastery: 'good',
+    sessionCount: 1,
     content: '',
   });
   const [editSaving, setEditSaving] = useState(false);
@@ -93,6 +94,7 @@ export default function FollowUpList() {
       topic: f.topic,
       performance: f.performance,
       mastery: f.mastery,
+      sessionCount: f.sessionCount || 1,
       content: f.content,
     });
   };
@@ -219,6 +221,7 @@ export default function FollowUpList() {
                     <span className="text-sm font-semibold text-slate-700">{f.studentName}</span>
                     <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                     <Badge tone="brand">{f.subject}</Badge>
+                    {f.sessionCount > 1 && <Badge tone="violet">{f.sessionCount} 次课</Badge>}
                     <span className="text-xs text-slate-400">{f.grade}</span>
                   </div>
                   <p className="mt-0.5 text-sm text-slate-500">{f.topic}</p>
@@ -346,7 +349,7 @@ export default function FollowUpList() {
                 { label: '学生', value: detail.studentName },
                 { label: '年级', value: detail.grade },
                 { label: '学科', value: detail.subject },
-                { label: '掌握程度', value: masteryLabel(detail.mastery) },
+                { label: '涵盖课次', value: detail.sessionCount > 1 ? detail.sessionCount + ' 次课' : '本次课' },
               ].map((x) => (
                 <div key={x.label} className="rounded-xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-slate-100">
                   <p className="text-[11px] text-slate-400">{x.label}</p>
@@ -355,9 +358,15 @@ export default function FollowUpList() {
               ))}
             </div>
 
-            <div>
-              <p className="mb-1.5 text-xs font-semibold text-slate-400">课程主题</p>
-              <p className="text-sm font-medium text-slate-700">{detail.topic}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-slate-400">课程主题</p>
+                <p className="text-sm font-medium text-slate-700">{detail.topic}</p>
+              </div>
+              <div>
+                <p className="mb-1.5 text-xs font-semibold text-slate-400">掌握程度</p>
+                <Badge tone={masteryTone(detail.mastery)}>{masteryLabel(detail.mastery)}</Badge>
+              </div>
             </div>
 
             <div>
@@ -425,8 +434,32 @@ export default function FollowUpList() {
         }
       >
         <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-sm font-medium text-slate-700">本次回访涵盖</p>
+            <div className="grid grid-cols-3 gap-2">
+              {SESSION_COUNTS.map((n) => {
+                const on = editForm.sessionCount === n;
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, sessionCount: n })}
+                    className={cn(
+                      'rounded-xl py-2.5 text-sm font-medium ring-1 transition-all',
+                      on
+                        ? 'bg-brand-600 text-white ring-brand-600 shadow-soft'
+                        : 'bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100'
+                    )}
+                  >
+                    {n} 次课
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <Input
-            label="课程主题"
+            label={editForm.sessionCount > 1 ? '课程内容（这几次课）' : '课程主题'}
             required
             value={editForm.topic}
             onChange={(e) => setEditForm({ ...editForm, topic: e.target.value })}

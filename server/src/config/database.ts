@@ -23,6 +23,18 @@ export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+/**
+ * 确保某张表存在指定列，缺则补上（SQLite 的简易迁移）。
+ * 列定义需自带 DEFAULT，否则 NOT NULL 的新列无法加到已有数据的表上。
+ */
+function ensureColumn(table: string, column: string, definition: string): void {
+  const columns = db.prepare('PRAGMA table_info(' + table + ')').all() as any[];
+  if (columns.some((c) => c.name === column)) return;
+
+  db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
+  console.log('[DB] 迁移: ' + table + '.' + column + ' 已添加 (默认 ' + definition + ')');
+}
+
 // 初始化表结构
 export function initDatabase() {
   // 用户表
@@ -63,6 +75,7 @@ export function initDatabase() {
       topic TEXT NOT NULL,
       performance TEXT NOT NULL,
       mastery TEXT NOT NULL,
+      session_count INTEGER NOT NULL DEFAULT 1,
       images TEXT NOT NULL DEFAULT '[]',
       content TEXT NOT NULL,
       word_count INTEGER NOT NULL DEFAULT 0,
@@ -80,6 +93,10 @@ export function initDatabase() {
     db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(env.DEFAULT_ADMIN_USER, hashedPassword);
     console.log(`[DB] 默认管理员已创建: ${env.DEFAULT_ADMIN_USER} / ${env.DEFAULT_ADMIN_PASS}`);
   }
+
+  // ========== 增量迁移 ==========
+  // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
+  ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');

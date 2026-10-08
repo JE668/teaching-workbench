@@ -31,6 +31,11 @@ function confirmDialog(): HTMLElement {
   return screen.getByText(/删除该条回访记录/).closest('div.relative') as HTMLElement;
 }
 
+/** 详情弹窗容器（同一课次文案在列表行里也会出现，需限定范围） */
+function detailDialog(): HTMLElement {
+  return screen.getByRole('heading', { name: '回访详情' }).closest('div.relative') as HTMLElement;
+}
+
 /**
  * 取分页文案。
  * 形如：第 <span>1</span> / 3 页 · 共 45 条 —— 数字被 span 包着，
@@ -78,6 +83,55 @@ describe('回访历史 · 加载与渲染', () => {
 
     const badge = screen.getByText('20 字');
     expect(badge.querySelector('span')?.className).toMatch(/amber/);
+  });
+});
+
+describe('回访历史 · 课次展示', () => {
+  it('多次课时显示课次徽章，单次课不显示', async () => {
+    get.mockResolvedValue(
+      page([
+        makeFollowUp({ id: 1, sessionCount: 3, topic: '三次课合集' }),
+        makeFollowUp({ id: 2, sessionCount: 1, topic: '单次课' }),
+      ])
+    );
+
+    renderWithProviders(<FollowUpList />);
+    await screen.findByText('三次课合集');
+
+    // 只有多课次记录带徽章；单次课不显示
+    expect(screen.getAllByText('3 次课').length).toBeGreaterThan(0);
+    expect(screen.queryByText('1 次课')).not.toBeInTheDocument();
+  });
+
+  it('详情弹窗标注涵盖课次', async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue(page([makeFollowUp({ sessionCount: 3 })]));
+
+    renderWithProviders(<FollowUpList />);
+    await screen.findByText('分数加减法运算');
+
+    await user.click(screen.getByTitle('查看详情'));
+
+    const modal = detailDialog();
+    expect(within(modal).getByText('涵盖课次')).toBeInTheDocument();
+    expect(within(modal).getByText('3 次课')).toBeInTheDocument();
+  });
+
+  it('编辑弹窗可修改课次数并提交', async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue(page([makeFollowUp({ id: 4, sessionCount: 1, topic: '待改课次' })]));
+    put.mockResolvedValue({ followup: makeFollowUp({ id: 4, sessionCount: 3, topic: '待改课次' }) });
+
+    renderWithProviders(<FollowUpList />);
+    await screen.findByText('待改课次');
+
+    await user.click(screen.getByTitle('编辑'));
+    await user.click(screen.getByRole('button', { name: '3 次课' }));
+    await user.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith('/followups/4', expect.objectContaining({ sessionCount: 3 }));
+    });
   });
 });
 

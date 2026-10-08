@@ -30,6 +30,8 @@ export interface FollowUpGenerateParams {
   topic: string;
   performance: string;
   mastery: string;
+  /** 本次回访涵盖的课次数（1-3），默认 1 */
+  sessionCount?: number;
   images: string[];
 }
 
@@ -147,17 +149,34 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
   const { studentName, grade, subject, topic, performance } = params;
   const masteryLabel = MASTERY_LABELS[params.mastery] || params.mastery;
 
+  // 按涵盖课次调整措辞：单次课聚焦本节课，多次课作为一个阶段整体反馈
+  const sessionCount = Math.min(3, Math.max(1, parseInt(String(params.sessionCount ?? 1), 10) || 1));
+  const multi = sessionCount > 1;
+  const scope = multi ? '最近 ' + sessionCount + ' 次课' : '本次课';
+  const scopePhrase = multi ? '这 ' + sessionCount + ' 次课' : '本节课';
+
   const lines: string[] = [
     '# 角色',
     '你是一位经验丰富的1对1教育咨询师，擅长为学生家长撰写专业、温馨、有针对性的课后回访反馈。',
     '',
     '# 任务',
     '根据以下课堂信息，为' + studentName + '（' + grade + '，' + subject + '）生成一份课后回访内容。',
+  ];
+
+  if (multi) {
+    lines.push(
+      '本次回访**涵盖' + scope + '**，请把这几次课作为一个阶段来整体反馈，',
+      '体现内容的递进关系与学生的阶段性变化，而不是逐次罗列流水账。'
+    );
+  }
+
+  lines.push(
     '',
     '# 课堂信息',
-    '- 课程主题：' + topic,
+    multi ? '- 涵盖课次：' + scope : '- 涵盖课次：本次课',
+    '- 课程内容：' + topic,
     '- 课堂表现：' + performance,
-    '- 掌握程度：' + masteryLabel,
+    '- 掌握程度（整体评价）：' + masteryLabel,
     '',
     '# 使用场景（很重要）',
     '这段内容会由老师直接复制后发送给家长（微信等聊天工具），因此必须是干净的可读文本：',
@@ -166,13 +185,20 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     '',
     '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
     '【课堂内容】',
-    '说明本节课讲授的知识点、教学重点与进度，要与' + grade + subject + '的课程标准相衔接。约 80-130 字。',
+    '说明' + scopePhrase + '讲授的知识点、教学重点与进度' +
+      (multi ? '，体现知识之间的递进关系' : '') +
+      '，要与' + grade + subject + '的课程标准相衔接。约 80-130 字。',
     '',
     '【学生收获】',
-    '结合课堂表现与掌握程度（' + masteryLabel + '），描述学生本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现。约 80-130 字。',
+    '结合课堂表现与掌握程度（' + masteryLabel + '），描述学生' +
+      (multi ? '在这 ' + sessionCount + ' 次课中的进步轨迹与当前' : '本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现，并反映其当前') +
+      '掌握情况。约 80-130 字。',
     '',
     '【课后任务】',
-    '布置具体、可执行、与本节课内容紧密相关的巩固练习，难度匹配' + grade + '水平。约 50-90 字。',
+    (multi
+      ? '针对' + scopePhrase + '的综合情况布置巩固练习，注意覆盖主要薄弱点。'
+      : '布置具体、可执行、与本节课内容紧密相关的巩固练习。') +
+      '任务要可落地，难度匹配' + grade + '水平。约 50-90 字。',
     '',
     '# 硬性要求',
     '1. 全文总字数必须控制在 ' + MIN_WORDS + '-' + MAX_WORDS + ' 字之间（中文字符计）',
@@ -180,8 +206,8 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     '3. 内容具体、有针对性，禁止空泛套话',
     '4. 全程使用中文',
     '5. 直接输出正文，不要任何前言、总结或额外说明',
-    '6. 三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号',
-  ];
+    '6. 三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号'
+  );
 
   if (correction) {
     lines.push(

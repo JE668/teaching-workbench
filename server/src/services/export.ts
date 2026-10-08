@@ -85,6 +85,7 @@ export function toMarkdown(
     lines.push(
       '- **日期**：' + formatDateCN(f.createdAt) +
       '　**学科**：' + f.subject +
+      '　**涵盖课次**：' + (f.sessionCount > 1 ? f.sessionCount + ' 次课' : '本次课') +
       '　**掌握程度**：' + masteryLabel(f.mastery)
     );
     if (f.performance) {
@@ -123,7 +124,7 @@ function csvCell(value: unknown): string {
 /** 生成 CSV（含 BOM，保证 Excel 正确识别 UTF-8） */
 export function toCsv(student: Student, followups: FollowUp[]): string {
   const header = [
-    '学生姓名', '年级', '学科', '课程主题', '上课日期',
+    '学生姓名', '年级', '学科', '课程主题', '上课日期', '涵盖课次',
     '掌握程度', '课堂表现', '回访内容', '图片数', '图片路径', '字数',
   ];
 
@@ -133,6 +134,7 @@ export function toCsv(student: Student, followups: FollowUp[]): string {
     f.subject,
     f.topic,
     f.createdAt,
+    f.sessionCount > 1 ? f.sessionCount + ' 次课' : '本次课',
     masteryLabel(f.mastery),
     f.performance,
     f.content,

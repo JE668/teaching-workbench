@@ -27,6 +27,8 @@ export interface FollowUp {
   topic: string;
   performance: string;
   mastery: string;
+  /** 本次回访涵盖的课次数（1-3） */
+  sessionCount: number;
   images: string[];
   content: string;
   wordCount: number;
@@ -66,6 +68,9 @@ export const SUBJECTS = [
   '编程',
   '其他',
 ];
+
+// 单次回访可涵盖的课次数
+export const SESSION_COUNTS = [1, 2, 3];
 
 // 掌握程度列表
 export const MASTERY_LEVELS = [

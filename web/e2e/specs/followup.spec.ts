@@ -68,6 +68,34 @@ test.describe('课后回访生成', () => {
     expect(clip).toContain('【课堂内容】');
   });
 
+  test('选择 3 次课后按阶段生成，并归档时保留课次数', async ({ page }) => {
+    const studentId = await seedStudent(page, '阶段反馈测试');
+
+    await gotoFollowUp(page);
+    await page.getByLabel(/选择已有学生/).selectOption(String(studentId));
+
+    // 选择涵盖 3 次课
+    await page.getByRole('button', { name: '3 次课' }).click();
+    await expect(page.getByText(/将把最近 3 次课作为一个阶段整体反馈/)).toBeVisible();
+
+    // 标签与新学生主题提示应随之变化
+    await page.getByLabel(/课程内容（这几次课）/).fill('分数加减法、分数乘法、分数除法');
+    await page.getByLabel(/课堂表现/).fill('三次课整体参与度高');
+    await page.getByRole('button', { name: /生成课后回访内容/ }).click();
+
+    await expect(page.getByTestId('generated-content')).toContainText('【课后任务】', {
+      timeout: 20_000,
+    });
+
+    await page.getByRole('button', { name: /保存并归档到学生档案/ }).click();
+    await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
+
+    // 档案时间线应显示课次徽章。
+    // 注意 exact：否则 "3 次课" 会同时命中 "涵盖 3 次课"
+    await expect(page.getByText('3 次课', { exact: true })).toBeVisible();
+    await expect(page.getByText('涵盖 3 次课')).toBeVisible();
+  });
+
   test('保存后自动归档到学生档案', async ({ page }) => {
     const studentId = await seedStudent(page, '归档测试');
 
