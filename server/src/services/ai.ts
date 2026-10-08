@@ -14,6 +14,10 @@ function getClient(): OpenAI {
     client = new OpenAI({
       apiKey: env.SENSENOVA_API_KEY,
       baseURL: env.SENSENOVA_BASE_URL,
+      // 超时收紧到 60s（SDK 默认 10 分钟，用户等不起）
+      timeout: env.SENSENOVA_TIMEOUT_MS,
+      // SDK 层仅重试 1 次（网络抖动/5xx）；字数不达标的业务重试由本服务自行控制
+      maxRetries: 1,
     });
   }
   return client;
@@ -48,6 +52,63 @@ const MASTERY_LABELS: Record<string, string> = {
   一般: '一般',
   需加强: '需加强',
 };
+
+/**
+ * 把 SDK 抛出的错误翻译成对用户有意义的中文提示。
+ * 避免所有失败都显示笼统的"AI生成失败"。
+ */
+export function describeAiError(error: any): { httpStatus: number; message: string } {
+  const name = error?.name || '';
+  const raw = error?.message || '';
+  const status = error?.status;
+
+  if (name === 'APIConnectionTimeoutError' || /timed?\s*out/i.test(raw)) {
+    return {
+      httpStatus: 504,
+      message: 'AI 生成超时（' +
+        Math.round(env.SENSENOVA_TIMEOUT_MS / 1000) +
+        '秒）。可稍后重试，或把 SENSENOVA_REASONING_EFFORT 调为 none 以加快速度。',
+    };
+  }
+
+  if (name === 'APIConnectionError') {
+    return {
+      httpStatus: 502,
+      message: '无法连接到 SenseNova 服务，请检查服务器网络或 SENSENOVA_BASE_URL 配置。',
+    };
+  }
+
+  if (status === 401 || status === 403) {
+    return {
+      httpStatus: 502,
+      message: 'SenseNova API Key 无效或无权限，请在 .env 中检查 SENSENOVA_API_KEY。',
+    };
+  }
+
+  if (status === 429) {
+    return {
+      httpStatus: 429,
+      message: '请求过于频繁或积分额度不足，请稍后重试。',
+    };
+  }
+
+  if (status === 400) {
+    return { httpStatus: 502, message: '请求被模型拒绝：' + raw };
+  }
+
+  if (typeof status === 'number' && status >= 500) {
+    return {
+      httpStatus: 502,
+      message: 'SenseNova 服务暂时不可用（HTTP ' + status + '），请稍后重试。',
+    };
+  }
+
+  if (/SENSENOVA_API_KEY 未配置/.test(raw)) {
+    return { httpStatus: 500, message: raw };
+  }
+
+  return { httpStatus: 500, message: raw || '未知错误' };
+}
 
 /**
  * 将本地上传图片转为 Base64 Data URL（含路径穿越与存在性校验）

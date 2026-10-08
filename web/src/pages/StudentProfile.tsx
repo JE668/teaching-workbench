@@ -11,6 +11,7 @@ import {
   StickyNote,
   Phone,
   FolderOpen,
+  Copy,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { MASTERY_LEVELS } from '../types/index';
@@ -19,7 +20,8 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { PageSkeleton } from '../components/ui/Skeleton';
-import { formatDate, relativeTime, cn } from '../lib/utils';
+import { useToast } from '../components/ui/Toast';
+import { formatDate, relativeTime, copyText, cn } from '../lib/utils';
 
 interface FollowUpRecord {
   id: number;
@@ -67,6 +69,7 @@ export default function StudentProfile() {
   const [data, setData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     if (!id) return;
@@ -261,15 +264,29 @@ export default function StudentProfile() {
                           >
                             {f.content}
                           </p>
-                          <button
-                            onClick={() => setExpanded(open ? null : f.id)}
-                            className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
-                          >
-                            <ChevronDown
-                              className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
-                            />
-                            {open ? '收起' : '展开全文'}
-                          </button>
+                          <div className="mt-2 flex items-center gap-4">
+                            <button
+                              onClick={() => setExpanded(open ? null : f.id)}
+                              className="flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
+                            >
+                              <ChevronDown
+                                className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
+                              />
+                              {open ? '收起' : '展开全文'}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const ok = await copyText(f.content);
+                                ok
+                                  ? toast.success('已复制回访内容')
+                                  : toast.error('复制失败，请手动选择文本');
+                              }}
+                              className="flex items-center gap-1 text-xs font-medium text-slate-400 transition-colors hover:text-slate-600"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                              复制
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </Card>

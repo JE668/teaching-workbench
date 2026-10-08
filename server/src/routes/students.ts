@@ -117,7 +117,7 @@ router.put('/:id', (req: any, res) => {
     }
 
     db.prepare(
-      'UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime("now", "localtime") WHERE id = ?'
+      "UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
     ).run(
       name || existing.name,
       grade || existing.grade,

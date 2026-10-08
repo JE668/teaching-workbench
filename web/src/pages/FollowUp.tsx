@@ -53,6 +53,7 @@ export default function FollowUp() {
   const [dragging, setDragging] = useState(false);
 
   const [generating, setGenerating] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [content, setContent] = useState('');
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -61,6 +62,16 @@ export default function FollowUp() {
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
   }, []);
+
+  // 生成耗时计时：让用户知道请求在跑，而不是卡死
+  useEffect(() => {
+    if (!generating) {
+      setElapsed(0);
+      return;
+    }
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [generating]);
 
   // URL 预选学生
   useEffect(() => {
@@ -388,8 +399,18 @@ export default function FollowUp() {
                 onClick={generate}
                 icon={!generating ? <Sparkles className="h-4 w-4" /> : undefined}
               >
-                {generating ? 'AI 正在生成…' : content ? '重新生成' : '生成课后回访内容'}
+                {generating
+                  ? 'AI 正在生成… ' + elapsed + 's'
+                  : content
+                  ? '重新生成'
+                  : '生成课后回访内容'}
               </Button>
+
+              {generating && elapsed >= 20 && (
+                <p className="mt-2 text-center text-xs text-amber-600">
+                  响应较慢（已 {elapsed} 秒），通常在 60 秒内返回；若超时会自动提示
+                </p>
+              )}
             </div>
           </Card>
 
@@ -469,7 +490,7 @@ export default function FollowUp() {
             <Card>
               <EmptyState
                 icon={generating ? <Sparkles className="h-7 w-7 animate-pulse" /> : <Wand2 className="h-7 w-7" />}
-                title={generating ? 'AI 正在撰写回访内容…' : '等待生成'}
+                title={generating ? 'AI 正在撰写回访内容… ' + elapsed + 's' : '等待生成'}
                 description={
                   generating
                     ? '正在分析课堂信息与图片，请稍候'

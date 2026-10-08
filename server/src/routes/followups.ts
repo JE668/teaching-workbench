@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db } from '../config/database.js';
 import { FollowUpCreate } from '../types/index.js';
 import { mapFollowUp, mapFollowUps, parseImages } from '../utils/mappers.js';
-import { generateFollowUpContent, countWords } from '../services/ai.js';
+import { generateFollowUpContent, describeAiError, countWords } from '../services/ai.js';
 
 const router = Router();
 
@@ -75,8 +75,9 @@ router.post('/generate', async (req: any, res) => {
 
     res.json({ content, wordCount });
   } catch (error: any) {
-    console.error('[AI生成]', error);
-    res.status(500).json({ error: 'AI生成失败', message: error.message });
+    const { httpStatus, message } = describeAiError(error);
+    console.error('[AI生成失败] ' + httpStatus + ' - ' + message);
+    res.status(httpStatus).json({ error: message });
   }
 });
 
@@ -131,7 +132,7 @@ router.put('/:id', (req: any, res) => {
     const imagesJson = JSON.stringify(images ?? parseImages(existing.images));
 
     db.prepare(
-      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, images=?, content=?, word_count=?, updated_at=datetime("now","localtime") WHERE id=?`
+      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`
     ).run(
       studentId ?? existing.student_id,
       studentName ?? existing.student_name,

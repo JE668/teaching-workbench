@@ -6,10 +6,13 @@ import {
   Filter,
   Trash2,
   Eye,
+  Pencil,
+  Copy,
   ImageIcon,
   Clock,
   FolderOpen,
   User,
+  Save,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { FollowUp, GRADES, SUBJECTS, MASTERY_LEVELS } from '../types/index';
@@ -20,8 +23,9 @@ import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import EmptyState from '../components/ui/EmptyState';
 import { ListSkeleton } from '../components/ui/Skeleton';
+import { Input, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
-import { formatDate, relativeTime, cn } from '../lib/utils';
+import { formatDate, relativeTime, countWords, copyText, cn } from '../lib/utils';
 
 const masteryTone = (v: string) =>
   v === 'excellent' ? 'success' : v === 'good' ? 'info' : v === 'average' ? 'warning' : 'danger';
@@ -35,6 +39,17 @@ export default function FollowUpList() {
   const [detail, setDetail] = useState<FollowUp | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<FollowUp | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // 编辑
+  const [editing, setEditing] = useState<FollowUp | null>(null);
+  const [editForm, setEditForm] = useState({
+    topic: '',
+    performance: '',
+    mastery: 'good',
+    content: '',
+  });
+  const [editSaving, setEditSaving] = useState(false);
+
   const toast = useToast();
 
   useEffect(() => {
@@ -56,6 +71,44 @@ export default function FollowUpList() {
     }
   };
 
+  const handleCopy = async (f: FollowUp) => {
+    const ok = await copyText(f.content);
+    ok ? toast.success('已复制回访内容') : toast.error('复制失败，请手动选择文本');
+  };
+
+  const openEdit = (f: FollowUp) => {
+    setDetail(null);
+    setEditing(f);
+    setEditForm({
+      topic: f.topic,
+      performance: f.performance,
+      mastery: f.mastery,
+      content: f.content,
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    if (!editForm.content.trim() || !editForm.topic.trim()) {
+      toast.error('课程主题与回访内容不能为空');
+      return;
+    }
+    setEditSaving(true);
+    try {
+      const res = await api.put('/followups/' + editing.id, {
+        ...editing,
+        ...editForm,
+      });
+      setItems((prev) => prev.map((f) => (f.id === res.followup.id ? res.followup : f)));
+      toast.success('回访内容已更新');
+      setEditing(null);
+    } catch (err: any) {
+      toast.error('保存失败：' + err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -73,6 +126,9 @@ export default function FollowUpList() {
 
   const selectClass =
     'h-9 cursor-pointer rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-600 outline-none transition-all hover:border-slate-300 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10';
+
+  const editWords = countWords(editForm.content);
+  const editWordsOk = editWords >= 150 && editWords <= 500;
 
   return (
     <div className="space-y-6 animate-fade-up">
@@ -92,7 +148,7 @@ export default function FollowUpList() {
       <Card>
         <CardHeader
           title="全部记录"
-          description="点击查看完整回访内容"
+          description="可查看、编辑、复制回访内容"
           icon={<History className="h-4 w-4" />}
           action={
             <div className="flex items-center gap-2">
@@ -127,7 +183,8 @@ export default function FollowUpList() {
             title={subject || grade ? '没有符合条件的记录' : '暂无回访记录'}
             description={subject || grade ? '试试调整筛选条件' : '创建第一条回访，AI 会帮你生成专业反馈'}
             action={
-              !subject && !grade && (
+              !subject &&
+              !grade && (
                 <Link to="/followups">
                   <Button variant="gradient" icon={<Plus className="h-4 w-4" />}>
                     新建回访
@@ -139,7 +196,10 @@ export default function FollowUpList() {
         ) : (
           <div className="divide-y divide-slate-50">
             {items.map((f) => (
-              <div key={f.id} className="group flex items-start gap-4 px-5 py-4 transition-colors hover:bg-slate-50/70">
+              <div
+                key={f.id}
+                className="group flex items-start gap-4 px-5 py-4 transition-colors hover:bg-slate-50/70"
+              >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-50 to-violet-50 text-sm font-semibold text-brand-600 ring-1 ring-brand-100">
                   {f.studentName?.charAt(0) || '?'}
                 </div>
@@ -164,11 +224,26 @@ export default function FollowUpList() {
                         {f.images.length} 张图片
                       </span>
                     )}
-                    <span>{f.wordCount} 字</span>
+                    <span className="flex items-center gap-1">
+                      <span
+                        className={cn(
+                          'inline-block h-1.5 w-1.5 rounded-full',
+                          f.wordCount >= 150 && f.wordCount <= 500 ? 'bg-emerald-400' : 'bg-amber-400'
+                        )}
+                      />
+                      {f.wordCount} 字
+                    </span>
                   </div>
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1 opacity-60 transition-opacity group-hover:opacity-100">
+                  <button
+                    onClick={() => handleCopy(f)}
+                    title="复制内容"
+                    className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
                   {f.studentId && (
                     <Link
                       to={'/students/' + f.studentId}
@@ -186,6 +261,13 @@ export default function FollowUpList() {
                     <Eye className="h-4 w-4" />
                   </button>
                   <button
+                    onClick={() => openEdit(f)}
+                    title="编辑"
+                    className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
                     onClick={() => setDeleteTarget(f)}
                     title="删除"
                     className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
@@ -199,13 +281,25 @@ export default function FollowUpList() {
         )}
       </Card>
 
-      {/* 详情弹窗 */}
+      {/* ===== 详情弹窗 ===== */}
       <Modal
         open={!!detail}
         onClose={() => setDetail(null)}
         size="lg"
         title="回访详情"
         description={detail ? detail.studentName + ' · ' + formatDate(detail.createdAt) : ''}
+        footer={
+          detail && (
+            <>
+              <Button variant="outline" onClick={() => handleCopy(detail)} icon={<Copy className="h-4 w-4" />}>
+                复制内容
+              </Button>
+              <Button variant="primary" onClick={() => openEdit(detail)} icon={<Pencil className="h-4 w-4" />}>
+                编辑
+              </Button>
+            </>
+          )
+        }
       >
         {detail && (
           <div className="space-y-5">
@@ -274,7 +368,92 @@ export default function FollowUpList() {
         )}
       </Modal>
 
-      {/* 删除确认 */}
+      {/* ===== 编辑弹窗 ===== */}
+      <Modal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        size="lg"
+        title="编辑回访"
+        description={editing ? editing.studentName + ' · ' + formatDate(editing.createdAt) : ''}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setEditing(null)} disabled={editSaving}>
+              取消
+            </Button>
+            <Button variant="primary" onClick={saveEdit} loading={editSaving} icon={<Save className="h-4 w-4" />}>
+              保存修改
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <Input
+            label="课程主题"
+            required
+            value={editForm.topic}
+            onChange={(e) => setEditForm({ ...editForm, topic: e.target.value })}
+          />
+
+          <Textarea
+            label="课堂表现"
+            rows={3}
+            value={editForm.performance}
+            onChange={(e) => setEditForm({ ...editForm, performance: e.target.value })}
+          />
+
+          <div>
+            <p className="mb-2 text-sm font-medium text-slate-700">掌握程度</p>
+            <div className="grid grid-cols-4 gap-2">
+              {MASTERY_LEVELS.map((m) => {
+                const on = editForm.mastery === m.value;
+                return (
+                  <button
+                    key={m.value}
+                    onClick={() => setEditForm({ ...editForm, mastery: m.value })}
+                    className={cn(
+                      'rounded-xl py-2.5 text-sm font-medium ring-1 transition-all',
+                      on
+                        ? 'bg-brand-600 text-white ring-brand-600 shadow-soft'
+                        : 'bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100'
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="text-sm font-medium text-slate-700">
+                回访内容 <span className="text-red-500">*</span>
+              </label>
+              <span
+                className={cn(
+                  'rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
+                  editWordsOk
+                    ? 'bg-emerald-50 text-emerald-600 ring-emerald-200'
+                    : 'bg-amber-50 text-amber-600 ring-amber-200'
+                )}
+              >
+                {editWords} 字
+              </span>
+            </div>
+            <textarea
+              value={editForm.content}
+              onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+              rows={14}
+              className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm leading-[1.9] text-slate-700 outline-none transition-all hover:border-slate-300 focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              建议保持三段结构：【课堂内容】【学生收获】【课后任务】，总字数 150–500
+            </p>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ===== 删除确认 ===== */}
       <ConfirmDialog
         open={!!deleteTarget}
         danger

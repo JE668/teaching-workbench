@@ -97,6 +97,8 @@ export const env = {
   SENSENOVA_BASE_URL: process.env.SENSENOVA_BASE_URL || 'https://token.sensenova.cn/v1',
   SENSENOVA_MODEL: process.env.SENSENOVA_MODEL || 'sensenova-6.8-flash-lite',
   SENSENOVA_REASONING_EFFORT: resolveReasoningEffort(),
+  // 单次请求超时（毫秒）。SDK 默认 10 分钟，对交互式生成过长，这里收紧到 60s。
+  SENSENOVA_TIMEOUT_MS: parseInt(process.env.SENSENOVA_TIMEOUT_MS || '60000', 10),
   DEFAULT_ADMIN_USER: process.env.DEFAULT_ADMIN_USER || 'admin',
   DEFAULT_ADMIN_PASS,
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000',
