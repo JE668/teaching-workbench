@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus,
@@ -42,8 +42,16 @@ export default function Students() {
     load();
   }, []);
 
-  // 搜索防抖
+  // 搜索防抖。
+  // 注意：必须跳过首轮执行 —— 否则挂载 300ms 后会再拉一次列表，
+  // 既产生一次多余请求，又会把期间的新增/编辑结果覆盖掉。
+  const skipInitialSearch = useRef(true);
   useEffect(() => {
+    if (skipInitialSearch.current) {
+      skipInitialSearch.current = false;
+      return;
+    }
+
     const t = setTimeout(() => {
       if (keyword.trim()) search(keyword.trim());
       else load();
