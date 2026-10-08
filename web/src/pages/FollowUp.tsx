@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Sparkles,
@@ -14,6 +14,8 @@ import {
   UploadCloud,
   AlertCircle,
   MessageSquareText,
+  Share2,
+  Camera,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -26,6 +28,13 @@ import {
   CourseType,
 } from '../types/index';
 import { deriveNickname } from '../lib/nickname';
+import {
+  loadDraft,
+  saveDraft,
+  clearDraft,
+  PERFORMANCE_PHRASES,
+  appendPhrase,
+} from '../lib/draft';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -42,29 +51,41 @@ const MASTERY_TONE: Record<string, string> = {
   needs_improvement: 'data-[on=true]:bg-red-500 data-[on=true]:ring-red-500',
 };
 
+/** 表单默认值。单独抽出来是为了让状态有明确类型（否则草稿的 `any` 会污染整个 form） */
+const DEFAULT_FORM = {
+  studentId: null as number | null,
+  studentName: '',
+  /** 亲切称呼；留空则由姓名自动推导 */
+  nickname: '',
+  courseType: 'one_on_one' as CourseType,
+  grade: '小学三年级',
+  subject: '数学',
+  topic: '',
+  performance: '',
+  mastery: 'good',
+  sessionCount: 1,
+};
+
+type FormState = typeof DEFAULT_FORM;
+
 export default function FollowUp() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+
+  // 从本地草稿恢复（切到微信再回来不会白填一场）
+  const restored = useMemo(() => loadDraft(), []);
 
   const [students, setStudents] = useState<Student[]>([]);
-  const [form, setForm] = useState({
-    studentId: null as number | null,
-    studentName: '',
-    /** 亲切称呼；留空则由姓名自动推导 */
-    nickname: '',
-    courseType: 'one_on_one' as CourseType,
-    grade: '小学三年级',
-    subject: '数学',
-    topic: '',
-    performance: '',
-    mastery: 'good',
-    sessionCount: 1,
-  });
+  const [form, setForm] = useState<FormState>(() => ({
+    ...DEFAULT_FORM,
+    ...((restored?.form || {}) as Partial<FormState>),
+  }));
   /** 小组课选中的学生 id */
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [images, setImages] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<number[]>(() => restored?.selectedIds || []);
+  const [images, setImages] = useState<string[]>(() => restored?.images || []);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
 
@@ -72,14 +93,35 @@ export default function FollowUp() {
   const [elapsed, setElapsed] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const [content, setContent] = useState('');
+  const [content, setContent] = useState(() => restored?.content || '');
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState(() => restored?.draft || '');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
   }, []);
+
+  // 草稿持久化：切到微信再回来（甚至标签页被重载）都能续上
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      saveDraft({ form, images, selectedIds, content, draft });
+    }, 300); // 防抖，避免每次按键都写
+    return () => clearTimeout(timer);
+  }, [form, images, selectedIds, content, draft]);
+
+  // 恢复过草稿就告诉用户一声，避免"我明明没填怎么有内容"的困惑
+  const restoredNotified = useRef(false);
+  useEffect(() => {
+    if (restoredNotified.current) return;
+    restoredNotified.current = true;
+
+    const hasSomething =
+      !!restored?.content || !!restored?.form?.topic || !!restored?.form?.studentName;
+    if (hasSomething) {
+      toast.info('已恢复上次未保存的内容');
+    }
+  }, [restored]);
 
   // 生成耗时计时：让用户知道请求在跑，而不是卡死
   useEffect(() => {
@@ -263,6 +305,9 @@ export default function FollowUp() {
 
       const res = await api.post('/followups', payload);
 
+      // 已归档，草稿使命结束
+      clearDraft();
+
       if (isGroup) {
         toast.success('已为 ' + selectedIds.length + ' 位学生各归档一条回访');
       } else {
@@ -297,6 +342,27 @@ export default function FollowUp() {
     const ok = await copyText(editing ? draft : content);
     ok ? toast.success('已复制回访内容，可直接发送给家长') : toast.error('复制失败，请手动选择文本复制');
   };
+
+  /** 手机上直接拉起系统分享面板 → 微信，省掉"复制→切微信→找会话" */
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+  const handleShare = async () => {
+    const text = editing ? draft : content;
+    if (!text.trim()) return;
+    try {
+      await navigator.share({ title: '课后回访', text });
+    } catch (err: any) {
+      // 用户取消（AbortError）不算失败，不打扰
+      if (err?.name !== 'AbortError') {
+        toast.error('分享失败，可改用复制');
+      }
+    }
+  };
+
+  /** 触屏设备：拖拽和快捷键粘贴都不适用，改用拍照/相册入口 */
+  const isTouch =
+    typeof window !== 'undefined' &&
+    (window.matchMedia?.('(pointer: coarse)').matches || 'ontouchstart' in window);
 
   const finalContent = editing ? draft : content;
   const words = countWords(finalContent);
@@ -513,14 +579,43 @@ export default function FollowUp() {
                 }
               />
 
-              <Textarea
-                label="课堂表现"
-                required
-                rows={4}
-                value={form.performance}
-                onChange={(e) => setForm({ ...form, performance: e.target.value })}
-                placeholder="如：本节课专注度较高，能主动回答问题，但计算速度还需提高…"
-              />
+              <div>
+                <Textarea
+                  label="课堂表现"
+                  required
+                  rows={4}
+                  value={form.performance}
+                  onChange={(e) => setForm({ ...form, performance: e.target.value })}
+                  placeholder="如：本节课专注度较高，能主动回答问题，但计算速度还需提高…"
+                />
+
+                {/* 手机上敲中文很慢，常用描述点一下即可插入 */}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {PERFORMANCE_PHRASES.map((p) => {
+                    const active = form.performance.includes(p.text);
+                    return (
+                      <button
+                        key={p.text}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() =>
+                          setForm({ ...form, performance: appendPhrase(form.performance, p.text) })
+                        }
+                        className={cn(
+                          'rounded-full px-2.5 py-1 text-xs ring-1 transition-colors',
+                          active
+                            ? p.tone === 'good'
+                              ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                              : 'bg-amber-50 text-amber-700 ring-amber-200'
+                            : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50'
+                        )}
+                      >
+                        {p.text}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               <div>
                 <p className="mb-2 text-sm font-medium text-slate-700">
@@ -599,18 +694,52 @@ export default function FollowUp() {
                     <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-brand-50">
                       <ImagePlus className="h-5 w-5 text-brand-500" />
                     </div>
-                    <p className="text-sm font-medium text-slate-600">点击上传或粘贴图片</p>
+                    <p className="text-sm font-medium text-slate-600">
+                      {isTouch ? '拍照或从相册选择' : '点击上传或粘贴图片'}
+                    </p>
                     <p className="mt-1 text-xs text-slate-400">支持 JPG / PNG / WebP，单张最大 10MB</p>
                   </>
                 )}
+
+                {/* 手机端：直接调起相机拍作业，省掉"先拍照再选图" */}
+                {isTouch && (
+                  <div className="mt-3 flex justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cameraRef.current?.click();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 ring-1 ring-brand-200"
+                    >
+                      <Camera className="h-3.5 w-3.5" />
+                      拍照
+                    </button>
+                  </div>
+                )}
+
                 <input
                   ref={fileRef}
+                  data-testid="file-input"
                   type="file"
                   multiple
                   accept="image/jpeg,image/png,image/webp"
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files) uploadFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                {/* capture=environment 让手机直接开后置摄像头 */}
+                <input
+                  ref={cameraRef}
+                  data-testid="camera-input"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files) uploadFiles(e.target.files, 'picker');
                     e.target.value = '';
                   }}
                 />
@@ -733,6 +862,17 @@ export default function FollowUp() {
                       <Copy className="h-3.5 w-3.5" />
                       复制
                     </button>
+                    {/* 手机：直接拉起系统分享 → 微信，省掉找会话的步骤与贴错人的风险 */}
+                    {canShare && (
+                      <button
+                        onClick={handleShare}
+                        title="分享到微信等应用"
+                        className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100"
+                      >
+                        <Share2 className="h-3.5 w-3.5" />
+                        分享
+                      </button>
+                    )}
                     <button
                       onClick={() => setEditing((v) => !v)}
                       className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-200"

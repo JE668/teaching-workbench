@@ -5,6 +5,7 @@ import { db } from '../config/database.js';
 import { env } from '../config/env.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { setMediaCookie, clearMediaCookie } from '../middleware/mediaAuth.js';
 import { mapUser } from '../utils/mappers.js';
 
 const router = Router();
@@ -46,6 +47,9 @@ router.post('/register', authLimiter, async (req, res) => {
 
     const token = jwt.sign({ userId }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN } as jwt.SignOptions);
 
+    // 图片走 <img src>，无法带 Authorization 头，因此额外下发签名 cookie
+    setMediaCookie(req, res, Number(userId));
+
     res.json({ token, user });
   } catch (error: any) {
     res.status(500).json({ error: '注册失败', message: error.message });
@@ -76,10 +80,21 @@ router.post('/login', authLimiter, async (req, res) => {
 
     const token = jwt.sign({ userId: user.id }, env.JWT_SECRET, { expiresIn: env.JWT_EXPIRES_IN } as jwt.SignOptions);
 
+    // 图片走 <img src>，无法带 Authorization 头，因此额外下发签名 cookie
+    setMediaCookie(req, res, Number(user.id));
+
     res.json({ token, user: publicUser });
   } catch (error: any) {
     res.status(500).json({ error: '登录失败', message: error.message });
   }
+});
+
+// 登出（清除图片访问 cookie）
+// 注意：JWT 存在 localStorage，由前端清除；此接口只负责收回图片访问凭证，
+// 否则共用设备上登出后仍能直接打开图片 URL。
+router.post('/logout', (req, res) => {
+  clearMediaCookie(res);
+  res.json({ success: true });
 });
 
 // 获取当前用户信息（需要登录）

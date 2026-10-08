@@ -62,6 +62,25 @@ export async function req(
   return { status: res.status, body: parsed, headers: res.headers };
 }
 
+/** 从 Set-Cookie 中取出图片访问 cookie 的 "name=value" 片段 */
+export function mediaCookieOf(res: JsonResponse): string {
+  const raw = res.headers.getSetCookie?.() ?? [];
+  const hit = raw.find((c) => c.startsWith('tw_media='));
+  return hit ? hit.split(';')[0] : '';
+}
+
+/** 注册用户并返回 token + 图片 cookie（图片接口需要 cookie，不能只用 token） */
+export async function createUserSession(
+  username: string,
+  password = 'passw0rd'
+): Promise<{ token: string; cookie: string }> {
+  const res = await req('POST', '/api/auth/register', { body: { username, password } });
+  if (res.status !== 200) {
+    throw new Error('注册失败: ' + JSON.stringify(res.body));
+  }
+  return { token: res.body.token as string, cookie: mediaCookieOf(res) };
+}
+
 /** 注册并登录一个独立用户，返回其 token（用于验证数据隔离） */
 export async function createUser(username: string, password = 'passw0rd'): Promise<string> {
   const res = await req('POST', '/api/auth/register', { body: { username, password } });

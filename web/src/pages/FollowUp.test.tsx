@@ -40,6 +40,8 @@ async function fillMinimalForm(user: ReturnType<typeof userEvent.setup>, topic =
 }
 
 beforeEach(() => {
+  // 草稿是跨用例的持久状态，必须清掉，否则会串味
+  localStorage.clear();
   get.mockReset();
   post.mockReset();
   streamPost.mockReset();
@@ -354,5 +356,103 @@ describe('课后回访 · 保存后的告知', () => {
     expect(
       await screen.findByText(/已把 3 条同名历史回访归入该学生档案/)
     ).toBeInTheDocument();
+  });
+});
+
+describe('课后回访 · 课堂表现快捷短语', () => {
+  it('点一下即插入，再点不重复插入', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FollowUp />);
+
+    const box = screen.getByLabelText(/课堂表现/) as HTMLTextAreaElement;
+
+    await user.click(screen.getByRole('button', { name: '专注度高' }));
+    expect(box.value).toBe('专注度高');
+
+    await user.click(screen.getByRole('button', { name: '计算粗心' }));
+    expect(box.value).toBe('专注度高，计算粗心');
+
+    // 重复点击不应叠加
+    await user.click(screen.getByRole('button', { name: '专注度高' }));
+    expect(box.value).toBe('专注度高，计算粗心');
+  });
+
+  it('已插入的短语标记为激活态', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FollowUp />);
+
+    const chip = screen.getByRole('button', { name: '主动提问' });
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(chip);
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => {
+  it('重新进入页面时恢复上次未保存的表单与文案', async () => {
+    localStorage.setItem(
+      'tw:followup-draft:v1',
+      JSON.stringify({
+        savedAt: Date.now(),
+        form: { studentName: '李一一', topic: '分数加减法', performance: '专注度高' },
+        images: [],
+        selectedIds: [],
+        content: '【课堂内容】上次生成但没保存的内容。',
+        draft: '',
+      })
+    );
+
+    renderWithProviders(<FollowUp />);
+
+    expect(screen.getByLabelText(/学生姓名/)).toHaveValue('李一一');
+    expect(screen.getByLabelText(/课程主题/)).toHaveValue('分数加减法');
+    expect(screen.getByLabelText(/课堂表现/)).toHaveValue('专注度高');
+    expect(screen.getByTestId('generated-content')).toHaveTextContent('上次生成但没保存的内容');
+  });
+
+  it('恢复草稿时给出提示，避免用户困惑', async () => {
+    localStorage.setItem(
+      'tw:followup-draft:v1',
+      JSON.stringify({
+        savedAt: Date.now(),
+        form: { studentName: '李一一', topic: 'x', performance: 'y' },
+        images: [],
+        selectedIds: [],
+        content: '',
+        draft: '',
+      })
+    );
+
+    renderWithProviders(<FollowUp />);
+
+    expect(await screen.findByText('已恢复上次未保存的内容')).toBeInTheDocument();
+  });
+
+  it('没有草稿时不提示', async () => {
+    renderWithProviders(<FollowUp />);
+
+    await new Promise((r) => setTimeout(r, 400));
+    expect(screen.queryByText('已恢复上次未保存的内容')).not.toBeInTheDocument();
+  });
+
+  it('保存成功后清除草稿，重新进入不再恢复', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    post.mockResolvedValue({ followup: { id: 1, studentId: 1 } });
+
+    renderWithProviders(<FollowUp />);
+    await user.type(screen.getByLabelText(/学生姓名/), '李一一');
+    await user.type(screen.getByLabelText(/课程主题/), '分数加减法');
+    await user.type(screen.getByLabelText(/课堂表现/), '专注');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+
+    await waitFor(() => {
+      expect(localStorage.getItem('tw:followup-draft:v1')).toBeNull();
+    });
   });
 });

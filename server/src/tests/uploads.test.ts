@@ -1,14 +1,17 @@
 import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, req, url, createUser, tinyPngBuffer } from './helpers.js';
+import { startServer, stopServer, req, url, createUserSession, tinyPngBuffer } from './helpers.js';
 import { env } from '../config/env.js';
 
 let token = '';
+let mediaCookie = '';
 
 before(async () => {
   await startServer();
-  token = await createUser('upload-teacher');
+  const session = await createUserSession('upload-teacher');
+  token = session.token;
+  mediaCookie = session.cookie;
 });
 after(async () => {
   await stopServer();
@@ -38,7 +41,8 @@ describe('图片上传', () => {
     const up = await req('POST', '/api/upload', { token, raw: pngForm() });
     const p = up.body.paths[0] as string;
 
-    const res = await fetch(url('/uploads/' + p));
+    // 图片接口需要图片访问 cookie（<img src> 带不了 Authorization 头）
+    const res = await fetch(url('/uploads/' + p), { headers: { Cookie: mediaCookie } });
     assert.equal(res.status, 200, '上传后应能直接访问图片');
     assert.equal(res.headers.get('content-type'), 'image/png');
 
@@ -65,9 +69,9 @@ describe('图片上传', () => {
   });
 
   test('不同用户的图片分目录隔离', async () => {
-    const other = await createUser('upload-other');
+    const other = await createUserSession('upload-other');
     const mine = await req('POST', '/api/upload', { token, raw: pngForm() });
-    const theirs = await req('POST', '/api/upload', { token: other, raw: pngForm() });
+    const theirs = await req('POST', '/api/upload', { token: other.token, raw: pngForm() });
 
     const myPrefix = (mine.body.paths[0] as string).split('/')[0];
     const theirPrefix = (theirs.body.paths[0] as string).split('/')[0];
@@ -112,6 +116,113 @@ describe('图片上传', () => {
 });
 
 /** 取当前用户的上传目录前缀，用于构造穿越尝试 */
+describe('图片访问鉴权（多用户隔离）', () => {
+  test('未携带凭证时拒绝访问（回归：曾用 express.static 完全裸奔）', async () => {
+    const up = await req('POST', '/api/upload', { token, raw: pngForm() });
+    const p = up.body.paths[0] as string;
+
+    const res = await fetch(url('/uploads/' + p));
+    assert.equal(res.status, 401, '没有凭证不应能拿到图片');
+  });
+
+  test('伪造签名被拒绝', async () => {
+    const up = await req('POST', '/api/upload', { token, raw: pngForm() });
+    const p = up.body.paths[0] as string;
+    const owner = p.split('/')[0];
+
+    const res = await fetch(url('/uploads/' + p), {
+      headers: { Cookie: 'tw_media=' + owner + '.9999999999999.forged' },
+    });
+    assert.equal(res.status, 401);
+  });
+
+  test('过期令牌被拒绝', async () => {
+    const up = await req('POST', '/api/upload', { token, raw: pngForm() });
+    const p = up.body.paths[0] as string;
+    const owner = p.split('/')[0];
+
+    // 用真实签名但把过期时间改到过去
+    const { createMediaToken, MEDIA_COOKIE } = await import('../middleware/mediaAuth.js');
+    const real = createMediaToken(Number(owner));
+    const [, , sig] = real.split('.');
+    const expired = owner + '.' + (Date.now() - 1000) + '.' + sig;
+
+    const res = await fetch(url('/uploads/' + p), {
+      headers: { Cookie: MEDIA_COOKIE + '=' + expired },
+    });
+    assert.equal(res.status, 401, '过期令牌不应通过');
+  });
+
+  test('【核心】用户 B 不能访问用户 A 的图片', async () => {
+    // A 上传一张图
+    const aSession = await createUserSession('media-user-a');
+    const aUp = await req('POST', '/api/upload', { token: aSession.token, raw: pngForm() });
+    const aPath = aUp.body.paths[0] as string;
+
+    // B 用自己的合法 cookie 去访问 A 的图片 → 必须 403
+    const bSession = await createUserSession('media-user-b');
+    const cross = await fetch(url('/uploads/' + aPath), {
+      headers: { Cookie: bSession.cookie },
+    });
+    assert.equal(cross.status, 403, 'B 不应能读 A 的图片');
+
+    // A 用自己的 cookie 访问自己的图片 → 200
+    const own = await fetch(url('/uploads/' + aPath), {
+      headers: { Cookie: aSession.cookie },
+    });
+    assert.equal(own.status, 200, 'A 应能读自己的图片');
+  });
+
+  test('登录返回的 cookie 可用于取图', async () => {
+    const session = await createUserSession('media-login-user');
+    const up = await req('POST', '/api/upload', { token: session.token, raw: pngForm() });
+    const p = up.body.paths[0] as string;
+
+    assert.ok(session.cookie.startsWith('tw_media='), '应下发图片访问 cookie');
+
+    const res = await fetch(url('/uploads/' + p), { headers: { Cookie: session.cookie } });
+    assert.equal(res.status, 200);
+  });
+
+  test('登出后 cookie 失效', async () => {
+    const session = await createUserSession('media-logout-user');
+    const up = await req('POST', '/api/upload', { token: session.token, raw: pngForm() });
+    const p = up.body.paths[0] as string;
+
+    const out = await req('POST', '/api/auth/logout', { token: session.token });
+    assert.equal(out.status, 200);
+
+    // 服务端通过 Set-Cookie 清空；即使旧 cookie 仍在本地，也应随有效期结束失效。
+    // 这里断言的是接口确实下发了清除指令。
+    const cleared = out.headers.getSetCookie?.().find((c) => c.startsWith('tw_media='));
+    assert.ok(cleared, '登出应下发清除 cookie 的指令');
+    assert.match(cleared!, /tw_media=;|Expires=Thu, 01 Jan 1970/);
+  });
+
+  test('跨用户目录的路径穿越被拒绝', async () => {
+    const res = await fetch(url('/uploads/1/..%2F..%2F..%2Fetc%2Fpasswd'), {
+      headers: { Cookie: mediaCookie },
+    });
+    // 归属校验(403) 或路径校验(400) 或路由未命中(404) 都算拒绝
+    assert.ok([400, 403, 404].includes(res.status), '不应返回文件内容，实际: ' + res.status);
+    const text = await res.text();
+    assert.ok(!text.includes('root:'), '绝不能泄露文件内容');
+  });
+
+  test('自己目录内的路径穿越被拒绝', async () => {
+    // 用自己的合法 cookie，但试图跳出自己的目录
+    const myId = mediaCookie ? (await req('GET', '/api/auth/me', { token })).body.user.id : 0;
+
+    const res = await fetch(url('/uploads/' + myId + '/..%2F..%2F..%2Fetc%2Fpasswd'), {
+      headers: { Cookie: mediaCookie },
+    });
+    assert.ok([400, 403, 404].includes(res.status), '实际: ' + res.status);
+
+    const text = await res.text();
+    assert.ok(!text.includes('root:'), '绝不能泄露文件内容');
+  });
+});
+
 describe('图片上传 · 按内容判定类型（回归：微信拖拽）', () => {
   function formOf(buffer: Buffer, name: string, type: string) {
     const fd = new FormData();

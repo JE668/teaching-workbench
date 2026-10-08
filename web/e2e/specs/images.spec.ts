@@ -142,8 +142,8 @@ test.describe('图片链路', () => {
     await loginViaApi(page);
     await page.goto('/followups');
 
-    // 直接用文件选择器上传
-    const input = page.locator('input[type="file"]');
+    // 页面上有两个 file input（相册选择 + 拍照），需明确指定相册那个
+    const input = page.getByTestId('file-input');
     await input.setInputFiles({
       name: 'picked.png',
       mimeType: 'image/png',

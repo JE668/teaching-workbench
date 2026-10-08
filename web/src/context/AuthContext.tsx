@@ -58,6 +58,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    // 通知服务端收回图片访问 cookie。
+    // 不等待结果：登出必须立刻生效，不能因为网络问题卡住界面。
+    // 共用设备上若不收回，登出后仍可直接打开图片 URL。
+    api.post('/auth/logout', {}).catch(() => {});
+
     api.clearAuth();
     setToken(null);
     setUser(null);

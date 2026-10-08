@@ -3,25 +3,22 @@ import { Page, APIResponse, expect } from '@playwright/test';
 export const ADMIN_USER = 'admin';
 export const ADMIN_PASS = 'e2e-admin-pass';
 
-// 用例串行执行，缓存一次登录即可（也避免反复触发登录限流）
-let cachedToken: string | null = null;
-
 /**
  * 取 API 令牌。
  *
- * 注意：page.request 是独立的 HTTP 上下文，不共享页面 localStorage 中的 JWT，
- * 因此凡是绕过 UI 直接调接口的地方都必须显式带上 Authorization。
+ * 注意 1：page.request 不共享页面 localStorage 中的 JWT，
+ *         凡是绕过 UI 直接调接口的地方都必须显式带上 Authorization。
+ * 注意 2：**不能跨用例缓存 token**。Playwright 每个测试都是全新的浏览器上下文，
+ *         缓存的 token 会让第二个用例之后拿不到登录时下发的图片 cookie，
+ *         导致图片请求 401。登录限流只统计失败请求，重复登录没有副作用。
  */
 export async function getToken(page: Page): Promise<string> {
-  if (cachedToken) return cachedToken;
-
   const res = await page.request.post('/api/auth/login', {
     data: { username: ADMIN_USER, password: ADMIN_PASS },
   });
   expect(res.ok(), 'API 登录失败: ' + res.status()).toBeTruthy();
 
-  cachedToken = (await res.json()).token as string;
-  return cachedToken;
+  return (await res.json()).token as string;
 }
 
 /** 带鉴权的 API 调用 */
