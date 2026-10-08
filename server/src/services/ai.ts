@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { env } from '../config/env.js';
+import { deriveNickname } from '../utils/nickname.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -32,6 +33,10 @@ export interface FollowUpGenerateParams {
   mastery: string;
   /** 本次回访涵盖的课次数（1-3），默认 1 */
   sessionCount?: number;
+  /** 课程类型：1对1（默认）或小组课 */
+  courseType?: 'one_on_one' | 'group';
+  /** 自定义称呼；不传则由 studentName 推导 */
+  nickname?: string;
   images: string[];
 }
 
@@ -155,12 +160,19 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
   const scope = multi ? '最近 ' + sessionCount + ' 次课' : '本次课';
   const scopePhrase = multi ? '这 ' + sessionCount + ' 次课' : '本节课';
 
+  // 课程类型：小组课面向多位家长，绝不能出现学生姓名
+  const isGroup = params.courseType === 'group';
+  // 亲切称呼：李一一 → 一一
+  const nickname = deriveNickname(params.nickname || studentName);
+
   const lines: string[] = [
     '# 角色',
-    '你是一位经验丰富的1对1教育咨询师，擅长为学生家长撰写专业、温馨、有针对性的课后回访反馈。',
+    '你是一位经验丰富的教育咨询师，擅长为学生家长撰写专业、温馨、有针对性的课后回访反馈。',
     '',
     '# 任务',
-    '根据以下课堂信息，为' + studentName + '（' + grade + '，' + subject + '）生成一份课后回访内容。',
+    isGroup
+      ? '根据以下课堂信息，为' + grade + subject + '的**小组课**生成一份课后回访内容。'
+      : '根据以下课堂信息，为' + studentName + '（' + grade + '，' + subject + '）生成一份课后回访内容。',
   ];
 
   if (multi) {
@@ -170,18 +182,57 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     );
   }
 
+  lines.push('', '# 课堂信息');
+
+  // 1对1 时给出亲切称呼；小组课不给任何姓名信息
+  if (!isGroup) {
+    if (nickname) {
+      lines.push(
+        '- 对学生的称呼：' + nickname +
+          '（行文中请用这个亲切的称呼，不要反复使用全名「' + studentName + '」）'
+      );
+    } else {
+      lines.push('- 学生姓名：' + studentName);
+    }
+  }
+
   lines.push(
-    '',
-    '# 课堂信息',
     multi ? '- 涵盖课次：' + scope : '- 涵盖课次：本次课',
     '- 课程内容：' + topic,
     '- 课堂表现：' + performance,
     '- 掌握程度（整体评价）：' + masteryLabel,
-    '',
+    ''
+  );
+
+  if (isGroup) {
+    lines.push(
+      '# ⚠️ 小组课最高优先级要求',
+      '这段内容会由老师**分别私发给多位家长**，请务必遵守：',
+      '- 【严禁】出现任何学生姓名、昵称、小名，也不要写"某某同学""XX 同学"',
+      '- 【严禁】描述只有某个孩子才有的个性化细节（如"某某做错了第 3 题"）',
+      '- 统一使用「孩子们」「同学们」「孩子」这类通用称呼',
+      '- 内容写成对全班都适用的通用反馈，让每位家长读起来都自然贴切',
+      ''
+    );
+  }
+
+  lines.push(
     '# 使用场景（很重要）',
     '这段内容会由老师直接复制后发送给家长（微信等聊天工具），因此必须是干净的可读文本：',
     '禁止使用任何 Markdown 标记（如 #、##、*、-、>、`），禁止代码块，',
     '禁止添加"以下是回访内容"之类的前言或结语。',
+    '',
+    '# 关于课堂照片（务必注意）',
+    (params.images?.length ?? 0) > 0
+      ? '你会看到课堂照片。照片是给老师看的，**家长看不到这些照片** —— ' +
+        '因此【严禁】出现"图中""图片中""如图所示""照片里""图中的题目"这类指代图片的字眼。' +
+        '需要传达的信息，请直接用文字描述出来（例如写"第 3 题漏乘了分子"，而不要写"图中第 3 题"）。'
+      : '（本次没有课堂照片，直接依据文字信息撰写即可。）',
+    '',
+    '# 语气与表情',
+    '语气亲切自然，像老师和家长聊天，可以适度使用 emoji 让表达更温暖',
+    '（如 ✨📚💪🌟👍），全文用 2-4 个即可，放在句子或段落末尾；',
+    '不要每句都加，不要堆砌，也不要使用与学习场景无关的表情。',
     '',
     '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
     '【课堂内容】',
@@ -190,9 +241,12 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
       '，要与' + grade + subject + '的课程标准相衔接。约 80-130 字。',
     '',
     '【学生收获】',
-    '结合课堂表现与掌握程度（' + masteryLabel + '），描述学生' +
-      (multi ? '在这 ' + sessionCount + ' 次课中的进步轨迹与当前' : '本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现，并反映其当前') +
-      '掌握情况。约 80-130 字。',
+    isGroup
+      ? '结合课堂表现与掌握程度（' + masteryLabel + '），描述同学们在' + scopePhrase +
+        '的整体进步与亮点（理解力、专注度、解题能力等），并给出对全班的整体评价。约 80-130 字。'
+      : '结合课堂表现与掌握程度（' + masteryLabel + '），描述' + (nickname || '学生') +
+        (multi ? '在这 ' + sessionCount + ' 次课中的进步轨迹与当前' : '本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现，并反映其当前') +
+        '掌握情况。约 80-130 字。',
     '',
     '【课后任务】',
     (multi
@@ -206,7 +260,11 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     '3. 内容具体、有针对性，禁止空泛套话',
     '4. 全程使用中文',
     '5. 直接输出正文，不要任何前言、总结或额外说明',
-    '6. 三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号'
+    '6. 三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号',
+    '7. 【严禁】出现"图中""图片中""如图所示""照片里"这类指代图片的字眼',
+    isGroup
+      ? '8. 【严禁】出现任何学生姓名、昵称，一律使用通用称呼'
+      : '8. 行文使用亲切称呼，不要反复使用学生全名'
   );
 
   if (correction) {

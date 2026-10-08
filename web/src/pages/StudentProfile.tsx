@@ -38,6 +38,7 @@ interface FollowUpRecord {
   performance: string;
   mastery: string;
   sessionCount: number;
+  courseType?: 'one_on_one' | 'group';
   images: string[];
   content: string;
   wordCount: number;
@@ -270,6 +271,7 @@ export default function StudentProfile() {
                             <h3 className="text-sm font-semibold text-slate-800">{f.topic}</h3>
                             <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                             <Badge tone="brand">{f.subject}</Badge>
+                            {f.courseType === 'group' && <Badge tone="info">小组课</Badge>}
                             {f.sessionCount > 1 && (
                               <Badge tone="violet">{f.sessionCount} 次课</Badge>
                             )}

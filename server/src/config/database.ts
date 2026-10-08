@@ -76,6 +76,7 @@ export function initDatabase() {
       performance TEXT NOT NULL,
       mastery TEXT NOT NULL,
       session_count INTEGER NOT NULL DEFAULT 1,
+      course_type TEXT NOT NULL DEFAULT 'one_on_one',
       images TEXT NOT NULL DEFAULT '[]',
       content TEXT NOT NULL,
       word_count INTEGER NOT NULL DEFAULT 0,
@@ -97,6 +98,7 @@ export function initDatabase() {
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
   ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn('followups', 'course_type', "TEXT NOT NULL DEFAULT 'one_on_one'");
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');

@@ -68,6 +68,45 @@ test.describe('课后回访生成', () => {
     expect(clip).toContain('【课堂内容】');
   });
 
+  test('小组课：多选学生一次归档多条，且文案不含姓名', async ({ page }) => {
+    // 姓名带运行期唯一后缀：避免历史运行残留的同名学生导致选择器歧义
+    const tag = Date.now().toString().slice(-6);
+    const nameA = '小组甲' + tag;
+    const nameB = '小组乙' + tag;
+
+    const a = await seedStudent(page, nameA);
+    const b = await seedStudent(page, nameB);
+
+    await gotoFollowUp(page);
+    await page.getByRole('button', { name: '小组课' }).click();
+    // selected-count 只在小组课模式渲染，作为进入该模式的稳定锚点
+    await expect(page.getByTestId('selected-count')).toBeVisible();
+
+    // 勾选两名学生
+    await page.getByText(nameA).click();
+    await page.getByText(nameB).click();
+    await expect(page.getByTestId('selected-count')).toContainText('2');
+
+    await page.getByLabel(/课程主题/).fill('分数加减法、分数乘法');
+    await page.getByLabel(/课堂表现/).fill('整体参与度较高');
+    await page.getByRole('button', { name: /生成课后回访内容/ }).click();
+    await expect(page.getByTestId('generated-content')).toContainText('【课后任务】', {
+      timeout: 20_000,
+    });
+
+    await page.getByRole('button', { name: /保存并归档/ }).click();
+
+    // 提示为 2 位学生各归档一条
+    await expect(page.getByText(/已为 2 位学生各归档一条回访/)).toBeVisible({ timeout: 15_000 });
+
+    // 两个学生的档案里都能看到这条小组课记录
+    for (const id of [a, b]) {
+      await page.goto('/students/' + id);
+      await expect(page.getByText('分数加减法、分数乘法')).toBeVisible();
+      await expect(page.getByText('小组课', { exact: true })).toBeVisible();
+    }
+  });
+
   test('选择 3 次课后按阶段生成，并归档时保留课次数', async ({ page }) => {
     const studentId = await seedStudent(page, '阶段反馈测试');
 

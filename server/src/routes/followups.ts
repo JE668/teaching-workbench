@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
 import { FollowUpCreate } from '../types/index.js';
-import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount } from '../utils/mappers.js';
+import {
+  mapFollowUp,
+  mapFollowUps,
+  parseImages,
+  normalizeSessionCount,
+  normalizeCourseType,
+} from '../utils/mappers.js';
 import {
   runFollowUpGeneration,
   runStreamGeneration,
@@ -115,19 +121,23 @@ router.get('/:id', (req: any, res) => {
 router.post('/generate', async (req: any, res) => {
   try {
     const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
+    const courseType = normalizeCourseType(req.body.courseType);
 
-    if (!studentName || !grade || !subject || !topic || !performance || !mastery) {
-      return res.status(400).json({ error: '学生姓名、年级、学科、课程主题、课堂表现、掌握程度均为必填项' });
+    // 小组课不面向单个学生，无需姓名
+    if ((courseType !== 'group' && !studentName) || !grade || !subject || !topic || !performance || !mastery) {
+      return res.status(400).json({ error: '年级、学科、课程主题、课堂表现、掌握程度均为必填项' });
     }
 
     const content = await runFollowUpGeneration({
-      studentName,
+      studentName: studentName || '',
       grade,
       subject,
       topic,
       performance,
       mastery,
       sessionCount: normalizeSessionCount(req.body.sessionCount),
+      courseType,
+      nickname: req.body.nickname,
       images: images || [],
     });
 
@@ -155,9 +165,11 @@ function wordsDistance(n: number): number {
  */
 router.post('/generate/stream', async (req: any, res) => {
   const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
+  const courseType = normalizeCourseType(req.body.courseType);
 
-  if (!studentName || !grade || !subject || !topic || !performance || !mastery) {
-    return res.status(400).json({ error: '学生姓名、年级、学科、课程主题、课堂表现、掌握程度均为必填项' });
+  // 小组课不面向单个学生，无需姓名
+  if ((courseType !== 'group' && !studentName) || !grade || !subject || !topic || !performance || !mastery) {
+    return res.status(400).json({ error: '年级、学科、课程主题、课堂表现、掌握程度均为必填项' });
   }
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -185,13 +197,15 @@ router.post('/generate/stream', async (req: any, res) => {
   };
 
   const params = {
-    studentName,
+    studentName: studentName || '',
     grade,
     subject,
     topic,
     performance,
     mastery,
     sessionCount: normalizeSessionCount(req.body.sessionCount),
+    courseType,
+    nickname: req.body.nickname,
     images: images || [],
   };
 
@@ -233,6 +247,28 @@ router.post('/generate/stream', async (req: any, res) => {
   }
 });
 
+/**
+ * 把该用户所有「同名且尚未关联学生」的历史回访补挂到指定学生档案。
+ *
+ * 场景：老师之前直接手输姓名保存，记录没进任何档案；
+ * 现在这个学生正式建档了，历史记录应当自动归位。
+ */
+function backfillFollowUps(userId: number, studentId: number, studentName: string): number {
+  const result = db
+    .prepare(
+      'UPDATE followups SET student_id = ? WHERE user_id = ? AND student_name = ? AND student_id IS NULL'
+    )
+    .run(studentId, userId, studentName);
+  return result.changes;
+}
+
+/** 小组课归档结果 */
+interface GroupArchiveResult {
+  error?: string;
+  followups?: any[];
+  backfilled?: number;
+}
+
 // 保存回访记录（图片 + AI内容一并归档到学生档案）
 router.post('/', (req: any, res) => {
   try {
@@ -240,34 +276,120 @@ router.post('/', (req: any, res) => {
     const { studentId, studentName, grade, subject, topic, performance, mastery, images, content } =
       req.body as FollowUpCreate;
     const sessionCount = normalizeSessionCount(req.body.sessionCount);
+    const courseType = normalizeCourseType(req.body.courseType);
 
-    if (!studentName || !grade || !subject || !topic || !performance || !mastery || !content) {
-      return res.status(400).json({ error: '所有字段为必填项' });
-    }
-
-    // 若关联了学生，校验归属，避免越权写入他人档案
-    let linkedStudentId: number | null = null;
-    if (studentId) {
-      const owned = db.prepare('SELECT id FROM students WHERE id = ? AND user_id = ?').get(studentId, userId);
-      if (!owned) {
-        return res.status(400).json({ error: '关联的学生不存在或无权访问' });
-      }
-      linkedStudentId = studentId;
+    // 小组课不需要 studentName；1对1 必须提供
+    if (!grade || !subject || !topic || !performance || !mastery || !content) {
+      return res.status(400).json({ error: '年级、学科、课程主题、课堂表现、掌握程度、回访内容均为必填项' });
     }
 
     const wordCount = countWords(content);
     const imagesJson = JSON.stringify(images || []);
 
-    const result = db.prepare(
-      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, images, content, word_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
+    const insert = db.prepare(
+      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, course_type, images, content, word_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    // ============ 小组课：为每个选中的学生各存一条相同内容 ============
+    if (courseType === 'group') {
+      const rawIds = Array.isArray(req.body.studentIds) ? req.body.studentIds : [];
+      const ids = [...new Set(rawIds.map((v: any) => parseInt(v, 10)).filter((n: number) => Number.isFinite(n)))];
+
+      if (ids.length === 0) {
+        return res.status(400).json({ error: '小组课请至少选择一名学生' });
+      }
+
+      const placeholders = ids.map(() => '?').join(',');
+      const students = db
+        .prepare('SELECT id, name FROM students WHERE user_id = ? AND id IN (' + placeholders + ')')
+        .all(userId, ...ids) as any[];
+
+      if (students.length !== ids.length) {
+        return res.status(400).json({ error: '有学生不存在或无权访问' });
+      }
+
+      const run = db.transaction((rows: any[]) => {
+        const ids: number[] = [];
+        for (const s of rows) {
+          const r = insert.run(
+            userId, s.id, s.name, grade, subject, topic, performance, mastery,
+            sessionCount, 'group', imagesJson, content, wordCount
+          );
+          ids.push(Number(r.lastInsertRowid));
+        }
+        return ids;
+      });
+
+      const newIds = run(students);
+      // 顺带把各学生名下未关联的历史记录归位
+      let backfilled = 0;
+      for (const s of students) backfilled += backfillFollowUps(userId, s.id, s.name);
+
+      const followups = newIds.map((id) =>
+        mapFollowUp(db.prepare('SELECT * FROM followups WHERE id = ?').get(id))
+      );
+
+      return res.json({
+        followup: followups[0],
+        followups,
+        created: followups.length,
+        backfilled,
+      });
+    }
+
+    // ============ 1对1 ============
+    if (!studentName) {
+      return res.status(400).json({ error: '请填写学生姓名' });
+    }
+
+    let linkedStudentId: number | null = null;
+    let createdStudent = false;
+    let backfilled = 0;
+
+    if (studentId) {
+      // 显式指定的学生：校验归属，避免越权写入他人档案
+      const owned = db
+        .prepare('SELECT id FROM students WHERE id = ? AND user_id = ?')
+        .get(studentId, userId) as any;
+      if (!owned) {
+        return res.status(400).json({ error: '关联的学生不存在或无权访问' });
+      }
+      linkedStudentId = owned.id;
+    } else {
+      // 未选学生但填了姓名：先匹配学生库，没有则建档
+      const matched = db
+        .prepare('SELECT id FROM students WHERE user_id = ? AND name = ? ORDER BY id LIMIT 1')
+        .get(userId, studentName) as any;
+
+      if (matched) {
+        linkedStudentId = matched.id;
+      } else {
+        const r = db
+          .prepare('INSERT INTO students (user_id, name, grade, subject) VALUES (?, ?, ?, ?)')
+          .run(userId, studentName, grade, subject);
+        linkedStudentId = Number(r.lastInsertRowid);
+        createdStudent = true;
+      }
+    }
+
+    if (linkedStudentId) {
+      backfilled = backfillFollowUps(userId, linkedStudentId, studentName);
+    }
+
+    const result = insert.run(
       userId, linkedStudentId, studentName, grade, subject, topic, performance, mastery,
-      sessionCount, imagesJson, content, wordCount
+      sessionCount, 'one_on_one', imagesJson, content, wordCount
     );
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(result.lastInsertRowid);
-    res.json({ followup: mapFollowUp(row) });
+
+    res.json({
+      followup: mapFollowUp(row),
+      // 让前端能提示「已自动建档」「已归位 N 条历史记录」
+      createdStudent,
+      backfilled,
+    });
   } catch (error: any) {
     res.status(500).json({ error: '保存回访失败', message: error.message });
   }
@@ -290,9 +412,12 @@ router.put('/:id', (req: any, res) => {
     const sessionCount = normalizeSessionCount(
       req.body.sessionCount !== undefined ? req.body.sessionCount : existing.session_count
     );
+    const courseType = normalizeCourseType(
+      req.body.courseType !== undefined ? req.body.courseType : existing.course_type
+    );
 
     db.prepare(
-      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`
+      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`
     ).run(
       studentId ?? existing.student_id,
       studentName ?? existing.student_name,
@@ -302,6 +427,7 @@ router.put('/:id', (req: any, res) => {
       performance ?? existing.performance,
       mastery ?? existing.mastery,
       sessionCount,
+      courseType,
       imagesJson,
       content ?? existing.content,
       wordCount,

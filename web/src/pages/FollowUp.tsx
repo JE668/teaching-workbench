@@ -16,7 +16,16 @@ import {
   MessageSquareText,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { Student, GRADES, SUBJECTS, MASTERY_LEVELS, SESSION_COUNTS } from '../types/index';
+import {
+  Student,
+  GRADES,
+  SUBJECTS,
+  MASTERY_LEVELS,
+  SESSION_COUNTS,
+  COURSE_TYPES,
+  CourseType,
+} from '../types/index';
+import { deriveNickname } from '../lib/nickname';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -24,6 +33,7 @@ import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { countWords, copyText, cn } from '../lib/utils';
+import { extractDroppedImages } from '../lib/dropFiles';
 
 const MASTERY_TONE: Record<string, string> = {
   excellent: 'data-[on=true]:bg-emerald-500 data-[on=true]:ring-emerald-500',
@@ -42,6 +52,9 @@ export default function FollowUp() {
   const [form, setForm] = useState({
     studentId: null as number | null,
     studentName: '',
+    /** 亲切称呼；留空则由姓名自动推导 */
+    nickname: '',
+    courseType: 'one_on_one' as CourseType,
     grade: '小学三年级',
     subject: '数学',
     topic: '',
@@ -49,6 +62,8 @@ export default function FollowUp() {
     mastery: 'good',
     sessionCount: 1,
   });
+  /** 小组课选中的学生 id */
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [images, setImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -95,9 +110,30 @@ export default function FollowUp() {
     }
   };
 
-  const uploadFiles = async (files: FileList | File[]) => {
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
-    if (list.length === 0) return;
+  /** 切换课程类型：两种模式的学生选择互不干扰，切换时清空避免脏数据 */
+  const switchCourseType = (courseType: CourseType) => {
+    if (courseType === form.courseType) return;
+    setForm((prev) => ({ ...prev, courseType, studentId: null, studentName: '' }));
+    setSelectedIds([]);
+  };
+
+  const toggleStudent = (id: number) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const uploadFiles = async (files: FileList | File[], source: 'drop' | 'paste' | 'picker' = 'picker') => {
+    const list = Array.from(files);
+
+    if (list.length === 0) {
+      // 关键：不能静默失败。用户拖了图却什么都没发生，会以为是坏了。
+      toast.error(
+        source === 'drop'
+          ? '没有从拖拽中识别到图片，请改用「点击上传」或直接粘贴（Ctrl/⌘+V）'
+          : '没有识别到图片'
+      );
+      return;
+    }
+
     setUploading(true);
     try {
       let added = 0;
@@ -119,19 +155,45 @@ export default function FollowUp() {
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
-    const files = Array.from(e.clipboardData?.items || [])
-      .filter((i) => i.type.startsWith('image/'))
+    const items = Array.from(e.clipboardData?.items || []);
+
+    // 先走标准路径（截图粘贴）
+    const files = items
+      .filter((i) => i.kind === 'file')
       .map((i) => i.getAsFile())
       .filter((f): f is File => !!f);
+
     if (files.length) {
       e.preventDefault();
-      uploadFiles(files);
+      uploadFiles(files, 'paste');
+      return;
+    }
+
+    // 兜底：某些应用粘贴的是含 data: 图片的 HTML
+    const dt = e.clipboardData as unknown as DataTransfer | undefined;
+    if (dt) {
+      const { files: fromHtml } = extractDroppedImages(dt);
+      if (fromHtml.length) {
+        e.preventDefault();
+        uploadFiles(fromHtml, 'paste');
+      }
     }
   };
 
+  const isGroup = form.courseType === 'group';
+
   const generate = async () => {
-    if (!form.studentName.trim() || !form.topic.trim() || !form.performance.trim()) {
-      toast.error('请先填写学生姓名、课程主题和课堂表现');
+    if (!form.topic.trim() || !form.performance.trim()) {
+      toast.error('请先填写课程主题和课堂表现');
+      return;
+    }
+    // 1对1 需要学生；小组课需要至少选一名学生
+    if (!isGroup && !form.studentName.trim()) {
+      toast.error('请填写学生姓名');
+      return;
+    }
+    if (isGroup && selectedIds.length === 0) {
+      toast.error('小组课请至少选择一名学生');
       return;
     }
     setGenerating(true);
@@ -146,7 +208,7 @@ export default function FollowUp() {
     try {
       await api.streamPost(
         '/followups/generate/stream',
-        { ...form, images },
+        { ...form, nickname: form.nickname || deriveNickname(form.studentName), images },
         {
           onDelta: (text) => setContent((prev) => prev + text),
           onRegenerating: () => {
@@ -182,12 +244,43 @@ export default function FollowUp() {
   const save = async () => {
     const final = editing ? draft : content;
     if (!final.trim()) return;
+
     setSaving(true);
     try {
-      await api.post('/followups', { ...form, images, content: final });
-      toast.success('已保存并归档到学生档案');
-      if (form.studentId) {
-        setTimeout(() => navigate('/students/' + form.studentId), 900);
+      const payload: any = {
+        ...form,
+        nickname: form.nickname || deriveNickname(form.studentName),
+        images,
+        content: final,
+      };
+
+      // 小组课：把选中学生一并提交，服务端为每人各存一条
+      if (isGroup) {
+        payload.studentIds = selectedIds;
+        payload.studentName = '';
+        payload.studentId = null;
+      }
+
+      const res = await api.post('/followups', payload);
+
+      if (isGroup) {
+        toast.success('已为 ' + selectedIds.length + ' 位学生各归档一条回访');
+      } else {
+        toast.success('已保存并归档到学生档案');
+      }
+
+      // 自动建档 / 历史归位的告知
+      if (res?.createdStudent) {
+        toast.info('学生库中没有「' + form.studentName + '」，已自动为其建立档案');
+      }
+      if (res?.backfilled > 0) {
+        toast.info('已把 ' + res.backfilled + ' 条同名历史回访归入该学生档案');
+      }
+
+      // 跳转：小组课去第一个学生档案，1对1 去对应学生档案
+      const targetId = isGroup ? selectedIds[0] : form.studentId || res?.followup?.studentId;
+      if (targetId) {
+        setTimeout(() => navigate('/students/' + targetId), 1200);
       } else {
         setContent('');
         setDraft('');
@@ -208,7 +301,10 @@ export default function FollowUp() {
   const finalContent = editing ? draft : content;
   const words = countWords(finalContent);
   const wordsOk = words >= 150 && words <= 500;
-  const canGenerate = !!form.studentName.trim() && !!form.topic.trim() && !!form.performance.trim();
+  const canGenerate =
+    !!form.topic.trim() &&
+    !!form.performance.trim() &&
+    (isGroup ? selectedIds.length > 0 : !!form.studentName.trim());
 
   const gradeOptions = GRADES.map((g) => ({ value: g, label: g }));
   const subjectOptions = SUBJECTS.map((s) => ({ value: s, label: s }));
@@ -234,29 +330,133 @@ export default function FollowUp() {
           <Card>
             <CardHeader
               title="课堂信息"
-              description="选择学生可自动填充年级与学科"
+              description={
+                isGroup
+                  ? '小组课文案不含学生姓名，可一次归档给多名学生'
+                  : '选择学生可自动填充年级与学科'
+              }
               icon={<ClipboardList className="h-4 w-4" />}
             />
             <div className="space-y-4 p-5">
-              <Select
-                label="选择已有学生"
-                value={form.studentId ? String(form.studentId) : ''}
-                onChange={(e) => pickStudent(e.target.value)}
-                options={students.map((s) => ({
-                  value: String(s.id),
-                  label: s.name + ' · ' + s.grade + ' ' + s.subject,
-                }))}
-                placeholder="— 手动输入新学生 —"
-              />
+              {/* 课程类型 */}
+              <div>
+                <p className="mb-2 text-sm font-medium text-slate-700">课程类型</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {COURSE_TYPES.map((c) => {
+                    const on = form.courseType === c.value;
+                    return (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={() => switchCourseType(c.value)}
+                        className={cn(
+                          'rounded-xl py-2.5 text-sm font-medium ring-1 transition-all duration-200',
+                          on
+                            ? 'bg-brand-600 text-white ring-brand-600 shadow-soft'
+                            : 'bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100'
+                        )}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                  {COURSE_TYPES.find((c) => c.value === form.courseType)?.hint}
+                </p>
+              </div>
 
-              <Input
-                label="学生姓名"
-                required
-                value={form.studentName}
-                onChange={(e) => setForm({ ...form, studentName: e.target.value, studentId: null })}
-                placeholder="请输入学生姓名"
-                icon={<User className="h-4 w-4" />}
-              />
+              {isGroup ? (
+                /* ===== 小组课：多选学生 ===== */
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-medium text-slate-700">
+                      选择学生 <span className="text-red-500">*</span>
+                    </p>
+                    <span data-testid="selected-count" className="text-xs text-slate-400">
+                      已选 <span className="font-semibold text-brand-600">{selectedIds.length}</span> 人
+                    </span>
+                  </div>
+
+                  {students.length === 0 ? (
+                    <p className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-400">
+                      还没有学生，请先到「学生管理」添加
+                    </p>
+                  ) : (
+                    <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-xl bg-slate-50 p-2 ring-1 ring-slate-100">
+                      {students.map((s) => {
+                        const on = selectedIds.includes(s.id);
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => toggleStudent(s.id)}
+                            aria-pressed={on}
+                            className={cn(
+                              'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors',
+                              on ? 'bg-brand-50 ring-1 ring-brand-200' : 'hover:bg-white'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                                on ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-300 bg-white'
+                              )}
+                            >
+                              {on && <Check className="h-3 w-3" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-medium text-slate-700">{s.name}</span>
+                              <span className="block truncate text-[11px] text-slate-400">
+                                {s.grade} · {s.subject}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                    小组课文案不含任何学生姓名，保存时会为每位选中的学生各归档一条相同内容。
+                  </p>
+                </div>
+              ) : (
+                /* ===== 1对1：单个学生 ===== */
+                <>
+                  <Select
+                    label="选择已有学生"
+                    value={form.studentId ? String(form.studentId) : ''}
+                    onChange={(e) => pickStudent(e.target.value)}
+                    options={students.map((s) => ({
+                      value: String(s.id),
+                      label: s.name + ' · ' + s.grade + ' ' + s.subject,
+                    }))}
+                    placeholder="— 手动输入新学生 —"
+                  />
+
+                  <Input
+                    label="学生姓名"
+                    required
+                    value={form.studentName}
+                    onChange={(e) => setForm({ ...form, studentName: e.target.value, studentId: null })}
+                    placeholder="请输入学生姓名（库中没有会自动建立档案）"
+                    icon={<User className="h-4 w-4" />}
+                  />
+
+                  <Input
+                    label="亲切称呼"
+                    value={form.nickname}
+                    onChange={(e) => setForm({ ...form, nickname: e.target.value })}
+                    placeholder={
+                      form.studentName.trim()
+                        ? deriveNickname(form.studentName) || '请输入称呼'
+                        : '填了姓名后自动生成，如「一一」'
+                    }
+                    hint="文案里会这样称呼学生，留空则自动取名字后两字"
+                  />
+                </>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <Select
@@ -361,6 +561,7 @@ export default function FollowUp() {
             />
             <div className="p-5">
               <div
+                data-testid="dropzone"
                 onPaste={onPaste}
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -370,7 +571,15 @@ export default function FollowUp() {
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragging(false);
-                  if (e.dataTransfer?.files) uploadFiles(e.dataTransfer.files);
+
+                  // 必须在事件内同步提取：事件结束后 dataTransfer 会被清空
+                  const { files, debug } = extractDroppedImages(e.dataTransfer);
+
+                  if (import.meta.env.DEV) {
+                    console.debug('[drop]', debug);
+                  }
+
+                  uploadFiles(files, 'drop');
                 }}
                 onClick={() => fileRef.current?.click()}
                 className={cn(

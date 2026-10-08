@@ -29,6 +29,8 @@ export interface FollowUp {
   mastery: string;
   /** 本次回访涵盖的课次数（1-3） */
   sessionCount: number;
+  /** 课程类型：1对1 或 小组课 */
+  courseType: CourseType;
   images: string[];
   content: string;
   wordCount: number;
@@ -67,6 +69,14 @@ export const SUBJECTS = [
   '科学',
   '编程',
   '其他',
+];
+
+// 课程类型
+export type CourseType = 'one_on_one' | 'group';
+
+export const COURSE_TYPES: { value: CourseType; label: string; hint: string }[] = [
+  { value: 'one_on_one', label: '1对1', hint: '面向单个学生，文案中会使用学生称呼' },
+  { value: 'group', label: '小组课', hint: '面向全班，文案不含任何学生姓名，可同时归档给多名学生' },
 ];
 
 // 单次回访可涵盖的课次数

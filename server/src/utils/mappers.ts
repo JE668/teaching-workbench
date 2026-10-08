@@ -43,6 +43,7 @@ export function mapFollowUp(row: any): FollowUp {
     performance: row.performance,
     mastery: row.mastery,
     sessionCount: normalizeSessionCount(row.session_count),
+    courseType: normalizeCourseType(row.course_type),
     images: parseImages(row.images),
     content: row.content,
     wordCount: row.word_count,
@@ -56,6 +57,11 @@ export function mapFollowUps(rows: any[]): FollowUp[] {
 }
 
 /** 课次数归一化：非法/缺失一律按 1 处理，并限制在 1-3 */
+/** 课程类型归一化：非法值一律按 1对1 处理 */
+export function normalizeCourseType(value: any): 'one_on_one' | 'group' {
+  return value === 'group' ? 'group' : 'one_on_one';
+}
+
 export function normalizeSessionCount(value: any): number {
   const n = parseInt(value, 10);
   if (!Number.isFinite(n)) return 1;

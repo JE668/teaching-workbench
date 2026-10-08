@@ -15,7 +15,15 @@ import {
   Save,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { FollowUp, GRADES, SUBJECTS, MASTERY_LEVELS, SESSION_COUNTS } from '../types/index';
+import {
+  FollowUp,
+  GRADES,
+  SUBJECTS,
+  MASTERY_LEVELS,
+  SESSION_COUNTS,
+  COURSE_TYPES,
+  CourseType,
+} from '../types/index';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -49,6 +57,7 @@ export default function FollowUpList() {
     performance: '',
     mastery: 'good',
     sessionCount: 1,
+    courseType: 'one_on_one' as CourseType,
     content: '',
   });
   const [editSaving, setEditSaving] = useState(false);
@@ -95,6 +104,7 @@ export default function FollowUpList() {
       performance: f.performance,
       mastery: f.mastery,
       sessionCount: f.sessionCount || 1,
+      courseType: f.courseType || 'one_on_one',
       content: f.content,
     });
   };
@@ -221,6 +231,7 @@ export default function FollowUpList() {
                     <span className="text-sm font-semibold text-slate-700">{f.studentName}</span>
                     <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                     <Badge tone="brand">{f.subject}</Badge>
+                    {f.courseType === 'group' && <Badge tone="info">小组课</Badge>}
                     {f.sessionCount > 1 && <Badge tone="violet">{f.sessionCount} 次课</Badge>}
                     <span className="text-xs text-slate-400">{f.grade}</span>
                   </div>
@@ -349,6 +360,7 @@ export default function FollowUpList() {
                 { label: '学生', value: detail.studentName },
                 { label: '年级', value: detail.grade },
                 { label: '学科', value: detail.subject },
+                { label: '课程类型', value: detail.courseType === 'group' ? '小组课' : '1对1' },
                 { label: '涵盖课次', value: detail.sessionCount > 1 ? detail.sessionCount + ' 次课' : '本次课' },
               ].map((x) => (
                 <div key={x.label} className="rounded-xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-slate-100">
@@ -434,6 +446,30 @@ export default function FollowUpList() {
         }
       >
         <div className="space-y-4">
+          <div>
+            <p className="mb-2 text-sm font-medium text-slate-700">课程类型</p>
+            <div className="grid grid-cols-2 gap-2">
+              {COURSE_TYPES.map((c) => {
+                const on = editForm.courseType === c.value;
+                return (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() => setEditForm({ ...editForm, courseType: c.value })}
+                    className={cn(
+                      'rounded-xl py-2.5 text-sm font-medium ring-1 transition-all',
+                      on
+                        ? 'bg-brand-600 text-white ring-brand-600 shadow-soft'
+                        : 'bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100'
+                    )}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div>
             <p className="mb-2 text-sm font-medium text-slate-700">本次回访涵盖</p>
             <div className="grid grid-cols-3 gap-2">

@@ -1,5 +1,8 @@
 import { Request } from 'express';
 
+/** 课程类型：1对1 或 小组课 */
+export type CourseType = 'one_on_one' | 'group';
+
 // 用户类型
 export interface User {
   id: number;
@@ -56,6 +59,8 @@ export interface FollowUp {
   mastery: string;
   /** 本次回访涵盖的课次数（1-3） */
   sessionCount: number;
+  /** 课程类型：1对1 或 小组课 */
+  courseType: CourseType;
   images: string[]; // 图片路径数组（API 层已解析）
   content: string;
   wordCount: number;
@@ -73,6 +78,12 @@ export interface FollowUpCreate {
   mastery: string;
   /** 本次回访涵盖的课次数（1-3），不传按 1 处理 */
   sessionCount?: number;
+  /** 课程类型，不传按 1对1 处理 */
+  courseType?: CourseType;
+  /** 小组课：要归档到的多个学生 id */
+  studentIds?: number[];
+  /** 自定义称呼；不传则由 studentName 推导 */
+  nickname?: string;
   images: string[];
   content: string;
 }

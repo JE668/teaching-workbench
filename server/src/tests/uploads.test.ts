@@ -2,6 +2,7 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, url, createUser, tinyPngBuffer } from './helpers.js';
+import { env } from '../config/env.js';
 
 let token = '';
 
@@ -111,6 +112,87 @@ describe('图片上传', () => {
 });
 
 /** 取当前用户的上传目录前缀，用于构造穿越尝试 */
+describe('图片上传 · 按内容判定类型（回归：微信拖拽）', () => {
+  function formOf(buffer: Buffer, name: string, type: string) {
+    const fd = new FormData();
+    fd.append('images', new Blob([buffer], { type }), name);
+    return fd;
+  }
+
+  /** 带 JPEG 文件头的最小数据 */
+  function jpegBuffer() {
+    return Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]),
+      Buffer.from('JFIF\0', 'ascii'),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+  }
+
+  test('无 MIME 类型、无扩展名的图片也能上传（微信拖拽的典型形态）', async () => {
+    const fd = formOf(tinyPngBuffer(), 'wechat-image', '');
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+
+    assert.equal(res.status, 200, '不应因缺少 MIME 类型而拒绝：' + JSON.stringify(res.body));
+    assert.equal(res.body.count, 1);
+    // 扩展名应由文件内容推导出来
+    assert.match(res.body.paths[0], /\.png$/);
+  });
+
+  test('客户端伪造的 MIME 不影响判定：PNG 声明成 image/jpeg 仍存为 .png', async () => {
+    const fd = formOf(tinyPngBuffer(), 'fake.jpg', 'image/jpeg');
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+
+    assert.equal(res.status, 200);
+    assert.match(res.body.paths[0], /\.png$/, '应以实际内容（PNG）为准');
+  });
+
+  test('JPEG 内容被识别为 .jpg', async () => {
+    const fd = formOf(jpegBuffer(), 'photo', '');
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+
+    assert.equal(res.status, 200);
+    assert.match(res.body.paths[0], /\.jpg$/);
+  });
+
+  test('伪装成图片的文本被拒绝（扩展名与 MIME 都造假也没用）', async () => {
+    const fd = formOf(Buffer.from('这根本不是图片'), 'fake.png', 'image/png');
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /不是有效图片/);
+  });
+
+  /** 当前用户上传目录的绝对路径 */
+  async function ownUploadPathAbs(): Promise<string> {
+    const fs = await import('fs');
+    const path = await import('path');
+    const abs = path.join(env.UPLOAD_DIR, await ownUploadDir());
+    if (!fs.existsSync(abs)) fs.mkdirSync(abs, { recursive: true });
+    return abs;
+  }
+
+  test('上传目录里不会留下被拒绝的临时文件', async () => {
+    const fs = await import('fs');
+    const dir = await ownUploadPathAbs();
+    const beforeCount = fs.readdirSync(dir).length;
+
+    await req('POST', '/api/upload', { token, raw: formOf(Buffer.from('not an image'), 'x.png', 'image/png') });
+
+    const afterCount = fs.readdirSync(dir).length;
+    assert.equal(afterCount, beforeCount, '被拒绝的文件应被清理，不应残留临时文件');
+  });
+
+  test('上传目录里不应残留 .upload 临时文件', async () => {
+    const fs = await import('fs');
+    const leftovers = fs.readdirSync(await ownUploadPathAbs()).filter((f) => f.endsWith('.upload'));
+    assert.deepEqual(leftovers, [], '所有临时文件都应被改名或清理');
+  });
+});
+
 async function ownUploadDir(): Promise<string> {
   const up = await req('POST', '/api/upload', { token, raw: pngForm() });
   return (up.body.paths[0] as string).split('/')[0];

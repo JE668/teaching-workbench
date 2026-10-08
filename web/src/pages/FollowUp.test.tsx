@@ -136,3 +136,223 @@ describe('课后回访 · 课次数传递', () => {
     expect(body.sessionCount).toBe(2);
   });
 });
+
+const STUDENTS = [
+  { id: 1, name: '李一一', grade: '小学五年级', subject: '数学', createdAt: '', updatedAt: '' },
+  { id: 2, name: '王思涵', grade: '小学五年级', subject: '数学', createdAt: '', updatedAt: '' },
+  { id: 3, name: '张小北', grade: '小学六年级', subject: '英语', createdAt: '', updatedAt: '' },
+] as any;
+
+describe('课后回访 · 课程类型', () => {
+  it('默认 1对1，显示单个学生输入与称呼字段', () => {
+    renderWithProviders(<FollowUp />);
+
+    expect(screen.getByRole('button', { name: '1对1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '小组课' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/学生姓名/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/亲切称呼/)).toBeInTheDocument();
+    // 精确匹配：正则 /选择学生/ 会误命中下拉框的「选择已有学生」
+    expect(screen.queryByText('选择学生')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('selected-count')).not.toBeInTheDocument();
+  });
+
+  it('切到小组课：出现多选列表，单个姓名输入消失', async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ students: STUDENTS });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+
+    expect(await screen.findByText('选择学生')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/学生姓名/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/亲切称呼/)).not.toBeInTheDocument();
+    // 三名学生都出现
+    for (const s of STUDENTS) {
+      expect(screen.getByText(s.name)).toBeInTheDocument();
+    }
+  });
+
+  it('小组课可勾选多人并显示已选人数', async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ students: STUDENTS });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByText('选择学生');
+
+    const count = () => screen.getByTestId('selected-count').textContent || '';
+    expect(count()).toMatch(/已选\s*0\s*人/);
+
+    await user.click(screen.getByText('李一一'));
+    expect(count()).toMatch(/已选\s*1\s*人/);
+
+    await user.click(screen.getByText('王思涵'));
+    expect(count()).toMatch(/已选\s*2\s*人/);
+
+    // 再点一次取消勾选
+    await user.click(screen.getByText('李一一'));
+    expect(count()).toMatch(/已选\s*1\s*人/);
+  });
+
+  it('切换课程类型会清空已选学生', async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ students: STUDENTS });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByText('选择学生');
+    await user.click(screen.getByText('李一一'));
+    expect(screen.getByTestId('selected-count').textContent).toMatch(/已选\s*1\s*人/);
+
+    await user.click(screen.getByRole('button', { name: '1对1' }));
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+
+    expect(screen.getByTestId('selected-count').textContent).toMatch(/已选\s*0\s*人/);
+  });
+
+  it('小组课未选学生时生成按钮禁用；选了之后恢复可用', async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({ students: STUDENTS });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByText('选择学生');
+
+    await user.type(screen.getByLabelText(/课程主题/), '小组课主题');
+    await user.type(screen.getByLabelText(/课堂表现/), '整体积极');
+
+    const btn = screen.getByRole('button', { name: /生成课后回访内容/ });
+    // 防呆优于报错：条件不满足时直接禁用
+    expect(btn).toBeDisabled();
+    expect(streamPost).not.toHaveBeenCalled();
+
+    await user.click(screen.getByText('李一一'));
+    expect(btn).toBeEnabled();
+  });
+
+  it('小组课生成时带 courseType=group 且不需要学生姓名', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    get.mockResolvedValue({ students: STUDENTS });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByText('选择学生');
+    await user.click(screen.getByText('李一一'));
+
+    await user.type(screen.getByLabelText(/课程主题/), '小组课主题');
+    await user.type(screen.getByLabelText(/课堂表现/), '整体积极');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+
+    await waitFor(() => expect(streamPost).toHaveBeenCalled());
+    const body = streamPost.mock.calls[0][1];
+    expect(body.courseType).toBe('group');
+    expect(body.studentName).toBe('');
+  });
+
+  it('小组课保存时提交 studentIds 数组', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    get.mockResolvedValue({ students: STUDENTS });
+    post.mockResolvedValue({ followup: { id: 1, studentId: 1 }, created: 2 });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByText('选择学生');
+    await user.click(screen.getByText('李一一'));
+    await user.click(screen.getByText('王思涵'));
+
+    await user.type(screen.getByLabelText(/课程主题/), '小组课主题');
+    await user.type(screen.getByLabelText(/课堂表现/), '整体积极');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    const body = post.mock.calls[0][1];
+    expect(body.courseType).toBe('group');
+    expect(body.studentIds).toEqual([1, 2]);
+    expect(body.studentName).toBe('');
+    expect(await screen.findByText(/已为 2 位学生各归档一条回访/)).toBeInTheDocument();
+  });
+});
+
+describe('课后回访 · 称呼', () => {
+  it('输入姓名后 placeholder 显示自动推导的称呼', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FollowUp />);
+
+    await user.type(screen.getByLabelText(/学生姓名/), '李一一');
+
+    // 未填写称呼时，placeholder 应展示推导结果
+    expect(screen.getByLabelText(/亲切称呼/)).toHaveAttribute('placeholder', '一一');
+  });
+
+  it('生成时把称呼一并发给服务端', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    renderWithProviders(<FollowUp />);
+
+    await user.type(screen.getByLabelText(/学生姓名/), '李一一');
+    await user.type(screen.getByLabelText(/课程主题/), '分数加减法');
+    await user.type(screen.getByLabelText(/课堂表现/), '专注');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+
+    await waitFor(() => expect(streamPost).toHaveBeenCalled());
+    expect(streamPost.mock.calls[0][1].nickname).toBe('一一');
+  });
+
+  it('手动填写称呼时优先使用填写值', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    renderWithProviders(<FollowUp />);
+
+    await user.type(screen.getByLabelText(/学生姓名/), '李一一');
+    await user.type(screen.getByLabelText(/亲切称呼/), '小一');
+    await user.type(screen.getByLabelText(/课程主题/), '分数加减法');
+    await user.type(screen.getByLabelText(/课堂表现/), '专注');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+
+    await waitFor(() => expect(streamPost).toHaveBeenCalled());
+    expect(streamPost.mock.calls[0][1].nickname).toBe('小一');
+  });
+});
+
+describe('课后回访 · 保存后的告知', () => {
+  it('自动建档时给出提示', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    post.mockResolvedValue({ followup: { id: 1, studentId: 9 }, createdStudent: true });
+
+    renderWithProviders(<FollowUp />);
+    await user.type(screen.getByLabelText(/学生姓名/), '新同学');
+    await user.type(screen.getByLabelText(/课程主题/), '主题');
+    await user.type(screen.getByLabelText(/课堂表现/), '表现');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+
+    expect(await screen.findByText(/学生库中没有「新同学」，已自动为其建立档案/)).toBeInTheDocument();
+  });
+
+  it('历史记录被归位时给出提示', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    post.mockResolvedValue({ followup: { id: 1, studentId: 5 }, backfilled: 3 });
+
+    renderWithProviders(<FollowUp />);
+    await user.type(screen.getByLabelText(/学生姓名/), '老同学');
+    await user.type(screen.getByLabelText(/课程主题/), '主题');
+    await user.type(screen.getByLabelText(/课堂表现/), '表现');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+
+    expect(
+      await screen.findByText(/已把 3 条同名历史回访归入该学生档案/)
+    ).toBeInTheDocument();
+  });
+});

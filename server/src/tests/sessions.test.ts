@@ -178,7 +178,7 @@ describe('课次数 · 导出', () => {
 
     const csv = await fetchText('/api/students/' + s.id + '/export?format=csv');
 
-    assert.match(csv, /课程主题,上课日期,涵盖课次,/);
+    assert.match(csv, /课程主题,上课日期,课程类型,涵盖课次,/);
     assert.match(csv, /,2 次课,/);
   });
 });
