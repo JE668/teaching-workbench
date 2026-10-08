@@ -60,6 +60,27 @@ function resolveJwtSecret(): string {
   return generated;
 }
 
+/**
+ * 思考强度。官方取值：none / low / medium / high / max（默认 high）。
+ * 本任务需要同时满足"三段结构 + 字数区间 + 结合图片"，属中等复杂度约束生成，
+ * 全关（none）会导致首次通过率偏低，故默认 low，兼顾速度与遵循度。
+ */
+const REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'max'];
+
+function resolveReasoningEffort(): string {
+  const raw = (process.env.SENSENOVA_REASONING_EFFORT || '').trim().toLowerCase();
+  if (REASONING_EFFORTS.includes(raw)) {
+    return raw;
+  }
+  if (raw) {
+    console.warn(
+      '[AI] SENSENOVA_REASONING_EFFORT 取值无效: "' + raw + '"，可选 ' +
+        REASONING_EFFORTS.join('/') + '，已回退为 low'
+    );
+  }
+  return 'low';
+}
+
 const DEFAULT_ADMIN_PASS = process.env.DEFAULT_ADMIN_PASS || '123456';
 
 // 弱口令告警
@@ -75,6 +96,7 @@ export const env = {
   SENSENOVA_API_KEY: process.env.SENSENOVA_API_KEY || '',
   SENSENOVA_BASE_URL: process.env.SENSENOVA_BASE_URL || 'https://token.sensenova.cn/v1',
   SENSENOVA_MODEL: process.env.SENSENOVA_MODEL || 'sensenova-6.8-flash-lite',
+  SENSENOVA_REASONING_EFFORT: resolveReasoningEffort(),
   DEFAULT_ADMIN_USER: process.env.DEFAULT_ADMIN_USER || 'admin',
   DEFAULT_ADMIN_PASS,
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000',

@@ -77,7 +77,7 @@ function imageToBase64DataUrl(imagePath: string): string {
 /**
  * 构建提示词。correction 不为空时，追加纠偏指令（用于字数不达标时的重试）
  */
-function buildPrompt(params: FollowUpGenerateParams, correction?: string): string {
+export function buildPrompt(params: FollowUpGenerateParams, correction?: string): string {
   const { studentName, grade, subject, topic, performance } = params;
   const masteryLabel = MASTERY_LABELS[params.mastery] || params.mastery;
 
@@ -93,15 +93,20 @@ function buildPrompt(params: FollowUpGenerateParams, correction?: string): strin
     '- 课堂表现：' + performance,
     '- 掌握程度：' + masteryLabel,
     '',
-    '# 输出格式（严格三段落，标题原样保留）',
-    '## 课堂内容',
-    '说明本节课讲授的知识点、教学重点与进度，要与' + grade + subject + '的课程标准相衔接。约 60-100 字。',
+    '# 使用场景（很重要）',
+    '这段内容会由老师直接复制后发送给家长（微信等聊天工具），因此必须是干净的可读文本：',
+    '禁止使用任何 Markdown 标记（如 #、##、*、-、>、`），禁止代码块，',
+    '禁止添加"以下是回访内容"之类的前言或结语。',
     '',
-    '## 学生收获',
-    '结合课堂表现与掌握程度（' + masteryLabel + '），描述学生本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现。约 60-100 字。',
+    '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
+    '【课堂内容】',
+    '说明本节课讲授的知识点、教学重点与进度，要与' + grade + subject + '的课程标准相衔接。约 80-130 字。',
     '',
-    '## 课后任务',
-    '布置具体、可执行、与本节课内容紧密相关的巩固练习，难度匹配' + grade + '水平。约 40-80 字。',
+    '【学生收获】',
+    '结合课堂表现与掌握程度（' + masteryLabel + '），描述学生本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现。约 80-130 字。',
+    '',
+    '【课后任务】',
+    '布置具体、可执行、与本节课内容紧密相关的巩固练习，难度匹配' + grade + '水平。约 50-90 字。',
     '',
     '# 硬性要求',
     '1. 全文总字数必须控制在 ' + MIN_WORDS + '-' + MAX_WORDS + ' 字之间（中文字符计）',
@@ -109,6 +114,7 @@ function buildPrompt(params: FollowUpGenerateParams, correction?: string): strin
     '3. 内容具体、有针对性，禁止空泛套话',
     '4. 全程使用中文',
     '5. 直接输出正文，不要任何前言、总结或额外说明',
+    '6. 三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号',
   ];
 
   if (correction) {
@@ -148,7 +154,17 @@ async function callModel(
   if (params.images.length > 0) {
     userContent.push({
       type: 'text',
-      text: '以上是与本次课程相关的图片（作业、试卷、板书等），请结合图片内容让反馈更准确具体。',
+      text: [
+        '以上是与本次课程相关的图片（作业、试卷、板书等）。',
+        '',
+        '请先仔细观察图片，识别：题目类型、学生的作答情况、出错位置、书写规范程度、老师批改痕迹。',
+        '',
+        '然后在【学生收获】或【课后任务】中，结合你实际观察到的细节来写。',
+        '例如写成"第3题在通分时漏乘分子导致失分"，而不是笼统地说"看图有进步"。',
+        '',
+        '如果图片与本次课程主题关联不大、或内容模糊无法辨识，请以文字信息为准，',
+        '不要凭空编造图片里并不存在的内容。',
+      ].join('\n'),
     });
   }
 
@@ -165,7 +181,8 @@ async function callModel(
     ],
     max_tokens: 2000,
     temperature: 0.7,
-    reasoning_effort: 'none',
+    // 思考强度：由 SENSENOVA_REASONING_EFFORT 控制（默认 low）
+    reasoning_effort: env.SENSENOVA_REASONING_EFFORT,
   };
 
   const response = await ai.chat.completions.create(requestBody);
