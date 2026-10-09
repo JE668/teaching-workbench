@@ -411,6 +411,92 @@ describe('课后回访 · 历史联想', () => {
   });
 });
 
+describe('课后回访 · 小组课分组预设', () => {
+  function mockGroupSetup() {
+    get.mockImplementation((path: string) => {
+      const p = String(path);
+      if (p === '/groups') {
+        return Promise.resolve({
+          groups: [{ id: 7, name: '周六三年级班', studentIds: [1, 3], memberCount: 2, staleCount: 0 }],
+        });
+      }
+      if (p.startsWith('/followups/suggestions')) return Promise.resolve({ topics: [], phrases: [] });
+      if (p.startsWith('/auth/preferences')) {
+        return Promise.resolve({ preferences: { phraseMode: 'mixed', pendingDays: 7 } });
+      }
+      return Promise.resolve({ students: STUDENTS });
+    });
+  }
+
+  it('点分组即全选成员，人数正确', async () => {
+    const user = userEvent.setup();
+    mockGroupSetup();
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByTestId('selected-count');
+
+    expect(screen.getByTestId('selected-count').textContent).toMatch(/已选\s*0\s*人/);
+
+    await user.click(screen.getByRole('button', { name: /周六三年级班/ }));
+
+    expect(screen.getByTestId('selected-count').textContent).toMatch(/已选\s*2\s*人/);
+  });
+
+  it('默认全选后可以手动取消请假的同学', async () => {
+    const user = userEvent.setup();
+    mockGroupSetup();
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByTestId('selected-count');
+
+    await user.click(screen.getByRole('button', { name: /周六三年级班/ }));
+    expect(screen.getByTestId('selected-count').textContent).toMatch(/已选\s*2\s*人/);
+
+    // 取消其中一位（张小北 id=3）
+    await user.click(screen.getByText('张小北'));
+    expect(screen.getByTestId('selected-count').textContent).toMatch(/已选\s*1\s*人/);
+  });
+
+  it('把当前选择存为分组', async () => {
+    const user = userEvent.setup();
+    mockGroupSetup();
+    post.mockResolvedValue({ group: { id: 9, name: '新分组', studentIds: [1], memberCount: 1 } });
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByTestId('selected-count');
+
+    await user.click(screen.getByText('李一一'));
+    await user.click(screen.getByRole('button', { name: '＋ 存为分组' }));
+
+    await user.type(screen.getByPlaceholderText(/周六上午三年级班/), '新分组');
+    await user.click(screen.getByRole('button', { name: /保存（1 人）/ }));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledWith('/groups', { name: '新分组', studentIds: [1] });
+    });
+    expect(await screen.findByText(/已保存分组「新分组」/)).toBeInTheDocument();
+  });
+
+  it('未选学生时提示先选人', async () => {
+    const user = userEvent.setup();
+    mockGroupSetup();
+
+    renderWithProviders(<FollowUp />);
+    await user.click(screen.getByRole('button', { name: '小组课' }));
+    await screen.findByTestId('selected-count');
+
+    await user.click(screen.getByRole('button', { name: '＋ 存为分组' }));
+    await user.type(screen.getByPlaceholderText(/周六上午三年级班/), '空分组');
+    await user.click(screen.getByRole('button', { name: /保存（0 人）/ }));
+
+    expect(await screen.findByText('请先选择学生，再存为分组')).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
 describe('课后回访 · 快捷短语模式开关', () => {
   function mockWithPhrases(phraseMode: 'mixed' | 'history_only' = 'mixed') {
     get.mockImplementation((path: string) => {

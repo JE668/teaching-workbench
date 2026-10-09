@@ -94,6 +94,10 @@ export default function FollowUp() {
   const [historyPhrases, setHistoryPhrases] = useState<string[]>([]);
   /** 保存后不跳转，继续写下一个 */
   const [keepGoing, setKeepGoing] = useState(false);
+  /** 小组课分组预设 */
+  const [groups, setGroups] = useState<{ id: number; name: string; studentIds: number[]; memberCount: number }[]>([]);
+  const [showGroupSave, setShowGroupSave] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
   const [images, setImages] = useState<string[]>(() => restored?.images || []);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -109,6 +113,16 @@ export default function FollowUp() {
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
+  }, []);
+
+  // 分组预设（小组课用）
+  useEffect(() => {
+    api
+      .get('/groups')
+      .then((r) => setGroups(r.groups || []))
+      .catch(() => {
+        /* 分组只是便利功能，失败静默 */
+      });
   }, []);
 
   // 历史联想：选中的学生有历史就用它的，否则用全局（新学生也有词可用）
@@ -220,6 +234,43 @@ export default function FollowUp() {
     if (courseType === form.courseType) return;
     setForm((prev) => ({ ...prev, courseType, studentId: null, studentName: '' }));
     setSelectedIds([]);
+  };
+
+  /** 应用分组：默认全选，老师再手动取消请假的 */
+  const applyGroup = (g: { studentIds: number[] }) => {
+    setSelectedIds(g.studentIds);
+  };
+
+  const saveGroup = async () => {
+    const name = newGroupName.trim();
+    if (!name) {
+      toast.error('请填写分组名称');
+      return;
+    }
+    if (selectedIds.length === 0) {
+      toast.error('请先选择学生，再存为分组');
+      return;
+    }
+
+    try {
+      const r = await api.post('/groups', { name, studentIds: selectedIds });
+      setGroups((prev) => [r.group, ...prev]);
+      setNewGroupName('');
+      setShowGroupSave(false);
+      toast.success('已保存分组「' + name + '」');
+    } catch (err: any) {
+      toast.error('保存分组失败：' + err.message);
+    }
+  };
+
+  const deleteGroup = async (id: number, name: string) => {
+    try {
+      await api.delete('/groups/' + id);
+      setGroups((prev) => prev.filter((x) => x.id !== id));
+      toast.success('已删除分组「' + name + '」');
+    } catch (err: any) {
+      toast.error('删除分组失败：' + err.message);
+    }
   };
 
   const toggleStudent = (id: number) => {
@@ -583,6 +634,80 @@ export default function FollowUp() {
                     </span>
                   </div>
 
+                  {/* 分组预设：一键全选，再手动取消请假的 */}
+                  {students.length > 0 && (
+                    <div className="mb-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {groups.map((g) => (
+                          <span
+                            key={g.id}
+                            className="group inline-flex items-center gap-1 rounded-full bg-brand-50 py-1 pl-2.5 pr-1.5 text-xs font-medium text-brand-700 ring-1 ring-brand-200"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => applyGroup(g)}
+                              title={'全选「' + g.name + '」的 ' + g.memberCount + ' 人'}
+                            >
+                              {g.name}
+                              <span className="ml-1 text-brand-500">{g.memberCount} 人</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteGroup(g.id, g.name)}
+                              title="删除该分组"
+                              className="rounded-full p-0.5 text-brand-400 transition-colors hover:bg-brand-200 hover:text-brand-800"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+
+                        {!showGroupSave && (
+                          <button
+                            type="button"
+                            onClick={() => setShowGroupSave(true)}
+                            className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-200"
+                          >
+                            ＋ 存为分组
+                          </button>
+                        )}
+                      </div>
+
+                      {showGroupSave && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            autoFocus
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveGroup();
+                              if (e.key === 'Escape') setShowGroupSave(false);
+                            }}
+                            placeholder="如：周六上午三年级班"
+                            className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/10"
+                          />
+                          <button
+                            type="button"
+                            onClick={saveGroup}
+                            className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700"
+                          >
+                            保存（{selectedIds.length} 人）
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowGroupSave(false);
+                              setNewGroupName('');
+                            }}
+                            className="rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {students.length === 0 ? (
                     <p className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-400">
                       还没有学生，请先到「学生管理」添加
@@ -624,6 +749,7 @@ export default function FollowUp() {
 
                   <p className="mt-2 text-xs leading-relaxed text-slate-400">
                     小组课文案不含任何学生姓名，保存时会为每位选中的学生各归档一条相同内容。
+                    有分组时点一下即全选，再取消请假的同学即可。
                   </p>
                 </div>
               ) : (
