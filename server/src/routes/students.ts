@@ -38,6 +38,45 @@ router.get('/search', (req: any, res) => {
 });
 
 // 获取学生档案（学生信息 + 全部回访记录 + 统计）
+/**
+ * 待回访学生：超过 N 天没有回访记录的（含从未回访过的）。
+ * 老师最怕漏掉某个孩子 —— 仪表盘只显示总数，不告诉"谁该联系了"。
+ */
+router.get('/needs-followup', (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const days = Math.min(365, Math.max(1, parseInt(req.query.days as string, 10) || 7));
+
+    const rows = db
+      .prepare(
+        `SELECT s.*, MAX(f.created_at) AS last_at
+         FROM students s
+         LEFT JOIN followups f ON f.student_id = s.id AND f.user_id = s.user_id
+         WHERE s.user_id = ?
+         GROUP BY s.id
+         HAVING last_at IS NULL OR last_at <= datetime('now', 'localtime', ?)
+         ORDER BY last_at IS NOT NULL, last_at ASC, s.created_at ASC`
+      )
+      .all(userId, '-' + days + ' days') as any[];
+
+    const now = Date.now();
+    const students = rows.map((r) => {
+      const lastAt = r.last_at as string | null;
+      // SQLite 存的是本地时间字符串，按本地时间解析
+      const lastMs = lastAt ? new Date(lastAt.replace(' ', 'T')).getTime() : null;
+      return {
+        ...mapStudent(r),
+        lastFollowUpAt: lastAt,
+        daysSince: lastMs ? Math.floor((now - lastMs) / 86400000) : null,
+      };
+    });
+
+    res.json({ students, days });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取待回访学生失败', message: error.message });
+  }
+});
+
 router.get('/:id/profile', (req: any, res) => {
   try {
     const userId = req.userId;

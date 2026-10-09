@@ -9,6 +9,8 @@ import {
   Sparkles,
   TrendingUp,
   Clock,
+  BellRing,
+  CheckCircle2,
   ImageIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
@@ -37,16 +39,25 @@ export default function Dashboard() {
   const [students, setStudents] = useState<Student[]>([]);
   const [recent, setRecent] = useState<FollowUp[]>([]);
   const [summary, setSummary] = useState({ totalFollowUps: 0, totalImages: 0 });
+  /** 超过 N 天没回访的学生（含从未回访过的） */
+  const [pending, setPending] = useState<any[]>([]);
+  const [pendingDays, setPendingDays] = useState(7);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     load();
-  }, []);
+    // pendingDays 影响"待回访"的判定，切换时要重新拉
+  }, [pendingDays]);
 
   const load = async () => {
     try {
       // 用专门的统计接口，避免依赖分页列表的长度
-      const [s, st] = await Promise.all([api.get('/students'), api.get('/followups/stats')]);
+      const [s, st, pf] = await Promise.all([
+        api.get('/students'),
+        api.get('/followups/stats'),
+        api.get('/students/needs-followup?days=' + pendingDays).catch(() => ({ students: [] })),
+      ]);
+      setPending(pf.students || []);
       setStudents(s.students || []);
       setSummary({
         totalFollowUps: st.totalFollowUps || 0,
@@ -134,6 +145,64 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-5">
+        {/* 待回访 —— 老师最怕漏掉某个孩子 */}
+        <Card className="animate-fade-up lg:col-span-5" style={{ animationDelay: '240ms' }}>
+          <CardHeader
+            title="待回访"
+            description={'超过 ' + pendingDays + ' 天没回访的学生，含从未回访过的'}
+            icon={<BellRing className="h-4 w-4" />}
+            action={
+              <div className="flex items-center gap-1.5">
+                {[3, 7, 14, 30].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setPendingDays(d)}
+                    className={
+                      'rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ' +
+                      (pendingDays === d
+                        ? 'bg-brand-600 text-white'
+                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200')
+                    }
+                  >
+                    {d} 天
+                  </button>
+                ))}
+              </div>
+            }
+          />
+
+          {pending.length === 0 ? (
+            <div className="flex items-center gap-2.5 px-5 py-6 text-sm text-emerald-600">
+              <CheckCircle2 className="h-4 w-4" />
+              全部学生都已在 {pendingDays} 天内回访过 👍
+            </div>
+          ) : (
+            <div className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+              {pending.map((s) => (
+                <Link
+                  key={s.id}
+                  to={'/followups?studentId=' + s.id}
+                  className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-50 text-xs font-semibold text-amber-600">
+                    {s.name.slice(0, 1)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-slate-700">{s.name}</span>
+                    <span className="block truncate text-xs text-slate-400">
+                      {s.grade} · {s.subject}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-amber-600">
+                    {s.daysSince === null ? '从未回访' : s.daysSince + ' 天前'}
+                  </span>
+                  <span className="shrink-0 text-xs font-medium text-brand-600">去回访 →</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </Card>
+
         {/* 近期回访 */}
         <Card className="animate-fade-up lg:col-span-3" style={{ animationDelay: '280ms' }}>
           <CardHeader

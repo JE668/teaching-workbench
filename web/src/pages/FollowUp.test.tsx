@@ -359,6 +359,85 @@ describe('课后回访 · 保存后的告知', () => {
   });
 });
 
+describe('课后回访 · 历史联想', () => {
+  it('把历史里的高频短语一并展示，且优先于内置词', async () => {
+    get.mockImplementation((path: string) => {
+      if (String(path).startsWith('/followups/suggestions')) {
+        return Promise.resolve({
+          topics: [{ text: '我的常用主题', count: 5 }],
+          phrases: [{ text: '这孩子思路活', count: 4 }],
+        });
+      }
+      return Promise.resolve({ students: [] });
+    });
+
+    renderWithProviders(<FollowUp />);
+
+    // 历史学到的短语出现
+    expect(await screen.findByRole('button', { name: '这孩子思路活' })).toBeInTheDocument();
+    // 内置通用词仍在（历史为空时也有词可用）
+    expect(screen.getByRole('button', { name: '计算粗心' })).toBeInTheDocument();
+  });
+
+  it('历史主题出现在 datalist 里供联想', async () => {
+    get.mockImplementation((path: string) => {
+      if (String(path).startsWith('/followups/suggestions')) {
+        return Promise.resolve({ topics: [{ text: '分数加减法', count: 3 }], phrases: [] });
+      }
+      return Promise.resolve({ students: [] });
+    });
+
+    const { container } = renderWithProviders(<FollowUp />);
+
+    await waitFor(() => {
+      expect(container.querySelector('#topic-suggestions option')).toBeTruthy();
+    });
+
+    const option = container.querySelector('#topic-suggestions option') as HTMLOptionElement;
+    expect(option.value).toBe('分数加减法');
+  });
+
+  it('联想接口失败不影响正常使用', async () => {
+    get.mockImplementation((path: string) => {
+      if (String(path).startsWith('/followups/suggestions')) return Promise.reject(new Error('挂了'));
+      return Promise.resolve({ students: [] });
+    });
+
+    renderWithProviders(<FollowUp />);
+
+    // 内置短语仍在
+    expect(await screen.findByRole('button', { name: '专注度高' })).toBeInTheDocument();
+  });
+});
+
+describe('课后回访 · 保存后继续下一个', () => {
+  it('勾选后保存不跳转，并重置学生与内容', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    post.mockResolvedValue({ followup: { id: 1, studentId: 1 } });
+
+    renderWithProviders(<FollowUp />);
+
+    await user.type(screen.getByLabelText(/学生姓名/), '李一一');
+    await user.type(screen.getByLabelText(/课程主题/), '分数加减法');
+    await user.type(screen.getByLabelText(/课堂表现/), '专注');
+    await user.type(screen.getByLabelText(/课堂表现/), '高');
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    await user.click(screen.getByLabelText(/保存后继续填下一个学生/));
+    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+
+    await waitFor(() => expect(post).toHaveBeenCalled());
+
+    // 学生与内容被清空，年级/学科保留
+    expect(screen.getByLabelText(/学生姓名/)).toHaveValue('');
+    expect(screen.getByLabelText(/课程主题/)).toHaveValue('');
+    expect(screen.getByLabelText(/年级/)).toHaveValue('小学三年级');
+    expect(await screen.findByText(/已归档，可以继续填下一个学生/)).toBeInTheDocument();
+  });
+});
+
 describe('课后回访 · 课堂表现快捷短语', () => {
   it('点一下即插入，再点不重复插入', async () => {
     const user = userEvent.setup();

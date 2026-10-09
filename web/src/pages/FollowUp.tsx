@@ -88,6 +88,11 @@ export default function FollowUp() {
   }));
   /** 小组课选中的学生 id */
   const [selectedIds, setSelectedIds] = useState<number[]>(() => restored?.selectedIds || []);
+  /** 从自己历史里学到的常用主题与短语 */
+  const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
+  const [historyPhrases, setHistoryPhrases] = useState<string[]>([]);
+  /** 保存后不跳转，继续写下一个 */
+  const [keepGoing, setKeepGoing] = useState(false);
   const [images, setImages] = useState<string[]>(() => restored?.images || []);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -104,6 +109,20 @@ export default function FollowUp() {
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
   }, []);
+
+  // 历史联想：选中的学生有历史就用它的，否则用全局（新学生也有词可用）
+  useEffect(() => {
+    const q = form.studentId ? '?studentId=' + form.studentId : '';
+    api
+      .get('/followups/suggestions' + q)
+      .then((r) => {
+        setSuggestedTopics((r.topics || []).map((t: any) => t.text));
+        setHistoryPhrases((r.phrases || []).map((p: any) => p.text));
+      })
+      .catch(() => {
+        /* 建议只是锦上添花，失败静默 */
+      });
+  }, [form.studentId]);
 
   // ===== 跨设备实时同步 =====
   // 电脑写文案 / 手机拍图上传来图，两边无需刷新即可看到
@@ -363,14 +382,31 @@ export default function FollowUp() {
         toast.info('已把 ' + res.backfilled + ' 条同名历史回访归入该学生档案');
       }
 
+      // 清掉刚提交的内容，为"继续下一个"或跳转做准备
+      setContent('');
+      setDraft('');
+      setEditing(false);
+      setImages([]);
+
+      if (keepGoing) {
+        // 留在本页继续写：保留年级/学科/课程类型/课次，清掉学生与内容
+        setForm((prev) => ({
+          ...prev,
+          studentId: null,
+          studentName: '',
+          nickname: '',
+          topic: '',
+          performance: '',
+        }));
+        setSelectedIds([]);
+        toast.info('已归档，可以继续填下一个学生');
+        return;
+      }
+
       // 跳转：小组课去第一个学生档案，1对1 去对应学生档案
       const targetId = isGroup ? selectedIds[0] : form.studentId || res?.followup?.studentId;
       if (targetId) {
         setTimeout(() => navigate('/students/' + targetId), 1200);
-      } else {
-        setContent('');
-        setDraft('');
-        setEditing(false);
       }
     } catch (err: any) {
       toast.error('保存失败：' + err.message);
@@ -655,6 +691,7 @@ export default function FollowUp() {
                 label={form.sessionCount > 1 ? '课程内容（这几次课）' : '课程主题'}
                 required
                 data-sync-field="topic"
+                list="topic-suggestions"
                 value={form.topic}
                 onChange={(e) => {
                   markLocalEdit('topic');
@@ -664,6 +701,13 @@ export default function FollowUp() {
                   form.sessionCount > 1 ? '如：分数加减法、分数乘法' : '如：分数加减法运算'
                 }
               />
+
+              {/* 历史主题联想：一个学期就那些主题，不用重复打 */}
+              <datalist id="topic-suggestions">
+                {suggestedTopics.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
 
               <div>
                 <Textarea
@@ -681,7 +725,22 @@ export default function FollowUp() {
 
                 {/* 手机上敲中文很慢，常用描述点一下即可插入 */}
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {PERFORMANCE_PHRASES.map((p) => {
+                  {(() => {
+                    // 历史学到的短语优先（更贴合个人习惯），再接内置通用词
+                    const seen = new Set<string>();
+                    const merged: { text: string; tone: 'good' | 'warn' }[] = [];
+                    for (const t of historyPhrases) {
+                      if (seen.has(t)) continue;
+                      seen.add(t);
+                      merged.push({ text: t, tone: 'good' });
+                    }
+                    for (const p of PERFORMANCE_PHRASES) {
+                      if (seen.has(p.text)) continue;
+                      seen.add(p.text);
+                      merged.push(p);
+                    }
+                    return merged.slice(0, 18);
+                  })().map((p) => {
                     const active = form.performance.includes(p.text);
                     return (
                       <button
@@ -1018,6 +1077,17 @@ export default function FollowUp() {
                 >
                   {saving ? '保存中…' : wordsOk ? '保存并归档到学生档案' : '仍要保存（建议先调整字数）'}
                 </Button>
+
+                {/* 一天补写多份时，省掉"跳转→返回"的往返 */}
+                <label className="mt-2.5 flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-500">
+                  <input
+                    type="checkbox"
+                    checked={keepGoing}
+                    onChange={(e) => setKeepGoing(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                  />
+                  保存后继续填下一个学生（不跳转）
+                </label>
               </div>
             </Card>
           ) : (

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import Dashboard from './Dashboard';
 import { renderWithProviders, makeStudent, makeFollowUp } from '../test/test-utils';
 import { api } from '../api/client';
@@ -29,10 +30,15 @@ function statValue(label: string): string {
 }
 
 /** 按路径分发不同的 mock 返回 */
-function mockApi(students: unknown[], stats: Record<string, unknown>) {
+function mockApi(
+  students: unknown[],
+  stats: Record<string, unknown>,
+  pending: unknown[] = []
+) {
   get.mockImplementation((path: string) => {
     if (path === '/students') return Promise.resolve({ students });
     if (path === '/followups/stats') return Promise.resolve(stats);
+    if (path.startsWith('/students/needs-followup')) return Promise.resolve({ students: pending });
     return Promise.reject(new Error('unexpected path: ' + path));
   });
 }
@@ -75,6 +81,45 @@ describe('工作台 · 统计', () => {
     expect(await screen.findByText('覆盖学科')).toBeInTheDocument();
     // 数学 + 英语，去重后为 2
     expect(statValue('覆盖学科')).toBe('2科');
+  });
+});
+
+describe('工作台 · 待回访', () => {
+  it('列出超期未回访的学生及已过天数', async () => {
+    mockApi([], { totalFollowUps: 0, totalImages: 0, subjects: 0, recent: [] }, [
+      { id: 1, name: '小明', grade: '小学五年级', subject: '数学', daysSince: 12 },
+      { id: 2, name: '小红', grade: '小学六年级', subject: '英语', daysSince: null },
+    ]);
+
+    renderWithProviders(<Dashboard />);
+
+    expect(await screen.findByText('待回访')).toBeInTheDocument();
+    expect(screen.getByText('小明')).toBeInTheDocument();
+    expect(screen.getByText('12 天前')).toBeInTheDocument();
+    expect(screen.getByText('从未回访')).toBeInTheDocument();
+  });
+
+  it('没有待回访时显示"都回访过了"', async () => {
+    mockApi([], { totalFollowUps: 0, totalImages: 0, subjects: 0, recent: [] }, []);
+
+    renderWithProviders(<Dashboard />);
+
+    expect(await screen.findByText(/全部学生都已在 7 天内回访过/)).toBeInTheDocument();
+  });
+
+  it('切换天数会重新拉取', async () => {
+    const user = userEvent.setup();
+    mockApi([], { totalFollowUps: 0, totalImages: 0, subjects: 0, recent: [] }, []);
+
+    renderWithProviders(<Dashboard />);
+    await screen.findByText('待回访');
+
+    get.mockClear();
+    await user.click(screen.getByRole('button', { name: '30 天' }));
+
+    await waitFor(() => {
+      expect(get.mock.calls.some((c) => String(c[0]).includes('days=30'))).toBe(true);
+    });
   });
 });
 

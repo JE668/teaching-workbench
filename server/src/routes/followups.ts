@@ -102,6 +102,61 @@ router.get('/stats', (req: any, res) => {
   }
 });
 
+/**
+ * 历史联想：从该用户自己的历史记录里提取
+ *  - 常用课程主题（避免每次重打）
+ *  - 常用课堂表现短语（比内置通用词更贴合个人习惯）
+ */
+router.get('/suggestions', (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const studentId = req.query.studentId ? parseInt(req.query.studentId as string, 10) : null;
+
+    // 指定学生时优先用该学生的历史，同时掺入全局（新学生也有词可用）
+    const scoped = studentId
+      ? (db
+          .prepare(
+            'SELECT topic, performance FROM followups WHERE user_id = ? AND student_id = ? ORDER BY created_at DESC LIMIT 100'
+          )
+          .all(userId, studentId) as any[])
+      : [];
+
+    const global = db
+      .prepare('SELECT topic, performance FROM followups WHERE user_id = ? ORDER BY created_at DESC LIMIT 300')
+      .all(userId) as any[];
+
+    const topicCount = new Map<string, number>();
+    for (const row of [...scoped, ...global]) {
+      const t = String(row.topic || '').trim();
+      if (t && t.length <= 40) topicCount.set(t, (topicCount.get(t) || 0) + 1);
+    }
+
+    // 短语：把课堂表现按标点拆成短句，统计高频片段
+    const phraseCount = new Map<string, number>();
+    for (const row of [...scoped, ...global]) {
+      for (const piece of String(row.performance || '').split(/[，,、；;。.\n]/)) {
+        const p = piece.trim();
+        // 太短没意义，太长不适合做快捷按钮
+        if (p.length < 2 || p.length > 14) continue;
+        phraseCount.set(p, (phraseCount.get(p) || 0) + 1);
+      }
+    }
+
+    const rank = (m: Map<string, number>, limit: number) =>
+      [...m.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, limit)
+        .map(([text, count]) => ({ text, count }));
+
+    res.json({
+      topics: rank(topicCount, 12),
+      phrases: rank(phraseCount, 12),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取历史建议失败', message: error.message });
+  }
+});
+
 // 获取单条回访
 router.get('/:id', (req: any, res) => {
   try {
