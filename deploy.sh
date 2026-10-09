@@ -95,6 +95,39 @@ log "拉取最新镜像..."
 docker pull "$REGISTRY/$PROJECT-backend:latest"
 docker pull "$REGISTRY/$PROJECT-frontend:latest"
 
+# ====== 老版本数据迁移（命名卷 → 目录）======
+# 早期版本用 Docker 命名卷 teaching_workbench_db 存数据。
+# 改成目录挂载后，若不迁移，用户会以为"数据全没了"。
+migrate_legacy_volume() {
+  local data_path
+  data_path="$(grep -E '^DATA_PATH=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  data_path="${data_path:-./data}"
+
+  # 只在老卷存在、且新目录还没有数据库时才迁移
+  if ! docker volume inspect teaching_workbench_db >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -f "$data_path/teaching.db" ]; then
+    return 0
+  fi
+
+  log "检测到旧版命名卷，正在把数据迁移到 $data_path ..."
+  mkdir -p "$data_path"
+
+  docker run --rm \
+    -v teaching_workbench_db:/from \
+    -v "$(cd "$data_path" && pwd)":/to \
+    alpine sh -c "cd /from && cp -a . /to/" >/dev/null 2>&1 || {
+      warn "自动迁移失败，请手动执行："
+      warn "  docker run --rm -v teaching_workbench_db:/from -v \$(pwd)/data:/to alpine sh -c 'cd /from && cp -a . /to/'"
+      return 0
+    }
+
+  log "数据已迁移（旧卷仍保留，确认无误后可执行 docker volume rm teaching_workbench_db 清理）"
+}
+
+migrate_legacy_volume
+
 log "重启服务..."
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 docker compose -f "$COMPOSE_FILE" up -d

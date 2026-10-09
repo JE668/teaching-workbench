@@ -334,6 +334,52 @@ Internet → 域名 → Lucky (反代+SSL)
 | 使用亲切称呼而非全名 | 李一一 → 一一，更自然 |
 | 小组课禁止出现任何学生姓名/昵称 | 一份文案要分别私发给多位家长 |
 
+## 数据持久化
+
+数据（数据库 + 上传图片 + JWT 密钥）挂在 **compose 同级的 `./data` 目录**，
+方便查看与备份：
+
+```
+/vol1/1000/Docker/teaching-workbench/
+├── docker-compose.yml
+├── .env
+└── data/                      ← 数据都在这里
+    ├── teaching.db            ← SQLite（学生/回访/用户/分组/设置）
+    ├── uploads/<uid>/*.jpg    ← 上传的图片
+    └── .jwt_secret            ← 自动生成的 JWT 密钥
+```
+
+### ⚠️ 权限（最容易踩的坑）
+
+后端镜像默认以 **UID 1001** 运行，而 NAS 上的目录通常属于 **1000**。
+不匹配会因权限问题**无法写入数据**。两种解法（推荐第一种）：
+
+```bash
+# 方法一：在 .env 里把运行身份改成目录属主
+ls -nd ./data            # 看第三列的数字 UID
+# .env:
+PUID=1000
+PGID=1000
+
+# 方法二：把目录属主改成 1001
+sudo chown -R 1001:1001 ./data
+```
+
+### 备份与恢复
+
+```bash
+# 备份（建议加进 NAS 定时任务）
+tar czf workbench-$(date +%F).tar.gz -C ./data .
+
+# 恢复
+docker compose down
+tar xzf workbench-2026-10-09.tar.gz -C ./data
+docker compose up -d
+```
+
+> 从旧版本升级：`deploy.sh` 会自动把旧的命名卷
+> `teaching_workbench_db` 迁移到 `./data`，不会丢数据。
+
 ## 数据库迁移
 
 项目使用 SQLite，通过 `CREATE TABLE IF NOT EXISTS` + **增量列检查**处理升级：

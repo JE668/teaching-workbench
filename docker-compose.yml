@@ -22,8 +22,13 @@ services:
       - DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-admin}
       - DEFAULT_ADMIN_PASS=${DEFAULT_ADMIN_PASS:-123456}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+    # 【持久化】数据直接落在 compose 同级目录，方便查看与备份。
+    # 想放别处就改 .env 里的 DATA_PATH。
+    # 注意：容器默认以 UID 1001 运行，而 NAS 上的目录通常属于 1000，
+    # 因此这里用 PUID/PGID 覆盖运行身份（在 .env 里设成目录的属主即可）。
+    user: "${PUID:-1001}:${PGID:-1001}"
     volumes:
-      - db_data:/app/data
+      - ${DATA_PATH:-./data}:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
@@ -56,11 +61,6 @@ services:
         max-file: "3"
     networks:
       - workbench
-
-# ====== 数据卷 ======
-volumes:
-  db_data:
-    name: teaching_workbench_db
 
 # ====== 网络 ======
 networks:
