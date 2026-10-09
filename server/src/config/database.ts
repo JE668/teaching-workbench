@@ -43,6 +43,7 @@ export function initDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
+      preferences TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
     )
   `);
@@ -107,6 +108,7 @@ export function initDatabase() {
 
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
+  ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn('followups', 'course_type', "TEXT NOT NULL DEFAULT 'one_on_one'");
 

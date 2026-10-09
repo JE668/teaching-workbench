@@ -19,6 +19,7 @@ vi.mock('../api/client', () => ({
 
 const get = api.get as Mock;
 const post = api.post as Mock;
+const put = api.put as Mock;
 const streamPost = api.streamPost as Mock;
 
 const GENERATED =
@@ -407,6 +408,71 @@ describe('课后回访 · 历史联想', () => {
 
     // 内置短语仍在
     expect(await screen.findByRole('button', { name: '专注度高' })).toBeInTheDocument();
+  });
+});
+
+describe('课后回访 · 快捷短语模式开关', () => {
+  function mockWithPhrases(phraseMode: 'mixed' | 'history_only' = 'mixed') {
+    get.mockImplementation((path: string) => {
+      if (String(path) === '/auth/preferences') {
+        return Promise.resolve({ preferences: { phraseMode, pendingDays: 7 } });
+      }
+      if (String(path).startsWith('/followups/suggestions')) {
+        return Promise.resolve({ topics: [], phrases: [{ text: '我的专属用词', count: 3 }] });
+      }
+      return Promise.resolve({ students: [] });
+    });
+  }
+
+  it('默认模式：历史用词与内置通用词同时出现', async () => {
+    mockWithPhrases('mixed');
+    renderWithProviders(<FollowUp />);
+
+    expect(await screen.findByRole('button', { name: '我的专属用词' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '计算粗心' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '含内置通用词' })).toBeInTheDocument();
+  });
+
+  it('偏好为"仅用我的历史"时，内置通用词不出现', async () => {
+    mockWithPhrases('history_only');
+    renderWithProviders(<FollowUp />);
+
+    expect(await screen.findByRole('button', { name: '我的专属用词' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '计算粗心' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '仅用我的历史' })).toBeInTheDocument();
+  });
+
+  it('点击开关会切换模式并落库', async () => {
+    const user = userEvent.setup();
+    mockWithPhrases('mixed');
+    put.mockResolvedValue({ preferences: { phraseMode: 'history_only', pendingDays: 7 } });
+
+    renderWithProviders(<FollowUp />);
+    await screen.findByRole('button', { name: '含内置通用词' });
+
+    await user.click(screen.getByRole('button', { name: '含内置通用词' }));
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith('/auth/preferences', expect.objectContaining({ phraseMode: 'history_only' }));
+    });
+
+    expect(await screen.findByRole('button', { name: '仅用我的历史' })).toBeInTheDocument();
+  });
+
+  it('仅用历史且暂无历史时给出说明', async () => {
+    get.mockImplementation((path: string) => {
+      if (String(path) === '/auth/preferences') {
+        return Promise.resolve({ preferences: { phraseMode: 'history_only', pendingDays: 7 } });
+      }
+      if (String(path).startsWith('/followups/suggestions')) {
+        return Promise.resolve({ topics: [], phrases: [] });
+      }
+      return Promise.resolve({ students: [] });
+    });
+
+    renderWithProviders(<FollowUp />);
+
+    expect(await screen.findByText(/还没有历史记录/)).toBeInTheDocument();
   });
 });
 

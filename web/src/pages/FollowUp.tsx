@@ -38,6 +38,7 @@ import {
   appendPhrase,
 } from '../lib/draft';
 import { useDraftSync, DraftPayload } from '../hooks/useDraftSync';
+import { usePreferences } from '../hooks/usePreferences';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -152,6 +153,9 @@ export default function FollowUp() {
   const onRemoteCleared = useCallback(() => {
     toast.info('另一台设备已归档，草稿已清空');
   }, [toast]);
+
+  // 快捷短语模式（服务端偏好，两端一致）
+  const { preferences, update: updatePreferences } = usePreferences();
 
   const draftPayload: DraftPayload = { form, images, selectedIds, content, draft };
 
@@ -435,6 +439,31 @@ export default function FollowUp() {
       }
     }
   };
+
+  /**
+   * 快捷短语：历史学到的用词优先，内置通用词按用户偏好决定是否参与。
+   * 放在渲染前算好——内联 IIFE 会让作用域和 JSX 结构都变乱。
+   */
+  const mergedPhrases = (() => {
+    const seen = new Set<string>();
+    const list: { text: string; tone: 'good' | 'warn' }[] = [];
+
+    for (const t of historyPhrases) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      list.push({ text: t, tone: 'good' });
+    }
+
+    if (preferences.phraseMode === 'mixed') {
+      for (const p of PERFORMANCE_PHRASES) {
+        if (seen.has(p.text)) continue;
+        seen.add(p.text);
+        list.push(p);
+      }
+    }
+
+    return list.slice(0, 18);
+  })();
 
   /** 触屏设备：拖拽和快捷键粘贴都不适用，改用拍照/相册入口 */
   const isTouch =
@@ -724,45 +753,58 @@ export default function FollowUp() {
                 />
 
                 {/* 手机上敲中文很慢，常用描述点一下即可插入 */}
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {(() => {
-                    // 历史学到的短语优先（更贴合个人习惯），再接内置通用词
-                    const seen = new Set<string>();
-                    const merged: { text: string; tone: 'good' | 'warn' }[] = [];
-                    for (const t of historyPhrases) {
-                      if (seen.has(t)) continue;
-                      seen.add(t);
-                      merged.push({ text: t, tone: 'good' });
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-xs text-slate-400">
+                    常用短语{historyPhrases.length > 0 ? '（含你历史里的用词）' : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updatePreferences({
+                        phraseMode: preferences.phraseMode === 'mixed' ? 'history_only' : 'mixed',
+                      })
                     }
-                    for (const p of PERFORMANCE_PHRASES) {
-                      if (seen.has(p.text)) continue;
-                      seen.add(p.text);
-                      merged.push(p);
+                    title={
+                      preferences.phraseMode === 'mixed'
+                        ? '当前：历史用词 + 内置通用词。点击改为只用历史'
+                        : '当前：只用你的历史用词。点击恢复内置通用词'
                     }
-                    return merged.slice(0, 18);
-                  })().map((p) => {
-                    const active = form.performance.includes(p.text);
-                    return (
-                      <button
-                        key={p.text}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() =>
-                          setForm({ ...form, performance: appendPhrase(form.performance, p.text) })
-                        }
-                        className={cn(
-                          'rounded-full px-2.5 py-1 text-xs ring-1 transition-colors',
-                          active
-                            ? p.tone === 'good'
-                              ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                              : 'bg-amber-50 text-amber-700 ring-amber-200'
-                            : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50'
-                        )}
-                      >
-                        {p.text}
-                      </button>
-                    );
-                  })}
+                    className="text-xs text-slate-400 underline-offset-2 transition-colors hover:text-brand-600 hover:underline"
+                  >
+                    {preferences.phraseMode === 'mixed' ? '含内置通用词' : '仅用我的历史'}
+                  </button>
+                </div>
+
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {mergedPhrases.length === 0 ? (
+                    <p className="text-xs text-slate-400">
+                      还没有历史记录 —— 写过几条回访后，会自动学会你的常用用词
+                    </p>
+                  ) : (
+                    mergedPhrases.map((p) => {
+                      const active = form.performance.includes(p.text);
+                      return (
+                        <button
+                          key={p.text}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() =>
+                            setForm({ ...form, performance: appendPhrase(form.performance, p.text) })
+                          }
+                          className={cn(
+                            'rounded-full px-2.5 py-1 text-xs ring-1 transition-colors',
+                            active
+                              ? p.tone === 'good'
+                                ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                                : 'bg-amber-50 text-amber-700 ring-amber-200'
+                              : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50'
+                          )}
+                        >
+                          {p.text}
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 

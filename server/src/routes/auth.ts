@@ -89,6 +89,67 @@ router.post('/login', authLimiter, async (req, res) => {
   }
 });
 
+/** 可同步的用户偏好（手机与电脑保持一致） */
+const DEFAULT_PREFERENCES = {
+  /** 快捷短语模式：mixed = 历史 + 内置通用词；history_only = 只用我的历史 */
+  phraseMode: 'mixed' as 'mixed' | 'history_only',
+  /** 工作台「待回访」的默认天数 */
+  pendingDays: 7,
+};
+
+function readPreferences(userId: number): typeof DEFAULT_PREFERENCES {
+  const row = db.prepare('SELECT preferences FROM users WHERE id = ?').get(userId) as any;
+  let saved: any = {};
+  try {
+    saved = row?.preferences ? JSON.parse(row.preferences) : {};
+  } catch {
+    saved = {}; // 脏数据按默认处理
+  }
+
+  return {
+    phraseMode: saved.phraseMode === 'history_only' ? 'history_only' : 'mixed',
+    pendingDays: Math.min(365, Math.max(1, parseInt(saved.pendingDays, 10) || 7)),
+  };
+}
+
+router.get('/preferences', authMiddleware, (req: any, res) => {
+  try {
+    res.json({ preferences: readPreferences(req.userId) });
+  } catch (error: any) {
+    res.status(500).json({ error: '读取偏好失败', message: error.message });
+  }
+});
+
+router.put('/preferences', authMiddleware, (req: any, res) => {
+  try {
+    const userId = req.userId;
+    const current = readPreferences(userId);
+    const incoming = req.body || {};
+
+    // 只接受已知字段，避免把任意内容写进去
+    const next = {
+      phraseMode:
+        incoming.phraseMode === 'history_only'
+          ? 'history_only'
+          : incoming.phraseMode === 'mixed'
+          ? 'mixed'
+          : current.phraseMode,
+      // 非正数/非数字一律视为非法，回落到默认 7（规则简单可预期）
+      pendingDays: (() => {
+        if (incoming.pendingDays === undefined) return current.pendingDays;
+        const parsed = parseInt(incoming.pendingDays, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PREFERENCES.pendingDays;
+        return Math.min(365, parsed);
+      })(),
+    };
+
+    db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(JSON.stringify(next), userId);
+    res.json({ preferences: next });
+  } catch (error: any) {
+    res.status(500).json({ error: '保存偏好失败', message: error.message });
+  }
+});
+
 // 登出（清除图片访问 cookie）
 // 注意：JWT 存在 localStorage，由前端清除；此接口只负责收回图片访问凭证，
 // 否则共用设备上登出后仍能直接打开图片 URL。

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { usePreferences } from '../hooks/usePreferences';
 import {
   Users,
   MessageSquareText,
@@ -41,7 +42,9 @@ export default function Dashboard() {
   const [summary, setSummary] = useState({ totalFollowUps: 0, totalImages: 0 });
   /** 超过 N 天没回访的学生（含从未回访过的） */
   const [pending, setPending] = useState<any[]>([]);
-  const [pendingDays, setPendingDays] = useState(7);
+  const { preferences, update: updatePreferences } = usePreferences();
+  /** 待回访天数取用户偏好（服务端保存，两端一致） */
+  const pendingDays = preferences.pendingDays;
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -156,7 +159,7 @@ export default function Dashboard() {
                 {[3, 7, 14, 30].map((d) => (
                   <button
                     key={d}
-                    onClick={() => setPendingDays(d)}
+                    onClick={() => updatePreferences({ pendingDays: d })}
                     className={
                       'rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ' +
                       (pendingDays === d
