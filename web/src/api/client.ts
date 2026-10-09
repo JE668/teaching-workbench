@@ -75,6 +75,73 @@ class ApiClient {
   }
 
   /**
+   * GET 并以 SSE 流式接收（用于跨设备草稿同步）。
+   *
+   * 为什么不用 EventSource：它无法携带 Authorization 头，
+   * 而我们的鉴权是 JWT 头（非 cookie）。用 fetch 流即可带上头。
+   */
+  async streamGet(
+    path: string,
+    handlers: { onEvent?: (event: string, data: any) => void; onOpen?: () => void },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const headers: Record<string, string> = { Accept: 'text/event-stream' };
+    if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+
+    const res = await fetch(BASE_URL + path, { method: 'GET', headers, signal });
+
+    if (!res.ok) {
+      throw new Error('订阅失败: ' + res.status);
+    }
+    if (!res.body) {
+      throw new Error('当前环境不支持流式响应');
+    }
+
+    handlers.onOpen?.();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const dispatch = (frame: string) => {
+      let event = 'message';
+      const dataLines: string[] = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length === 0) return;
+
+      let data: any = null;
+      try {
+        data = JSON.parse(dataLines.join('\n'));
+      } catch {
+        return;
+      }
+      handlers.onEvent?.(event, data);
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        // 冲掉可能残留的最后一帧
+        if (buffer.trim()) dispatch(buffer);
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE 以空行分帧；注意分隔符可能被网络切成两半
+      let idx: number;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (frame.trim()) dispatch(frame);
+      }
+    }
+  }
+
+  /**
    * POST 并以 SSE 流式接收（用于 AI 生成）。
    * 事件：delta | regenerating | done | error
    */

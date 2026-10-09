@@ -11,6 +11,7 @@ import authRoutes from './routes/auth.js';
 import studentRoutes from './routes/students.js';
 import followupRoutes from './routes/followups.js';
 import uploadRoutes from './routes/uploads.js';
+import draftRoutes from './routes/draft.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -116,6 +117,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/students', authMiddleware, studentRoutes);
   app.use('/api/followups', authMiddleware, followupRoutes);
+  app.use('/api/draft', authMiddleware, draftRoutes);
   app.use('/api', authMiddleware, uploadRoutes);
 
   // ========== 错误处理 ==========

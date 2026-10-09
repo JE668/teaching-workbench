@@ -38,6 +38,17 @@ export async function login(page: Page) {
 }
 
 /** 直接注入登录态，跳过 UI 登录 */
+/** 清掉服务端草稿（草稿是账号级的，用例之间会互相污染） */
+export async function clearServerDraft(page: Page) {
+  const token = await getToken(page);
+  await page.request
+    .delete('/api/draft', {
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      data: { clientId: 'e2e-cleanup' },
+    })
+    .catch(() => {});
+}
+
 export async function loginViaApi(page: Page) {
   await page.goto('/login');
   const token = await getToken(page);
@@ -55,6 +66,14 @@ export async function loginViaApi(page: Page) {
     },
     [token, user] as const
   );
+
+  // 草稿是账号级的：不清掉的话，上一个用例的残留会被下一个用例恢复出来
+  await page.request
+    .delete('/api/draft', {
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      data: { clientId: 'e2e-cleanup' },
+    })
+    .catch(() => {});
 }
 
 /** 通过 API 建一个学生，返回其 id */

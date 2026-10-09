@@ -95,6 +95,16 @@ export function initDatabase() {
     console.log(`[DB] 默认管理员已创建: ${env.DEFAULT_ADMIN_USER} / ${env.DEFAULT_ADMIN_PASS}`);
   }
 
+  // 进行中的回访草稿（跨设备实时同步的服务端副本，每人一份）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS drafts (
+      user_id INTEGER PRIMARY KEY,
+      payload TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
   ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');

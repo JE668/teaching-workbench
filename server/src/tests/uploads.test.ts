@@ -224,9 +224,9 @@ describe('图片访问鉴权（多用户隔离）', () => {
 });
 
 describe('图片上传 · 按内容判定类型（回归：微信拖拽）', () => {
-  function formOf(buffer: Buffer, name: string, type: string) {
+  function formOf(buffer: Buffer | Uint8Array, name: string, type: string) {
     const fd = new FormData();
-    fd.append('images', new Blob([buffer], { type }), name);
+    fd.append('images', new Blob([new Uint8Array(buffer)], { type }), name);
     return fd;
   }
 

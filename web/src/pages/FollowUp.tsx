@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Sparkles,
@@ -16,6 +16,8 @@ import {
   MessageSquareText,
   Share2,
   Camera,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -35,6 +37,7 @@ import {
   PERFORMANCE_PHRASES,
   appendPhrase,
 } from '../lib/draft';
+import { useDraftSync, DraftPayload } from '../hooks/useDraftSync';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -101,6 +104,43 @@ export default function FollowUp() {
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
   }, []);
+
+  // ===== 跨设备实时同步 =====
+  // 电脑写文案 / 手机拍图上传来图，两边无需刷新即可看到
+  const applyRemote = useCallback(
+    (remote: DraftPayload, skipFields: string[]) => {
+      if (remote.form) {
+        setForm((prev) => {
+          const next: FormState = { ...prev };
+          for (const [key, value] of Object.entries(remote.form)) {
+            // 正在输入 / 刚改过的字段不覆盖，避免打断
+            if (skipFields.includes(key)) continue;
+            (next as any)[key] = value;
+          }
+          return next;
+        });
+      }
+      if (Array.isArray(remote.images) && !skipFields.includes('images')) setImages(remote.images);
+      if (Array.isArray(remote.selectedIds) && !skipFields.includes('selectedIds')) {
+        setSelectedIds(remote.selectedIds);
+      }
+      if (typeof remote.content === 'string' && !skipFields.includes('content')) setContent(remote.content);
+      if (typeof remote.draft === 'string' && !skipFields.includes('draft')) setDraft(remote.draft);
+    },
+    []
+  );
+
+  const onRemoteCleared = useCallback(() => {
+    toast.info('另一台设备已归档，草稿已清空');
+  }, [toast]);
+
+  const draftPayload: DraftPayload = { form, images, selectedIds, content, draft };
+
+  const { connected, peerCount, markLocalEdit, clearRemote } = useDraftSync({
+    state: draftPayload,
+    applyRemote,
+    onRemoteCleared,
+  });
 
   // 草稿持久化：切到微信再回来（甚至标签页被重载）都能续上
   useEffect(() => {
@@ -305,8 +345,9 @@ export default function FollowUp() {
 
       const res = await api.post('/followups', payload);
 
-      // 已归档，草稿使命结束
+      // 已归档，草稿使命结束（本地 + 服务端，后者会通知另一台设备）
       clearDraft();
+      clearRemote();
 
       if (isGroup) {
         toast.success('已为 ' + selectedIds.length + ' 位学生各归档一条回访');
@@ -383,9 +424,42 @@ export default function FollowUp() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-800">课后回访</h1>
           <p className="mt-1 text-sm text-slate-400">填写课堂信息，AI 生成规范的课后反馈</p>
         </div>
-        <div className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-xs shadow-soft ring-1 ring-slate-100">
-          <Sparkles className="h-3.5 w-3.5 text-brand-500" />
-          <span className="font-medium text-slate-600">SenseNova 多模态</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 跨设备同步状态：让用户知道"手机上传的图会不会自动出现" */}
+          <div
+            data-testid="sync-status"
+            title={
+              peerCount > 0
+                ? '另一台设备也在编辑，改动会实时同步'
+                : '已连接，在手机上打开同一地址即可实时联动'
+            }
+            className={cn(
+              'flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs shadow-soft ring-1',
+              !connected
+                ? 'bg-slate-50 text-slate-400 ring-slate-100'
+                : peerCount > 0
+                ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+                : 'bg-white text-slate-500 ring-slate-100'
+            )}
+          >
+            {connected ? (
+              <Wifi className="h-3.5 w-3.5" />
+            ) : (
+              <WifiOff className="h-3.5 w-3.5" />
+            )}
+            <span className="font-medium">
+              {!connected
+                ? '同步已断开'
+                : peerCount > 0
+                ? '已连接 ' + peerCount + ' 台设备'
+                : '跨设备同步中'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-xs shadow-soft ring-1 ring-slate-100">
+            <Sparkles className="h-3.5 w-3.5 text-brand-500" />
+            <span className="font-medium text-slate-600">SenseNova 多模态</span>
+          </div>
         </div>
       </div>
 
@@ -504,16 +578,24 @@ export default function FollowUp() {
                   <Input
                     label="学生姓名"
                     required
+                    data-sync-field="studentName"
                     value={form.studentName}
-                    onChange={(e) => setForm({ ...form, studentName: e.target.value, studentId: null })}
+                    onChange={(e) => {
+                      markLocalEdit('studentName');
+                      setForm({ ...form, studentName: e.target.value, studentId: null });
+                    }}
                     placeholder="请输入学生姓名（库中没有会自动建立档案）"
                     icon={<User className="h-4 w-4" />}
                   />
 
                   <Input
                     label="亲切称呼"
+                    data-sync-field="nickname"
                     value={form.nickname}
-                    onChange={(e) => setForm({ ...form, nickname: e.target.value })}
+                    onChange={(e) => {
+                      markLocalEdit('nickname');
+                      setForm({ ...form, nickname: e.target.value });
+                    }}
                     placeholder={
                       form.studentName.trim()
                         ? deriveNickname(form.studentName) || '请输入称呼'
@@ -572,8 +654,12 @@ export default function FollowUp() {
               <Input
                 label={form.sessionCount > 1 ? '课程内容（这几次课）' : '课程主题'}
                 required
+                data-sync-field="topic"
                 value={form.topic}
-                onChange={(e) => setForm({ ...form, topic: e.target.value })}
+                onChange={(e) => {
+                  markLocalEdit('topic');
+                  setForm({ ...form, topic: e.target.value });
+                }}
                 placeholder={
                   form.sessionCount > 1 ? '如：分数加减法、分数乘法' : '如：分数加减法运算'
                 }
@@ -584,8 +670,12 @@ export default function FollowUp() {
                   label="课堂表现"
                   required
                   rows={4}
+                  data-sync-field="performance"
                   value={form.performance}
-                  onChange={(e) => setForm({ ...form, performance: e.target.value })}
+                  onChange={(e) => {
+                    markLocalEdit('performance');
+                    setForm({ ...form, performance: e.target.value });
+                  }}
                   placeholder="如：本节课专注度较高，能主动回答问题，但计算速度还需提高…"
                 />
 
