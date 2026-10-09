@@ -367,15 +367,24 @@ sudo chown -R 1001:1001 ./data
 
 ### 备份与恢复
 
+> ⚠️ SQLite 使用 **WAL 模式**，运行中直接打包可能出现
+> `teaching.db` 与 `-wal` 不一致。**备份前先停掉后端**。
+
 ```bash
-# 备份（建议加进 NAS 定时任务）
-tar czf workbench-$(date +%F).tar.gz -C ./data .
+cd /vol1/1000/Docker/teaching-workbench
+
+# 备份：先停后端让 WAL 落盘，再打包
+docker compose stop backend
+tar czf /vol1/1000/backup/workbench-$(date +%F).tar.gz -C ./data .
+docker compose start backend
 
 # 恢复
 docker compose down
-tar xzf workbench-2026-10-09.tar.gz -C ./data
+tar xzf /vol1/1000/backup/workbench-2026-10-09.tar.gz -C ./data
 docker compose up -d
 ```
+
+> 只停后端即可，前端不必停。恢复时会覆盖整个 `data/` 目录。
 
 > 从旧版本升级：`deploy.sh` 会自动把旧的命名卷
 > `teaching_workbench_db` 迁移到 `./data`，不会丢数据。
