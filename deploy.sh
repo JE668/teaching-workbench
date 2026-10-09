@@ -47,12 +47,25 @@ ensure_env_secrets() {
   # JWT_SECRET 为空时自动生成，避免退回源码中公开的默认密钥
   if ! grep -qE '^JWT_SECRET=.+' .env; then
     NEW_SECRET=$(openssl rand -hex 32)
-    if sed --version >/dev/null 2>&1; then
-      sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${NEW_SECRET}|" .env
+
+    if grep -qE '^JWT_SECRET=' .env; then
+      # 已有该行但值为空 -> 就地替换
+      if sed --version >/dev/null 2>&1; then
+        sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${NEW_SECRET}|" .env
+      else
+        sed -i '' "s|^JWT_SECRET=.*|JWT_SECRET=${NEW_SECRET}|" .env
+      fi
+      log "已自动生成 JWT_SECRET 并写入 .env"
     else
-      sed -i '' "s|^JWT_SECRET=.*|JWT_SECRET=${NEW_SECRET}|" .env
+      # 完全没有该行 -> 必须追加。
+      # 原来直接 sed 会"匹配不到就不替换"却仍报成功，
+      # 导致每次部署重复生成、密钥从未落盘。
+      printf '
+# 自动生成的 JWT 签名密钥（请勿泄露；丢失会导致所有登录失效）
+JWT_SECRET=%s
+' "$NEW_SECRET" >> .env
+      log "已在 .env 中新增 JWT_SECRET（自动生成）"
     fi
-    log "已自动生成 JWT_SECRET 并写入 .env"
   fi
 
   if ! grep -qE '^SENSENOVA_API_KEY=.+' .env; then
@@ -100,7 +113,9 @@ docker pull "$REGISTRY/$PROJECT-frontend:latest"
 # 改成目录挂载后，若不迁移，用户会以为"数据全没了"。
 migrate_legacy_volume() {
   local data_path
-  data_path="$(grep -E '^DATA_PATH=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  # 注意：必须一起去掉 \r —— .env 若是 CRLF 换行，
+  # 路径会变成 "./data\r"，导致下面的存在性判断永远不成立、每次部署重复迁移。
+  data_path="$(grep -E '^DATA_PATH=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' \r')"
   data_path="${data_path:-./data}"
 
   # 只在老卷存在、且新目录还没有数据库时才迁移
