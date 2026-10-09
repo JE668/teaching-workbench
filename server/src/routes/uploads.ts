@@ -67,7 +67,10 @@ const upload = multer({
   storage,
   // 这里不再按 mimetype 拦截（微信等应用会给出空 mimetype），
   // 真正的把关放在写入后按文件内容判定。
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  // 前端已会在上传前压缩（长边 2048），这里放宽只是兜底：
+  // 压缩失败或关闭时仍能容纳大图。注意 Base64 后体积还会涨约 33%，
+  // 过大的图会让 AI 请求被平台拒绝，所以不鼓励依赖这个上限。
+  limits: { fileSize: 40 * 1024 * 1024 }, // 40MB
 });
 
 /**
@@ -79,7 +82,7 @@ router.post('/upload', (req: AuthenticatedRequest, res) => {
   upload.array('images', 5)(req, res, (err) => {
     if (err) {
       const message =
-        err.code === 'LIMIT_FILE_SIZE' ? '图片过大，单张不能超过 10MB' : err.message;
+        err.code === 'LIMIT_FILE_SIZE' ? '图片过大，单张不能超过 40MB' : err.message;
       return res.status(400).json({ error: message });
     }
     if (!req.files || req.files.length === 0) {

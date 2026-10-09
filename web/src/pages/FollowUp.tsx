@@ -30,6 +30,7 @@ import {
   CourseType,
 } from '../types/index';
 import { deriveNickname } from '../lib/nickname';
+import { prepareImageForUpload, formatBytes } from '../lib/image';
 import {
   loadDraft,
   saveDraft,
@@ -293,16 +294,32 @@ export default function FollowUp() {
     setUploading(true);
     try {
       let added = 0;
+      let compressedCount = 0;
+      let savedBytes = 0;
+
       for (const file of list) {
+        // 手机照片动辄 20-40MB：先在浏览器里缩到 2048px，
+        // 上传更快、不撞体积限制，而 AI 看到的内容完全一样。
+        const prepared = await prepareImageForUpload(file);
+        if (prepared.compressed) {
+          compressedCount++;
+          savedBytes += prepared.originalSize - prepared.finalSize;
+        }
+
         const fd = new FormData();
-        fd.append('images', file);
+        fd.append('images', prepared.file);
+
         const res = await api.upload('/upload', fd);
         if (res.paths?.length) {
           setImages((prev) => [...prev, ...res.paths]);
           added += res.paths.length;
         }
       }
-      if (added) toast.success('已上传 ' + added + ' 张图片');
+
+      if (added) {
+        const suffix = compressedCount > 0 ? '（已压缩 ' + formatBytes(savedBytes) + '）' : '';
+        toast.success('已上传 ' + added + ' 张图片' + suffix);
+      }
     } catch (err: any) {
       toast.error('图片上传失败：' + err.message);
     } finally {

@@ -150,12 +150,24 @@ describe('图片上传 · 真实尺寸（回归：手机照片 GB 级以下上�
     assert.equal(res.status, 200, '8MB 应在 10MB 上限内');
   });
 
-  test('超过 10MB 时返回明确的 JSON 错误', async () => {
+  test('35MB 的大图也能上传（5000 万像素照片的量级）', async () => {
     const fd = new FormData();
     fd.append(
       'images',
-      new Blob([new Uint8Array(sizedPng(11 * 1024 * 1024))], { type: 'image/png' }),
+      new Blob([new Uint8Array(sizedPng(35 * 1024 * 1024))], { type: 'image/png' }),
       'huge.png'
+    );
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+    assert.equal(res.status, 200, '应在上限内：' + JSON.stringify(res.body));
+  });
+
+  test('超过 40MB 时返回明确的 JSON 错误', async () => {
+    const fd = new FormData();
+    fd.append(
+      'images',
+      new Blob([new Uint8Array(sizedPng(44 * 1024 * 1024))], { type: 'image/png' }),
+      'over.png'
     );
 
     const res = await req('POST', '/api/upload', { token, raw: fd });
@@ -163,7 +175,7 @@ describe('图片上传 · 真实尺寸（回归：手机照片 GB 级以下上�
     assert.equal(res.status, 400);
     // 关键：必须是 JSON 且带 error 字段，前端才能显示具体原因
     assert.ok(res.body.error, '应返回 JSON 错误体');
-    assert.match(res.body.error, /10MB|过大/);
+    assert.match(res.body.error, /40MB|过大/);
   });
 });
 
