@@ -106,6 +106,15 @@ export function initDatabase() {
     )
   `);
 
+  // 应用级设置（可在前端设置页修改，覆盖 .env 的默认值）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    )
+  `);
+
   // 小组课分组预设（如"周六上午三年级班"）
   db.exec(`
     CREATE TABLE IF NOT EXISTS groups (

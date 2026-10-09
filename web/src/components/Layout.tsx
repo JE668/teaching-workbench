@@ -10,6 +10,7 @@ import {
   Sparkles,
   Menu,
   X,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
@@ -19,6 +20,7 @@ const navItems = [
   { to: '/students', label: '学生管理', icon: Users },
   { to: '/followups', label: '课后回访', icon: MessageSquarePlus },
   { to: '/followups/history', label: '回访历史', icon: History },
+  { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 
 export default function Layout() {

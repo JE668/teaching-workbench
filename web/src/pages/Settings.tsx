@@ -1,0 +1,292 @@
+import React, { useEffect, useState } from 'react';
+import { Sliders, KeyRound, Save, ShieldCheck, Sparkles } from 'lucide-react';
+import { api } from '../api/client';
+import { Card, CardHeader } from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
+import { Input, Select } from '../components/ui/Field';
+import { useToast } from '../components/ui/Toast';
+
+const EFFORT_LABELS: Record<string, string> = {
+  minimal: 'minimal（最快，几乎不思考）',
+  low: 'low（默认，速度快）',
+  medium: 'medium（更细致，稍慢）',
+  high: 'high（最细致，最慢）',
+};
+
+interface SettingsState {
+  model: string;
+  reasoningEffort: string;
+  baseUrl: string;
+  timeoutMs: string;
+}
+
+export default function Settings() {
+  const toast = useToast();
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [effortLevels, setEffortLevels] = useState<string[]>(['minimal', 'low', 'medium', 'high']);
+  const [overridden, setOverridden] = useState<string[]>([]);
+
+  const [apiKeyMasked, setApiKeyMasked] = useState('');
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+
+  const [form, setForm] = useState<SettingsState>({
+    model: '',
+    reasoningEffort: 'low',
+    baseUrl: '',
+    timeoutMs: '60000',
+  });
+
+  const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' });
+  const [changingPwd, setChangingPwd] = useState(false);
+
+  const load = async () => {
+    try {
+      const r = await api.get('/settings');
+      const s = r.settings || {};
+
+      setForm({
+        model: s['ai.model'] || '',
+        reasoningEffort: s['ai.reasoningEffort'] || 'low',
+        baseUrl: s['ai.baseUrl'] || '',
+        timeoutMs: s['ai.timeoutMs'] || '60000',
+      });
+      setApiKeyMasked(s['ai.apiKey']?.masked || '');
+      setApiKeyConfigured(!!s['ai.apiKey']?.configured);
+      setOverridden(r.overridden || []);
+      if (r.meta?.effortLevels?.length) setEffortLevels(r.meta.effortLevels);
+    } catch (err: any) {
+      toast.error('读取设置失败：' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const saveAi = async () => {
+    setSaving(true);
+    try {
+      const patch: Record<string, string> = {
+        'ai.model': form.model,
+        'ai.reasoningEffort': form.reasoningEffort,
+        'ai.baseUrl': form.baseUrl,
+        'ai.timeoutMs': form.timeoutMs,
+      };
+      // 只有真的输入了新 key 才提交（否则会把掩码写回去）
+      if (apiKey.trim()) patch['ai.apiKey'] = apiKey.trim();
+
+      await api.put('/settings', patch);
+      setApiKey('');
+      toast.success('AI 设置已保存，下次生成立即生效');
+      await load();
+    } catch (err: any) {
+      toast.error('保存失败：' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearOverride = async (key: string) => {
+    try {
+      await api.put('/settings', { [key]: '' });
+      toast.success('已恢复为 .env 中的配置');
+      await load();
+    } catch (err: any) {
+      toast.error('恢复失败：' + err.message);
+    }
+  };
+
+  const changePassword = async () => {
+    if (!pwd.current || !pwd.next) {
+      toast.error('请填写当前密码与新密码');
+      return;
+    }
+    if (pwd.next.length < 6) {
+      toast.error('新密码长度至少 6 位');
+      return;
+    }
+    if (pwd.next !== pwd.confirm) {
+      toast.error('两次输入的新密码不一致');
+      return;
+    }
+
+    setChangingPwd(true);
+    try {
+      await api.put('/auth/password', { currentPassword: pwd.current, newPassword: pwd.next });
+      setPwd({ current: '', next: '', confirm: '' });
+      toast.success('密码已修改，下次登录请使用新密码');
+    } catch (err: any) {
+      toast.error('修改密码失败：' + err.message);
+    } finally {
+      setChangingPwd(false);
+    }
+  };
+
+  const isOverridden = (key: string) => overridden.includes(key);
+
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-fade-up">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800">设置</h1>
+        <Card className="p-5">
+          <p className="text-sm text-slate-400">加载中…</p>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-up">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800">设置</h1>
+        <p className="mt-1 text-sm text-slate-400">
+          这里的修改保存在数据库中，立即生效，无需重启容器；留空则沿用 .env 的配置
+        </p>
+      </div>
+
+      {/* ===== AI 设置 ===== */}
+      <Card className="lg:max-w-3xl">
+        <CardHeader
+          title="AI 生成设置"
+          description="模型与思考等级会影响生成质量与速度"
+          icon={<Sparkles className="h-4 w-4" />}
+        />
+        <div className="space-y-5 p-5">
+          <div>
+            <Input
+              label="模型名称"
+              value={form.model}
+              onChange={(e) => setForm({ ...form, model: e.target.value })}
+              placeholder="如：sensenova-6.8-flash-lite"
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              填服务商提供的模型标识；不确定就用默认值
+            </p>
+          </div>
+
+          <div>
+            <Select
+              label="思考等级"
+              value={form.reasoningEffort}
+              onChange={(e) => setForm({ ...form, reasoningEffort: e.target.value })}
+              options={effortLevels.map((v) => ({ value: v, label: EFFORT_LABELS[v] || v }))}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              等级越高，模型"想"得越久，文案更细致但更慢。「low」适合日常回访
+            </p>
+          </div>
+
+          <Input
+            label="接口地址"
+            value={form.baseUrl}
+            onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+            placeholder="https://token.sensenova.cn/v1"
+          />
+
+          <div>
+            <Input
+              label="超时时间（毫秒）"
+              value={form.timeoutMs}
+              onChange={(e) => setForm({ ...form, timeoutMs: e.target.value })}
+              placeholder="60000"
+            />
+            <p className="mt-1 text-xs text-slate-400">5 秒 ~ 5 分钟。网络慢可适当调大</p>
+          </div>
+
+          <div>
+            <Input
+              label="API Key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={apiKeyConfigured ? '已配置（留空则不修改）' : '请填写服务商的 API Key'}
+              icon={<KeyRound className="h-4 w-4" />}
+            />
+            <div className="mt-1.5 flex items-center gap-2 text-xs">
+              {apiKeyConfigured ? (
+                <Badge tone="success">
+                  <ShieldCheck className="h-3 w-3" />
+                  已配置 {apiKeyMasked}
+                </Badge>
+              ) : (
+                <Badge tone="warning">未配置，无法生成回访</Badge>
+              )}
+              <span className="text-slate-400">出于安全考虑，密钥不会回显完整内容</span>
+            </div>
+          </div>
+
+          {overridden.length > 0 && (
+            <div className="rounded-xl bg-slate-50 p-3.5 ring-1 ring-slate-100">
+              <p className="mb-2 text-xs font-medium text-slate-500">
+                以下项已被自定义（未使用的项沿用 .env）
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {overridden.map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => clearOverride(k)}
+                    title="点击恢复为 .env 中的配置"
+                    className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-100"
+                  >
+                    {k.replace('ai.', '')} ✕
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Button onClick={saveAi} loading={saving} icon={<Save className="h-4 w-4" />}>
+            保存 AI 设置
+          </Button>
+        </div>
+      </Card>
+
+      {/* ===== 修改密码 ===== */}
+      <Card className="lg:max-w-3xl">
+        <CardHeader
+          title="修改密码"
+          description="修改后其它设备需要重新登录"
+          icon={<Sliders className="h-4 w-4" />}
+        />
+        <div className="space-y-4 p-5">
+          <Input
+            label="当前密码"
+            type="password"
+            value={pwd.current}
+            onChange={(e) => setPwd({ ...pwd, current: e.target.value })}
+            autoComplete="current-password"
+          />
+          <Input
+            label="新密码"
+            type="password"
+            value={pwd.next}
+            onChange={(e) => setPwd({ ...pwd, next: e.target.value })}
+            placeholder="至少 6 位"
+            autoComplete="new-password"
+          />
+          <Input
+            label="确认新密码"
+            type="password"
+            value={pwd.confirm}
+            onChange={(e) => setPwd({ ...pwd, confirm: e.target.value })}
+            autoComplete="new-password"
+          />
+
+          <Button onClick={changePassword} loading={changingPwd} icon={<KeyRound className="h-4 w-4" />}>
+            修改密码
+          </Button>
+
+          <p className="text-xs text-slate-400">
+            需要先验证当前密码 —— 避免登录凭证泄露后被直接改密夺号
+          </p>
+        </div>
+      </Card>
+    </div>
+  );
+}

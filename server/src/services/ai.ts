@@ -1,25 +1,30 @@
 import OpenAI from 'openai';
 import { env } from '../config/env.js';
 import { deriveNickname } from '../utils/nickname.js';
+import { getAiConfig, getConfigVersion, AiConfig } from '../config/settings.js';
 import fs from 'fs';
 import path from 'path';
 
 // ============ SenseNova 客户端（OpenAI 兼容） ============
+// 配置可在前端设置页修改，因此客户端要能按版本号重建，
+// 否则改了模型/密钥还得重启容器才生效。
 let client: OpenAI | null = null;
+let clientVersion = -1;
 
-function getClient(): OpenAI {
-  if (!client) {
-    if (!env.SENSENOVA_API_KEY) {
-      throw new Error('SENSENOVA_API_KEY 未配置，请在 .env 文件中设置');
+function getClient(config: AiConfig): OpenAI {
+  if (!client || clientVersion !== getConfigVersion()) {
+    if (!config.apiKey) {
+      throw new Error('未配置 SENSENOVA_API_KEY，请在「设置」页或 .env 中填写');
     }
     client = new OpenAI({
-      apiKey: env.SENSENOVA_API_KEY,
-      baseURL: env.SENSENOVA_BASE_URL,
-      // 超时收紧到 60s（SDK 默认 10 分钟，用户等不起）
-      timeout: env.SENSENOVA_TIMEOUT_MS,
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl,
+      // 超时收紧（SDK 默认 10 分钟，用户等不起）
+      timeout: config.timeoutMs,
       // SDK 层仅重试 1 次（网络抖动/5xx）；字数不达标的业务重试由本服务自行控制
       maxRetries: 1,
     });
+    clientVersion = getConfigVersion();
   }
   return client;
 }
@@ -78,7 +83,7 @@ export function describeAiError(error: any): { httpStatus: number; message: stri
     return {
       httpStatus: 504,
       message: 'AI 生成超时（' +
-        Math.round(env.SENSENOVA_TIMEOUT_MS / 1000) +
+        Math.round(getAiConfig().timeoutMs / 1000) +
         '秒）。可稍后重试，或把 SENSENOVA_REASONING_EFFORT 调为 none 以加快速度。',
     };
   }
@@ -320,8 +325,10 @@ function buildUserContent(params: FollowUpGenerateParams, correction?: string): 
  * OpenAI Node SDK 的类型定义未包含该字段，故用 any 透传。
  */
 function buildRequest(params: FollowUpGenerateParams, correction?: string, stream = false): any {
+  const config = getAiConfig();
+
   const body: any = {
-    model: env.SENSENOVA_MODEL,
+    model: config.model,
     messages: [
       {
         role: 'system',
@@ -331,8 +338,8 @@ function buildRequest(params: FollowUpGenerateParams, correction?: string, strea
     ],
     max_tokens: 2000,
     temperature: 0.7,
-    // 思考强度：由 SENSENOVA_REASONING_EFFORT 控制（默认 low）
-    reasoning_effort: env.SENSENOVA_REASONING_EFFORT,
+    // 思考强度：可在前端设置页调整（默认 low）
+    reasoning_effort: config.reasoningEffort,
   };
   if (stream) body.stream = true;
   return body;
@@ -343,7 +350,7 @@ export async function generateOnce(
   params: FollowUpGenerateParams,
   correction?: string
 ): Promise<string> {
-  const ai = getClient();
+  const ai = getClient(getAiConfig());
   const response = await ai.chat.completions.create(buildRequest(params, correction));
   return (response.choices[0].message.content || '').trim();
 }
@@ -353,7 +360,7 @@ export async function* streamOnce(
   params: FollowUpGenerateParams,
   correction?: string
 ): AsyncGenerator<string> {
-  const ai = getClient();
+  const ai = getClient(getAiConfig());
   const stream = (await ai.chat.completions.create(buildRequest(params, correction, true))) as any;
   for await (const chunk of stream) {
     const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta

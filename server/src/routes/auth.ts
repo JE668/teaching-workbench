@@ -89,6 +89,42 @@ router.post('/login', authLimiter, async (req, res) => {
   }
 });
 
+/**
+ * 修改密码。
+ * 必须校验当前密码 —— 否则 token 泄露后可直接改密码夺取账号。
+ */
+router.put('/password', authMiddleware, (req: any, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: '请填写当前密码与新密码' });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: '新密码长度至少 6 位' });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: '新密码不能与当前密码相同' });
+    }
+
+    const user = db.prepare('SELECT id, password FROM users WHERE id = ?').get(req.userId) as any;
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+
+    if (!bcrypt.compareSync(String(currentPassword), user.password)) {
+      return res.status(401).json({ error: '当前密码不正确' });
+    }
+
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(
+      bcrypt.hashSync(String(newPassword), 10),
+      user.id
+    );
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: '修改密码失败', message: error.message });
+  }
+});
+
 /** 可同步的用户偏好（手机与电脑保持一致） */
 const DEFAULT_PREFERENCES = {
   /** 快捷短语模式：mixed = 历史 + 内置通用词；history_only = 只用我的历史 */
