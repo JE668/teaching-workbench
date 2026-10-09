@@ -108,10 +108,22 @@ export default function Students() {
         const res = await api.put('/students/' + editing.id, form);
         setStudents((prev) => prev.map((s) => (s.id === res.student.id ? res.student : s)));
         toast.success('学生信息已更新');
+        // 改名后也可能归位历史回访（老师一开始名字打错了）
+        if (res.linkedFollowUps > 0) {
+          toast.info('已把 ' + res.linkedFollowUps + ' 条同名历史回访归入该学生档案');
+        }
       } else {
         const res = await api.post('/students', form);
         setStudents((prev) => [res.student, ...prev]);
         toast.success('学生添加成功');
+
+        // 老师可能"先写回访、后建档案"：建档时同名历史回访会被自动归位
+        if (res.linkedFollowUps > 0) {
+          toast.info('已把 ' + res.linkedFollowUps + ' 条同名历史回访归入该学生档案');
+        }
+        if (res.skippedAmbiguous > 0) {
+          toast.info('有同名学生的历史回访无法确定归属，未自动关联');
+        }
       }
       setModalOpen(false);
     } catch (err: any) {

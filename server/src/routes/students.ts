@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
+import { linkOrphansByName } from '../services/linkOrphans.js';
 import { StudentCreate, StudentUpdate } from '../types/index.js';
 import { mapStudent, mapStudents, mapFollowUps } from '../utils/mappers.js';
 import { toMarkdown, toCsv, exportFilename } from '../services/export.js';
@@ -187,7 +188,17 @@ router.post('/', (req: any, res) => {
     ).run(userId, name, grade, subject, phone || null, notes || null);
 
     const row = db.prepare('SELECT * FROM students WHERE id = ?').get(result.lastInsertRowid);
-    res.json({ student: mapStudent(row) });
+
+    // 关键：老师可能是"先写回访、后建档案"。
+    // 建档时把同名且未关联的历史回访一并归位，
+    // 否则这个学生的档案页里看不到自己过往的记录。
+    const { linked, skippedNames } = linkOrphansByName(userId, (row as any).name);
+
+    res.json({
+      student: mapStudent(row),
+      linkedFollowUps: linked,
+      skippedAmbiguous: skippedNames,
+    });
   } catch (error: any) {
     res.status(500).json({ error: '创建学生失败', message: error.message });
   }
@@ -216,8 +227,15 @@ router.put('/:id', (req: any, res) => {
       studentId
     );
 
-    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId);
-    res.json({ student: mapStudent(row) });
+    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId) as any;
+
+    // 改名后，用新名字再归位一次（老师可能一开始名字打错了）
+    let linkedFollowUps = 0;
+    if (row.name !== existing.name) {
+      linkedFollowUps = linkOrphansByName(userId, row.name).linked;
+    }
+
+    res.json({ student: mapStudent(row), linkedFollowUps });
   } catch (error: any) {
     res.status(500).json({ error: '更新学生失败', message: error.message });
   }

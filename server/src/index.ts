@@ -2,9 +2,22 @@ import http from 'http';
 import { env } from './config/env.js';
 import { db } from './config/database.js';
 import { createApp } from './app.js';
+import { repairAllUsers } from './services/linkOrphans.js';
 
 // ========== 初始化 ==========
 const app = createApp();
+
+// 启动时做一次「孤儿回访」修复：把按姓名能唯一确定的未关联回访
+// 补挂到对应学生档案。历史遗留数据（先写回访、后建档案）靠这一步归位。
+// 幂等，可重复执行；同名歧义时不会猜，只跳过。
+try {
+  const repaired = repairAllUsers();
+  if (repaired > 0) {
+    console.log('[DB] 已把 ' + repaired + ' 条未关联的历史回访归位到对应学生档案');
+  }
+} catch (err: any) {
+  console.warn('[DB] 历史回访归位失败（不影响启动）: ' + err.message);
+}
 const server = http.createServer(app);
 
 // ========== 启动服务器 ==========
