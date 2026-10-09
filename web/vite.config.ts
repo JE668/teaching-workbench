@@ -2,7 +2,11 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // 后端地址：E2E 场景下通过环境变量指向测试实例
-const API_TARGET = process.env.E2E_API_TARGET || 'http://localhost:3000';
+// 开发/预览时的后端地址。
+// 优先读 VITE_API_TARGET（直观）；保留 E2E_API_TARGET 兼容既有脚本。
+// 注意默认值 3000 可能与本机其它项目冲突，必要时用环境变量覆盖：
+//   VITE_API_TARGET=http://localhost:3010 npm run dev
+const API_TARGET = process.env.VITE_API_TARGET || process.env.E2E_API_TARGET || 'http://localhost:3000';
 
 const proxy = {
   '/api': { target: API_TARGET, changeOrigin: true },

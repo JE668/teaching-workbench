@@ -116,6 +116,57 @@ describe('图片上传', () => {
 });
 
 /** 取当前用户的上传目录前缀，用于构造穿越尝试 */
+describe('图片上传 · 真实尺寸（回归：手机照片 GB 级以下上传失败）', () => {
+  /** 带 PNG 文件头的指定大小缓冲区（服务端按文件头判定类型） */
+  function sizedPng(totalBytes: number) {
+    const header = tinyPngBuffer();
+    return Buffer.concat([header, Buffer.alloc(Math.max(0, totalBytes - header.length))]);
+  }
+
+  test('3MB 的照片能正常上传（不被体积限制挡掉）', async () => {
+    const fd = new FormData();
+    fd.append('images', new Blob([new Uint8Array(sizedPng(3 * 1024 * 1024))], { type: '' }), 'photo');
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+
+    assert.equal(res.status, 200, '手机照片常见 2-8MB，必须能过：' + JSON.stringify(res.body));
+    assert.ok(res.body.paths[0].endsWith('.png'));
+
+    const img = await fetch(url('/uploads/' + res.body.paths[0]), {
+      headers: { Cookie: mediaCookie },
+    });
+    assert.equal(img.status, 200);
+  });
+
+  test('8MB 的照片也能上传', async () => {
+    const fd = new FormData();
+    fd.append(
+      'images',
+      new Blob([new Uint8Array(sizedPng(8 * 1024 * 1024))], { type: 'image/png' }),
+      'big.png'
+    );
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+    assert.equal(res.status, 200, '8MB 应在 10MB 上限内');
+  });
+
+  test('超过 10MB 时返回明确的 JSON 错误', async () => {
+    const fd = new FormData();
+    fd.append(
+      'images',
+      new Blob([new Uint8Array(sizedPng(11 * 1024 * 1024))], { type: 'image/png' }),
+      'huge.png'
+    );
+
+    const res = await req('POST', '/api/upload', { token, raw: fd });
+
+    assert.equal(res.status, 400);
+    // 关键：必须是 JSON 且带 error 字段，前端才能显示具体原因
+    assert.ok(res.body.error, '应返回 JSON 错误体');
+    assert.match(res.body.error, /10MB|过大/);
+  });
+});
+
 describe('图片访问鉴权（多用户隔离）', () => {
   test('未携带凭证时拒绝访问（回归：曾用 express.static 完全裸奔）', async () => {
     const up = await req('POST', '/api/upload', { token, raw: pngForm() });
