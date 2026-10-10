@@ -18,6 +18,7 @@ import {
   MIN_WORDS,
   MAX_WORDS,
 } from '../services/ai.js';
+import { commitImages } from '../services/imageLifecycle.js';
 
 const router = Router();
 
@@ -339,7 +340,10 @@ router.post('/', (req: any, res) => {
     }
 
     const wordCount = countWords(content);
-    const imagesJson = JSON.stringify(images || []);
+    // 【提交图片】把暂存图挪到正式归档（按账户名分目录）。
+    // 未保存的回访不会留下正式文件 —— "只保留已保存回访的图片"的关键一步。
+    const committedImages = commitImages(userId, images || []);
+    const imagesJson = JSON.stringify(committedImages);
 
     const insert = db.prepare(
       `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, course_type, images, content, word_count)
@@ -463,7 +467,9 @@ router.put('/:id', (req: any, res) => {
     }
 
     const wordCount = countWords(content ?? existing.content);
-    const imagesJson = JSON.stringify(images ?? parseImages(existing.images));
+    // 编辑时新增的暂存图同样要提交；已有正式路径原样保留
+    const committedImages = commitImages(userId, images ?? parseImages(existing.images));
+    const imagesJson = JSON.stringify(committedImages);
     const sessionCount = normalizeSessionCount(
       req.body.sessionCount !== undefined ? req.body.sessionCount : existing.session_count
     );

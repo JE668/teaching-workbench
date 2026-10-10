@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env.js';
+import { db } from '../config/database.js';
 
 /**
  * 图片访问鉴权。
@@ -93,9 +94,18 @@ export function requireMediaAuth(req: Request, res: Response, next: NextFunction
     return res.status(401).json({ error: '未授权访问图片' });
   }
 
-  // 关键：必须是自己目录下的文件，否则 B 能看 A 的图
-  const owner = Number(req.params.userId ?? req.params.userId);
-  if (Number.isFinite(owner) && owner !== auth.userId) {
+  // 关键：必须是自己目录下的文件，否则 B 能看 A 的图。
+  // 目录名可能是【数字 ID】（历史路径）或【账户名】（新路径），两者都要校验。
+  // 注意不能只写 Number(owner)：账户名（如 "admin"）会得到 NaN，
+  // Number.isFinite 为 false 会把校验整个跳过 —— 等于对用户名目录不设防。
+  const owner = String(req.params.owner ?? req.params.userId ?? '');
+  const me = db.prepare('SELECT username FROM users WHERE id = ?').get(auth.userId) as any;
+  const myUsername = me ? String(me.username || '') : '';
+
+  const allowed =
+    owner === String(auth.userId) || (myUsername !== '' && owner === myUsername);
+
+  if (!allowed) {
     return res.status(403).json({ error: '无权访问该学生的图片' });
   }
 

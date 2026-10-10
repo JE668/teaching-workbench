@@ -31,10 +31,12 @@ describe('图片上传', () => {
     assert.equal(res.body.paths.length, 1);
 
     const p = res.body.paths[0] as string;
-    // 关键回归点：路径必须含 userId 前缀，否则静态服务按 /uploads/<filename> 找不到文件
-    assert.match(p, /^\d+\//, '返回路径应形如 "<userId>/<filename>"，实际: ' + p);
+    // 关键回归点：上传先落【暂存区】，路径形如 "_staging/<账户名>/<filename>"，
+    // 前端据此拼 /uploads/... 预览，保存回访时后端再提交到正式归档。
+    assert.match(p, /^_staging\//, '返回路径应形如 "_staging/<账户名>/<filename>"，实际: ' + p);
     assert.ok(!p.startsWith('/'), '不应返回绝对路径');
     assert.ok(!p.includes('..'), '不应包含路径穿越片段');
+    assert.ok(p.split('/').length === 3, '应为三段路径（暂存目录/账户名/文件名）');
   });
 
   test('返回的路径可通过 /uploads 访问（回归：曾因路径不一致 404）', async () => {
@@ -73,8 +75,9 @@ describe('图片上传', () => {
     const mine = await req('POST', '/api/upload', { token, raw: pngForm() });
     const theirs = await req('POST', '/api/upload', { token: other.token, raw: pngForm() });
 
-    const myPrefix = (mine.body.paths[0] as string).split('/')[0];
-    const theirPrefix = (theirs.body.paths[0] as string).split('/')[0];
+    // 暂存路径形如 _staging/<账户名>/<文件>，目录名在第二段
+    const myPrefix = (mine.body.paths[0] as string).split('/')[1];
+    const theirPrefix = (theirs.body.paths[0] as string).split('/')[1];
     assert.notEqual(myPrefix, theirPrefix, '不同用户应落在不同目录');
   });
 
@@ -92,8 +95,30 @@ describe('图片上传', () => {
 
   test('图片读取接口正常返回已上传图片', async () => {
     const up = await req('POST', '/api/upload', { token, raw: pngForm() });
-    const [uid, filename] = (up.body.paths[0] as string).split('/');
-    const res = await req('GET', '/api/images/' + uid + '/' + filename, { token });
+
+    // 保存回访触发【提交】：暂存图挪到正式归档（uploads/<账户名>/）
+    const saved = await req('POST', '/api/followups', {
+      token,
+      body: {
+        studentId: null,
+        studentName: '读取接口学生',
+        grade: '小学五年级',
+        subject: '数学',
+        topic: '提交图片',
+        performance: '专注',
+        mastery: 'good',
+        sessionCount: 1,
+        images: up.body.paths,
+        content: '【课堂内容】测试。',
+      },
+    });
+    assert.equal(saved.status, 200, '保存失败: ' + JSON.stringify(saved.body));
+
+    const committed = saved.body.followup.images[0] as string;
+    assert.ok(!committed.startsWith('_staging/'), '保存后应为正式路径: ' + committed);
+
+    const [folder, filename] = committed.split('/');
+    const res = await req('GET', '/api/images/' + folder + '/' + filename, { token });
     assert.equal(res.status, 200);
   });
 

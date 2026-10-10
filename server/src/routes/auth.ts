@@ -32,6 +32,17 @@ router.post('/register', authLimiter, async (req, res) => {
       return res.status(400).json({ error: '密码长度至少6位' });
     }
 
+    // 用户名会作为图片归档的目录名，必须保证可安全用作路径片段。
+    // 允许：中文/字母/数字/下划线/连字符/点；禁止其它符号与过长名字。
+    if (String(username).length < 2 || String(username).length > 32) {
+      return res.status(400).json({ error: '用户名长度需在 2-32 位之间' });
+    }
+    if (!/^[\w\u4e00-\u9fa5.-]+$/.test(String(username))) {
+      return res.status(400).json({
+        error: '用户名只能包含中文、字母、数字、下划线、连字符和点',
+      });
+    }
+
     // 检查用户名是否已存在
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existing) {

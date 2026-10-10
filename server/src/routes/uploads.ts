@@ -4,6 +4,11 @@ import path from 'path';
 import fs from 'fs';
 import { env } from '../config/env.js';
 import { AuthenticatedRequest } from '../types/index.js';
+import {
+  stagingDirFor,
+  discardStagedImage,
+  STAGING_DIR_NAME,
+} from '../services/imageLifecycle.js';
 
 const router = Router();
 
@@ -46,11 +51,12 @@ export function sniffImageType(filePath: string): { ext: string; mime: string } 
   }
 }
 
-// Multer 存储：按用户分目录存放；先写临时名，校验通过后再按真实类型改名
+// Multer 存储：先落到【暂存区】（按账户名分目录），保存回访时才提交到正式归档。
+// 没保存的暂存图由 GC 定期清理 —— 避免放弃的草稿在磁盘上留下孤儿文件。
+// 仍先写临时名，校验通过后再按真实类型改名。
 const storage = multer.diskStorage({
   destination: (req: AuthenticatedRequest, file, cb) => {
-    const userId = req.userId || 0;
-    const uploadPath = path.join(env.UPLOAD_DIR, String(userId));
+    const uploadPath = stagingDirFor(req.userId || 0);
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
     }
@@ -75,8 +81,9 @@ const upload = multer({
 
 /**
  * 上传图片（支持多张）
- * 返回相对路径 "<userId>/<filename>"，与静态服务 /uploads 的目录结构一致，
- * 前端使用 "/uploads/<relativePath>" 即可访问，AI 服务也据此定位文件。
+ * 返回【暂存】相对路径 "_staging/<账户名>/<filename>"。
+ * 前端用 "/uploads/<relativePath>" 访问，AI 生成也据此定位文件；
+ * 保存回访时后端会把暂存图提交到正式归档目录（uploads/<账户名>/）。
  */
 router.post('/upload', (req: AuthenticatedRequest, res) => {
   upload.array('images', 5)(req, res, (err) => {
@@ -111,16 +118,19 @@ router.post('/upload', (req: AuthenticatedRequest, res) => {
       const finalName = file.filename.replace(/\.upload$/, '') + kind.ext;
       const finalPath = path.join(path.dirname(file.path), finalName);
 
+      // 相对路径带上暂存目录前缀（前端预览/AI 生成都据此定位）
+      const relPrefix = STAGING_DIR_NAME + '/' + path.basename(path.dirname(file.path)) + '/';
+
       try {
         fs.renameSync(file.path, finalPath);
       } catch {
         // 改名失败（极少见）：保留临时文件并原样返回，不让用户白等
-        paths.push(userId + '/' + file.filename);
+        paths.push(relPrefix + file.filename);
         continue;
       }
 
       file.filename = finalName;
-      paths.push(userId + '/' + finalName);
+      paths.push(relPrefix + finalName);
     }
 
     if (paths.length === 0) {
@@ -136,6 +146,23 @@ router.post('/upload', (req: AuthenticatedRequest, res) => {
       ...(rejected > 0 ? { rejected } : {}),
     });
   });
+});
+
+/**
+ * 删除一张暂存图（回访表单里点 X 移除时调用）。
+ * 只允许删【暂存区里属于该用户】的文件；
+ * 正式归档（已保存回访的图片）一律不可通过此入口删除。
+ */
+router.delete('/upload', (req: AuthenticatedRequest, res) => {
+  try {
+    const ok = discardStagedImage(req.userId || 0, req.body?.path || '');
+    if (!ok) {
+      return res.status(400).json({ error: '只能删除自己未保存的暂存图片' });
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: '删除图片失败', message: error.message });
+  }
 });
 
 /**

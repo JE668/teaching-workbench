@@ -3,6 +3,11 @@ import { env } from './config/env.js';
 import { db } from './config/database.js';
 import { createApp } from './app.js';
 import { repairAllUsers } from './services/linkOrphans.js';
+import {
+  migrateLegacyFolders,
+  gcStagedImages,
+  cleanupOrphanImages,
+} from './services/imageLifecycle.js';
 
 // ========== 初始化 ==========
 const app = createApp();
@@ -18,6 +23,47 @@ try {
 } catch (err: any) {
   console.warn('[DB] 历史回访归位失败（不影响启动）: ' + err.message);
 }
+
+// ========== 图片目录整理（幂等，可重复执行） ==========
+// 1) 历史目录迁移：uploads/<数字ID>/ 改名为 uploads/<账户名>/，
+//    并同步改写回访与草稿里存的引用路径。
+try {
+  const migrated = migrateLegacyFolders();
+  if (migrated.movedFiles > 0 || migrated.renamedDirs > 0) {
+    console.log(
+      '[图片] 已迁移 ' + migrated.movedFiles + ' 个文件到账户名目录，改名 ' + migrated.renamedDirs + ' 个旧目录'
+    );
+  }
+} catch (err: any) {
+  console.warn('[图片] 历史目录迁移失败（不影响启动）: ' + err.message);
+}
+
+// 2) 清理：过期的暂存图（没保存回访的）+ 没有任何记录引用的孤儿文件。
+//    保留期 7 天，与草稿一致 —— 草稿还在，它引用的暂存图就不能删。
+try {
+  const staged = gcStagedImages();
+  const orphans = cleanupOrphanImages();
+  if (staged + orphans > 0) {
+    console.log('[图片] 已清理 ' + staged + ' 个过期暂存图，' + orphans + ' 个无引用孤儿文件');
+  }
+} catch (err: any) {
+  console.warn('[图片] 清理失败（不影响启动）: ' + err.message);
+}
+
+// 每日跑一次清理，让长期运行的服务也能持续回收空间
+const gcTimer = setInterval(() => {
+  try {
+    const staged = gcStagedImages();
+    const orphans = cleanupOrphanImages();
+    if (staged + orphans > 0) {
+      console.log('[图片] 定时清理：暂存 ' + staged + ' 个，孤儿 ' + orphans + ' 个');
+    }
+  } catch (err: any) {
+    console.warn('[图片] 定时清理失败: ' + err.message);
+  }
+}, 24 * 60 * 60 * 1000);
+gcTimer.unref?.();
+
 const server = http.createServer(app);
 
 // ========== 启动服务器 ==========

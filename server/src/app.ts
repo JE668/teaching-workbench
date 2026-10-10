@@ -83,8 +83,26 @@ export function createApp() {
 
   // ========== 图片服务（需鉴权） ==========
   // 不能直接用 express.static：那样任何拿到 URL 的人都能访问，
-  // 而路径中的 userId 可枚举 —— 多用户场景下会互相看到对方的照片。
-  // requireMediaAuth 同时校验「签名有效」与「归属一致」。
+  // 而路径中的目录名可枚举 —— 多用户场景下会互相看到对方的照片。
+  // requireMediaAuth 同时校验「签名有效」与「归属一致」（数字 ID 或账户名）。
+  //
+  // 暂存区路由：/uploads/_staging/<账户名>/<文件>（上传后、保存前的图片）。
+  // 3 段路径不会命中下面 2 段的正式路由，必须显式注册。
+  app.get('/uploads/_staging/:owner/:filename', requireMediaAuth, (req: any, res) => {
+    const { owner, filename } = req.params;
+    const staging = path.resolve(env.UPLOAD_DIR, '_staging');
+    const target = path.resolve(staging, owner, filename);
+
+    if (!target.startsWith(staging + path.sep)) {
+      return res.status(400).json({ error: '非法路径' });
+    }
+    if (!fs.existsSync(target)) {
+      return res.status(404).json({ error: '图片不存在' });
+    }
+    res.sendFile(target);
+  });
+
+  // 正式归档路由：/uploads/<目录名>/<文件>（账户名，或历史的数字 ID）
   app.get('/uploads/:userId/:filename', requireMediaAuth, (req: any, res) => {
     const { userId, filename } = req.params;
     const baseDir = path.resolve(env.UPLOAD_DIR);

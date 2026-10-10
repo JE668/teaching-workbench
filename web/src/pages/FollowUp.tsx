@@ -1089,7 +1089,19 @@ export default function FollowUp() {
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                       />
                       <button
-                        onClick={() => setImages((prev) => prev.filter((_, idx) => idx !== i))}
+                        data-testid="remove-image"
+                        title="移除图片"
+                        onClick={() => {
+                          // 顺带删除服务端的暂存文件（没保存回访的图不该留盘）。
+                          // 已提交的正式归档会被接口拒绝，这里静默忽略即可。
+                          api
+                            .request('/upload', {
+                              method: 'DELETE',
+                              body: JSON.stringify({ path: img }),
+                            })
+                            .catch(() => {});
+                          setImages((prev) => prev.filter((_, idx) => idx !== i));
+                        }}
                         className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/60 text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100"
                       >
                         <X className="h-3.5 w-3.5" />

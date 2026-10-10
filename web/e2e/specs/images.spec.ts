@@ -138,6 +138,44 @@ test.describe('图片链路', () => {
     await expect(page.getByText(/没有从拖拽中识别到图片/)).toBeVisible({ timeout: 10_000 });
   });
 
+  test('点 X 移除图片会删除服务端的暂存文件（未保存不留盘）', async ({ page }) => {
+    await loginViaApi(page);
+    await page.goto('/followups');
+
+    // 捕获上传响应里的暂存路径
+    let stagedPath = '';
+    page.on('response', async (r) => {
+      if (r.url().includes('/api/upload') && r.request().method() === 'POST' && r.ok()) {
+        const body = await r.json().catch(() => null);
+        if (body?.paths?.[0]) stagedPath = body.paths[0];
+      }
+    });
+
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'will-discard.png',
+      mimeType: 'image/png',
+      buffer: TINY_PNG,
+    });
+    await expect(page.getByText(/已上传 1 张图片/)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('img[alt="图片 1"]')).toBeVisible();
+    expect(stagedPath).toMatch(/^_staging\//, '上传应落暂存区');
+
+    // 暂存文件此刻可访问
+    const before = await page.request.get('/uploads/' + stagedPath);
+    expect(before.status()).toBe(200);
+
+    // 点 X 移除
+    await page.getByTestId('remove-image').click();
+    await expect(page.locator('img[alt="图片 1"]')).toHaveCount(0);
+
+    // 服务端暂存文件已被删除（未保存回访的图不留盘）
+    await expect
+      .poll(async () => (await page.request.get('/uploads/' + stagedPath)).status(), {
+        timeout: 10_000,
+      })
+      .toBe(404);
+  });
+
   test('本地上传（文件选择）后预览图能加载', async ({ page }) => {
     await loginViaApi(page);
     await page.goto('/followups');
