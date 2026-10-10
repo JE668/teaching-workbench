@@ -24,7 +24,14 @@ const put = api.put as Mock;
 const DEFAULT_MODELS = {
   models: [
     { id: 'model-a', label: 'model-a' },
-    { id: 'sensenova-6.8-flash-lite', label: 'sensenova-6.8-flash-lite' },
+    {
+      id: 'sensenova-6.8-flash-lite',
+      label: 'SenseNova 6.8 Flash Lite（轻量多模态智能体 · 速度快（默认））',
+      name: 'SenseNova 6.8 Flash Lite',
+      description: '轻量多模态智能体 · 速度快（默认）',
+      vision: true,
+      efforts: ['none', 'low', 'medium', 'high', 'max'],
+    },
   ],
   source: 'api',
   current: 'sensenova-6.8-flash-lite',
@@ -46,7 +53,7 @@ function mockSettings(
         ...overrides,
       },
       overridden: [],
-      meta: { effortLevels: ['minimal', 'low', 'medium', 'high'] },
+      meta: { effortLevels: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
     });
   });
 }
@@ -61,7 +68,8 @@ describe('设置页 · AI 设置', () => {
     mockSettings();
     renderWithProviders(<Settings />);
 
-    expect(await screen.findByDisplayValue('sensenova-6.8-flash-lite')).toBeInTheDocument();
+    const model = (await screen.findByLabelText('模型')) as HTMLSelectElement;
+    expect(model.value).toBe('sensenova-6.8-flash-lite');
     expect(screen.getByDisplayValue('https://token.sensenova.cn/v1')).toBeInTheDocument();
     expect(screen.getByDisplayValue('60000')).toBeInTheDocument();
   });
@@ -90,11 +98,11 @@ describe('设置页 · AI 设置', () => {
     put.mockResolvedValue({ success: true });
 
     renderWithProviders(<Settings />);
-    await screen.findByDisplayValue('sensenova-6.8-flash-lite');
+    await screen.findByLabelText('模型');
 
     // select 不能用 clear+type，改用下拉选择
     await user.selectOptions(screen.getByLabelText('模型'), 'model-a');
-    await user.selectOptions(screen.getByDisplayValue(/low（默认/), 'high');
+    await user.selectOptions(screen.getByLabelText('思考等级'), 'high');
 
     await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
 
@@ -117,7 +125,7 @@ describe('设置页 · AI 设置', () => {
     // 平台返回的两个 + 自定义入口
     expect(options.map((o) => o.textContent)).toEqual([
       'model-a',
-      'sensenova-6.8-flash-lite',
+      'SenseNova 6.8 Flash Lite（轻量多模态智能体 · 速度快（默认））',
       '自定义模型…',
     ]);
     // 默认选中当前配置的模型
@@ -178,13 +186,105 @@ describe('设置页 · AI 设置', () => {
     expect(input.value).toBe('sensenova-6.8-flash-lite');
   });
 
+  it('选择不支持读图的模型时给出警告', async () => {
+    const user = userEvent.setup();
+    mockSettings(
+      {},
+      {
+        models: [
+          {
+            id: 'glm-5.2',
+            label: 'GLM-5.2（智谱旗舰 · 不支持读图）',
+            name: 'GLM-5.2',
+            description: '智谱旗舰 · 不支持读图',
+            vision: false,
+            efforts: ['none', 'low', 'high', 'xhigh', 'max'],
+          },
+          DEFAULT_MODELS.models[1],
+        ],
+        source: 'api',
+        current: 'sensenova-6.8-flash-lite',
+      }
+    );
+    renderWithProviders(<Settings />);
+
+    await screen.findByLabelText('模型');
+
+    // 默认选中的是支持读图的模型，不应有警告
+    expect(screen.queryByText(/不支持读取图片/)).not.toBeInTheDocument();
+
+    // 切到 GLM-5.2 → 出现警告
+    await user.selectOptions(screen.getByLabelText('模型'), 'glm-5.2');
+    expect(await screen.findByText(/不支持读取图片/)).toBeInTheDocument();
+  });
+
+  it('思考等级的档位跟随所选模型', async () => {
+    const user = userEvent.setup();
+    mockSettings(
+      {},
+      {
+        models: [
+          {
+            id: 'glm-5.2',
+            label: 'GLM-5.2',
+            name: 'GLM-5.2',
+            description: '',
+            vision: false,
+            efforts: ['none', 'low', 'high', 'xhigh', 'max'],
+          },
+          DEFAULT_MODELS.models[1],
+        ],
+        source: 'api',
+        current: 'sensenova-6.8-flash-lite',
+      }
+    );
+    renderWithProviders(<Settings />);
+    await screen.findByLabelText('模型');
+
+    // 默认（6.8-flash-lite）：档位不含 xhigh
+    let options = within(screen.getByLabelText('思考等级')).getAllByRole('option');
+    expect(options.map((o) => o.getAttribute('value'))).not.toContain('xhigh');
+
+    // 切到 GLM-5.2：档位含 xhigh
+    await user.selectOptions(screen.getByLabelText('模型'), 'glm-5.2');
+    options = within(screen.getByLabelText('思考等级')).getAllByRole('option');
+    expect(options.map((o) => o.getAttribute('value'))).toContain('xhigh');
+  });
+
+  it('切换模型后当前档位不被支持时自动回落到 low', async () => {
+    mockSettings(
+      // 初始档位设为 xhigh（GLM 支持、6.8-flash-lite 不支持）
+      { 'ai.reasoningEffort': 'xhigh' },
+      {
+        models: [
+          {
+            id: 'glm-5.2',
+            label: 'GLM-5.2',
+            name: 'GLM-5.2',
+            description: '',
+            vision: false,
+            efforts: ['none', 'low', 'high', 'xhigh', 'max'],
+          },
+          DEFAULT_MODELS.models[1],
+        ],
+        source: 'api',
+        current: 'sensenova-6.8-flash-lite',
+      }
+    );
+    renderWithProviders(<Settings />);
+
+    const effort = await screen.findByLabelText('思考等级');
+    // 当前模型 6.8-flash-lite 不支持 xhigh → 应已回落为 low
+    expect((effort as HTMLSelectElement).value).toBe('low');
+  });
+
   it('只在真的输入了新密钥时才提交密钥字段', async () => {
     const user = userEvent.setup();
     mockSettings();
     put.mockResolvedValue({ success: true });
 
     renderWithProviders(<Settings />);
-    await screen.findByDisplayValue('sensenova-6.8-flash-lite');
+    await screen.findByLabelText('模型');
 
     // 不填密钥直接保存
     await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
@@ -226,7 +326,7 @@ describe('设置页 · 修改密码', () => {
     const user = userEvent.setup();
     mockSettings();
     renderWithProviders(<Settings />);
-    await screen.findByDisplayValue('sensenova-6.8-flash-lite');
+    await screen.findByLabelText('模型');
 
     await user.type(screen.getByLabelText(/当前密码/), 'old-pass-123');
     await user.type(screen.getByLabelText('新密码'), 'new-pass-456');
@@ -241,7 +341,7 @@ describe('设置页 · 修改密码', () => {
     const user = userEvent.setup();
     mockSettings();
     renderWithProviders(<Settings />);
-    await screen.findByDisplayValue('sensenova-6.8-flash-lite');
+    await screen.findByLabelText('模型');
 
     await user.type(screen.getByLabelText(/当前密码/), 'old-pass-123');
     await user.type(screen.getByLabelText('新密码'), '123');
@@ -258,7 +358,7 @@ describe('设置页 · 修改密码', () => {
     put.mockResolvedValue({ success: true });
 
     renderWithProviders(<Settings />);
-    await screen.findByDisplayValue('sensenova-6.8-flash-lite');
+    await screen.findByLabelText('模型');
 
     await user.type(screen.getByLabelText(/当前密码/), 'old-pass-123');
     await user.type(screen.getByLabelText('新密码'), 'new-pass-456');
@@ -282,7 +382,7 @@ describe('设置页 · 修改密码', () => {
     put.mockRejectedValue(new Error('当前密码不正确'));
 
     renderWithProviders(<Settings />);
-    await screen.findByDisplayValue('sensenova-6.8-flash-lite');
+    await screen.findByLabelText('模型');
 
     await user.type(screen.getByLabelText(/当前密码/), 'wrong');
     await user.type(screen.getByLabelText('新密码'), 'new-pass-456');

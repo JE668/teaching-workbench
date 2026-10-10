@@ -336,6 +336,67 @@ describe('可用模型列表', () => {
     }
   });
 
+  test('内置目录覆盖官方文档全部 7 个模型，并带读图能力与档位', async () => {
+    const fresh = await createUser('models-catalog');
+    const res = await req('GET', '/api/settings/models', { token: fresh });
+
+    const ids = res.body.models.map((m: any) => m.id);
+    const documented = [
+      'sensenova-6.8-flash-lite', 'deepseek-flash', 'kimi-k3',
+      'glm-5.2', 'deepseek-v4-flash',
+      'sensenova-u1.5-lite', 'sensenova-u1.5-fast',
+    ];
+    for (const id of documented) {
+      assert.ok(ids.includes(id), '内置目录缺少文档模型: ' + id);
+    }
+
+    // 元数据：能读图的模型排前面
+    const flash = res.body.models.find((m: any) => m.id === 'sensenova-6.8-flash-lite');
+    assert.equal(flash.vision, true, '6.8-flash-lite 支持读图');
+    assert.ok(flash.efforts.includes('none'), '应支持 none 关闭思考');
+
+    const glm = res.body.models.find((m: any) => m.id === 'glm-5.2');
+    assert.equal(glm.vision, false, 'GLM-5.2 不支持读图');
+    assert.ok(glm.efforts.includes('xhigh'), 'GLM 独有 xhigh 档位');
+
+    // 推荐排序：读图模型应排在图片创作模型前面
+    const idxVision = ids.indexOf('kimi-k3');
+    const idxGen = ids.indexOf('sensenova-u1.5-lite');
+    assert.ok(idxVision < idxGen, '能读图的模型应排在图片创作模型之前');
+  });
+
+  test('接口返回已知模型时，元数据来自文档目录；未知模型给兜底', async () => {
+    const t = await createUser('models-merge');
+    const mock = await startMockModels({ data: [{ id: 'glm-5.2' }, { id: 'brand-new-model' }] });
+
+    try {
+      await req('PUT', '/api/settings', {
+        token: t,
+        body: { 'ai.apiKey': 'k', 'ai.baseUrl': mock.url },
+      });
+
+      const res = await req('GET', '/api/settings/models', { token: t });
+
+      const known = res.body.models.find((m: any) => m.id === 'glm-5.2');
+      assert.equal(known.vision, false, '已知模型应带文档元数据');
+      assert.ok(known.efforts.includes('xhigh'));
+
+      const unknown = res.body.models.find((m: any) => m.id === 'brand-new-model');
+      assert.equal(unknown.vision, true, '未知模型给通用兜底（默认可读图）');
+      assert.ok(unknown.efforts.includes('low'));
+    } finally {
+      mock.close();
+    }
+  });
+
+  test('思考等级接受文档确认的全集（none/minimal/xhigh/max）', async () => {
+    const t = await createUser('models-efforts');
+    for (const v of ['none', 'minimal', 'xhigh', 'max']) {
+      const res = await req('PUT', '/api/settings', { token: t, body: { 'ai.reasoningEffort': v } });
+      assert.equal(res.status, 200, v + ' 应被接受');
+    }
+  });
+
   test('未登录返回 401', async () => {
     assert.equal((await req('GET', '/api/settings/models')).status, 401);
   });

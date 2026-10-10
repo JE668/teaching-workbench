@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Sliders, KeyRound, Save, ShieldCheck, Sparkles } from 'lucide-react';
+import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -7,11 +7,15 @@ import Badge from '../components/ui/Badge';
 import { Input, Select } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 
+/** 档位文案（依据官方文档；各模型支持的档位不同，下拉里按所选模型过滤） */
 const EFFORT_LABELS: Record<string, string> = {
-  minimal: 'minimal（最快，几乎不思考）',
-  low: 'low（默认，速度快）',
-  medium: 'medium（更细致，稍慢）',
-  high: 'high（最细致，最慢）',
+  none: 'none（关闭思考 · 最快）',
+  minimal: 'minimal（极轻量思考）',
+  low: 'low（轻度推理 · 速度快，推荐）',
+  medium: 'medium（平衡速度与效果）',
+  high: 'high（更细致，稍慢）',
+  xhigh: 'xhigh（高强度思考）',
+  max: 'max（最强思考 · 最慢）',
 };
 
 interface SettingsState {
@@ -44,7 +48,9 @@ export default function Settings() {
   const [changingPwd, setChangingPwd] = useState(false);
 
   // 模型下拉：后端用 API Key 实时查 /v1/models，查不到时回落内置列表
-  const [modelOptions, setModelOptions] = useState<{ id: string; label: string }[]>([]);
+  const [modelOptions, setModelOptions] = useState<
+    { id: string; label: string; name?: string; description?: string; vision?: boolean; efforts?: string[] }[]
+  >([]);
   const [modelSource, setModelSource] = useState<'api' | 'builtin'>('builtin');
   const [modelError, setModelError] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
@@ -75,6 +81,16 @@ export default function Settings() {
         if (m.current && !m.models.some((x: any) => x.id === m.current)) {
           setUseCustomModel(true);
         }
+        // 保存的档位不被当前模型支持（如 GLM 的 xhigh 换到别的模型）→
+        // 对齐到该模型支持的档位，避免下拉显示与实际提交值不一致
+        const meta = m.models.find((x: any) => x.id === m.current);
+        const saved = s['ai.reasoningEffort'] || 'low';
+        if (meta?.efforts && !meta.efforts.includes(saved)) {
+          const snapped = meta.efforts.includes('low')
+            ? 'low'
+            : meta.efforts.find((e: string) => e !== 'none') || 'none';
+          setForm((prev) => ({ ...prev, reasoningEffort: snapped }));
+        }
       }
     } catch (err: any) {
       toast.error('读取设置失败：' + err.message);
@@ -86,6 +102,9 @@ export default function Settings() {
   useEffect(() => {
     load();
   }, []);
+
+  /** 当前选中模型的元数据：思考等级档位、读图能力都从这里取 */
+  const selectedModel = modelOptions.find((m) => m.id === form.model);
 
   const saveAi = async () => {
     setSaving(true);
@@ -187,7 +206,16 @@ export default function Settings() {
                     setUseCustomModel(true);
                     return;
                   }
-                  setForm({ ...form, model: e.target.value });
+                  const next = e.target.value;
+                  // 各模型支持的档位不同：切换后若当前档位不被支持，回落到 low
+                  const meta = modelOptions.find((m) => m.id === next);
+                  const effortStillOk =
+                    !meta?.efforts || meta.efforts.includes(form.reasoningEffort);
+                  setForm({
+                    ...form,
+                    model: next,
+                    reasoningEffort: effortStillOk ? form.reasoningEffort : 'low',
+                  });
                 }}
                 options={[
                   ...modelOptions.map((m) => ({ value: m.id, label: m.label })),
@@ -227,12 +255,29 @@ export default function Settings() {
               label="思考等级"
               value={form.reasoningEffort}
               onChange={(e) => setForm({ ...form, reasoningEffort: e.target.value })}
-              options={effortLevels.map((v) => ({ value: v, label: EFFORT_LABELS[v] || v }))}
+              options={(selectedModel?.efforts || effortLevels).map((v) => ({
+                value: v,
+                label: EFFORT_LABELS[v] || v,
+              }))}
             />
             <p className="mt-1 text-xs text-slate-400">
-              等级越高，模型"想"得越久，文案更细致但更慢。「low」适合日常回访
+              {selectedModel
+                ? '档位来自「' + selectedModel.name + '」官方文档；none 为关闭思考（最快）'
+                : '等级越高，模型"想"得越久，文案更细致但更慢'}
             </p>
           </div>
+
+          {/* 该模型不支持读图时的提示：本项目会把作业照片发给模型 */}
+          {selectedModel && selectedModel.vision === false && (
+            <div className="flex items-start gap-2.5 rounded-xl bg-amber-50 p-3.5 ring-1 ring-amber-200">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+              <p className="text-xs leading-relaxed text-amber-700">
+                「{selectedModel.name}」不支持读取图片 ——
+                上传课堂作业照片时，AI 将无法参考照片内容，只能依据文字描述生成。
+                建议选择带"多模态"字样的模型。
+              </p>
+            </div>
+          )}
 
           <Input
             label="接口地址"

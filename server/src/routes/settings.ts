@@ -16,10 +16,99 @@ const router = Router();
  * 运行时会优先调 SenseNova 的 /v1/models 实时拉取 —— 平台会不断上新模型，
  * 硬编码列表很快就过时，所以这里只放文档里确认存在的两个。
  */
-const BUILTIN_MODELS = [
-  { id: 'sensenova-6.8-flash-lite', label: 'sensenova-6.8-flash-lite（默认 · 速度快）' },
-  { id: 'sensenova-6.7-flash-lite', label: 'sensenova-6.7-flash-lite' },
+export interface ModelMeta {
+  id: string;
+  name: string;
+  description: string;
+  /** 是否支持读取图片（我们上传作业照片，这点直接决定模型可用性） */
+  vision: boolean;
+  /** 该模型支持的思考等级（来自官方文档，各模型不一致） */
+  efforts: string[];
+}
+
+/**
+ * 内置模型目录 —— 依据官方《SenseNova AI API 文档》的"模型总览"整理。
+ *
+ * 排序即推荐顺序：能读图的模型排前面（本项目要把作业照片发给模型），
+ * 图片创作类模型放最后并明确标注"不适用"。
+ */
+const MODEL_META: ModelMeta[] = [
+  {
+    id: 'sensenova-6.8-flash-lite',
+    name: 'SenseNova 6.8 Flash Lite',
+    description: '轻量多模态智能体 · 速度快（默认）',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'deepseek-flash',
+    name: 'DeepSeek V4.1 Flash',
+    description: '高效通用 · 支持多模态理解',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'kimi-k3',
+    name: 'Kimi K3',
+    description: '原生多模态 Agent · 1M 上下文',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'glm-5.2',
+    name: 'GLM-5.2',
+    description: '智谱旗舰 · 长程 Coding 与复杂工程（不支持读图）',
+    vision: false,
+    efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  },
+  {
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    description: '高效经济型通用模型（不支持读图）',
+    vision: false,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'sensenova-u1.5-lite',
+    name: 'SenseNova U1.5 Lite',
+    description: '图片创作模型 —— 不适用于回访生成',
+    vision: false,
+    efforts: ['none', 'high'],
+  },
+  {
+    id: 'sensenova-u1.5-fast',
+    name: 'SenseNova U1.5 Fast',
+    description: '图片创作模型加速版 —— 不适用于回访生成',
+    vision: false,
+    efforts: ['none', 'high'],
+  },
 ];
+
+const META_BY_ID = new Map(MODEL_META.map((m) => [m.id, m]));
+
+/** 未知模型的兜底元数据（接口实时返回了文档没收录的新模型时使用） */
+function metaForUnknown(id: string): ModelMeta {
+  return {
+    id,
+    name: id,
+    description: '平台返回的模型',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  };
+}
+
+function toOption(m: ModelMeta) {
+  return {
+    id: m.id,
+    label: m.name + '（' + m.description + '）',
+    name: m.name,
+    description: m.description,
+    vision: m.vision,
+    efforts: m.efforts,
+  };
+}
+
+const BUILTIN_MODELS = MODEL_META.map(toOption);
 
 /** 查询上游模型列表的超时：设置页不该因为上游卡住而打不开 */
 const MODELS_FETCH_TIMEOUT_MS = 8000;
@@ -61,7 +150,13 @@ async function fetchAvailableModels(): Promise<{
         ].sort();
 
         if (ids.length > 0) {
-          return { models: ids.map((id) => ({ id, label: id })), source: 'api', current: config.model };
+          // 接口只返回 id；元数据（读图能力/思考等级）用文档目录补全，
+          // 文档没收录的新模型给通用兜底
+          return {
+            models: ids.map((id) => toOption(META_BY_ID.get(id) || metaForUnknown(id))),
+            source: 'api',
+            current: config.model,
+          };
         }
       }
     } catch (err: any) {
@@ -94,8 +189,11 @@ router.get('/models', async (_req, res) => {
   }
 });
 
-/** 思考等级白名单（与 .env 校验保持一致） */
-const EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high'];
+/**
+ * 思考等级白名单 —— 各模型支持的档位不一致（文档确认的全集）：
+ * 多数模型 low/medium/high/max，GLM 另有 minimal/xhigh，均可设 none 关闭思考。
+ */
+const EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 /** 需要脱敏的键 */
 const SECRET_KEYS = ['ai.apiKey'];
