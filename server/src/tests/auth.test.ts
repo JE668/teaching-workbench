@@ -111,3 +111,37 @@ describe('CORS', () => {
     assert.equal(res.headers.get('access-control-allow-origin'), null, '不应下发 CORS 头');
   });
 });
+
+// ===== 令牌失效的可读提示 =====
+// 用户真实反馈过：令牌失效时只看到「认证令牌无效或已过期」，
+// 分不清是"过期了该重新登录"还是"系统坏了"。这里锁定两种提示与 reason 字段。
+describe('令牌失效提示', () => {
+  test('过期令牌 → 提示"登录已过期"且 reason=expired', async () => {
+    const jwt = (await import('jsonwebtoken')).default;
+    const { env } = await import('../config/env.js');
+
+    const expired = jwt.sign({ userId: 1 }, env.JWT_SECRET, { expiresIn: '-1s' });
+    const res = await req('GET', '/api/students', { token: expired });
+
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /登录已过期/);
+    assert.equal(res.body.reason, 'expired');
+  });
+
+  test('签名不符（JWT_SECRET 变更）→ 提示"登录状态已失效"且 reason=invalid', async () => {
+    const jwt = (await import('jsonwebtoken')).default;
+
+    const forged = jwt.sign({ userId: 1 }, 'a-different-secret');
+    const res = await req('GET', '/api/students', { token: forged });
+
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /登录状态已失效/);
+    assert.equal(res.body.reason, 'invalid');
+  });
+
+  test('未提供令牌 → 保持原有提示', async () => {
+    const res = await req('GET', '/api/students');
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /未提供认证令牌/);
+  });
+});

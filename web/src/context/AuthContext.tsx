@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { useToast } from '../components/ui/Toast';
 import { User } from '../types/index';
 
 /**
@@ -40,6 +41,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 使用惰性初始值：仅在首次渲染时执行一次，且发生在渲染期间（早于任何副作用）
   const [token, setToken] = useState<string | null>(readStoredToken);
   const [user, setUser] = useState<User | null>(readStoredUser);
+
+  const toast = useToast();
+  // 用 ref 持有最新 toast：注册回调只做一次，不因 toast 身份变化反复注册
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  /**
+   * 全局「登录态失效」处理。
+   *
+   * 为什么需要：令牌可能因过期（7 天）或 JWT_SECRET 变更而失效。
+   * 此时任何接口都返回 401，若不统一处理，用户看到的是
+   * 「保存失败：认证令牌无效或已过期」这类无从下手的提示，
+   * 页面还停在原地、数据看起来像坏了。
+   *
+   * 这里清掉本地登录态后，ProtectedRoute 会自动把用户送到登录页，
+   * 并明确告知原因。
+   */
+  useEffect(() => {
+    api.setUnauthorizedHandler(() => {
+      setToken(null);
+      setUser(null);
+      toastRef.current.error('登录已过期，请重新登录');
+    });
+    return () => api.setUnauthorizedHandler(null);
+  }, []);
 
   const login = async (username: string, password: string) => {
     const result = await api.post('/auth/login', { username, password });

@@ -54,6 +54,41 @@ export default function Settings() {
   const [modelSource, setModelSource] = useState<'api' | 'builtin'>('builtin');
   const [modelError, setModelError] = useState('');
   const [useCustomModel, setUseCustomModel] = useState(false);
+  // 模型列表整个没取到时（网络异常/后端不可用），要明确告知而不是静默变输入框
+  const [modelsFailed, setModelsFailed] = useState(false);
+
+  /**
+   * 拉取可用模型列表（首次加载与"重新获取"共用）。
+   * 取不到时置 modelsFailed，让页面明确告知原因，而不是静默退回输入框。
+   */
+  const loadModels = async (savedEffort: string) => {
+    const m = await api.get('/settings/models').catch(() => null);
+
+    if (!m?.models?.length) {
+      setModelsFailed(true);
+      return;
+    }
+
+    setModelsFailed(false);
+    setModelOptions(m.models);
+    setModelSource(m.source || 'builtin');
+    setModelError(m.error || '');
+
+    // 当前配置的模型不在可选列表里 → 切到"自定义"模式并保留原值
+    if (m.current && !m.models.some((x: any) => x.id === m.current)) {
+      setUseCustomModel(true);
+    }
+
+    // 保存的档位不被当前模型支持（如 GLM 的 xhigh 换到别的模型）→
+    // 对齐到该模型支持的档位，避免下拉显示与实际提交值不一致
+    const meta = m.models.find((x: any) => x.id === m.current);
+    if (meta?.efforts && !meta.efforts.includes(savedEffort)) {
+      const snapped = meta.efforts.includes('low')
+        ? 'low'
+        : meta.efforts.find((e: string) => e !== 'none') || 'none';
+      setForm((prev) => ({ ...prev, reasoningEffort: snapped }));
+    }
+  };
 
   const load = async () => {
     try {
@@ -71,27 +106,7 @@ export default function Settings() {
       setOverridden(r.overridden || []);
       if (r.meta?.effortLevels?.length) setEffortLevels(r.meta.effortLevels);
 
-      // 模型列表独立拉取：失败不影响设置页其它部分
-      const m = await api.get('/settings/models').catch(() => null);
-      if (m?.models?.length) {
-        setModelOptions(m.models);
-        setModelSource(m.source || 'builtin');
-        setModelError(m.error || '');
-        // 当前配置的模型不在可选列表里 → 切到"自定义"模式并保留原值
-        if (m.current && !m.models.some((x: any) => x.id === m.current)) {
-          setUseCustomModel(true);
-        }
-        // 保存的档位不被当前模型支持（如 GLM 的 xhigh 换到别的模型）→
-        // 对齐到该模型支持的档位，避免下拉显示与实际提交值不一致
-        const meta = m.models.find((x: any) => x.id === m.current);
-        const saved = s['ai.reasoningEffort'] || 'low';
-        if (meta?.efforts && !meta.efforts.includes(saved)) {
-          const snapped = meta.efforts.includes('low')
-            ? 'low'
-            : meta.efforts.find((e: string) => e !== 'none') || 'none';
-          setForm((prev) => ({ ...prev, reasoningEffort: snapped }));
-        }
-      }
+      await loadModels(s['ai.reasoningEffort'] || 'low');
     } catch (err: any) {
       toast.error('读取设置失败：' + err.message);
     } finally {
@@ -242,12 +257,24 @@ export default function Settings() {
             )}
 
             <p className="mt-1 text-xs text-slate-400">
-              {modelSource === 'api'
+              {modelsFailed
+                ? '⚠ 没能获取到模型列表，已切换为手动输入'
+                : modelSource === 'api'
                 ? '列表来自平台实时查询（当前 Key 可用的全部模型）'
                 : modelError
                 ? '无法连接模型服务（' + modelError + '），先显示已知模型，填好 API Key 后刷新即可获取完整列表'
                 : '填好 API Key 后会自动获取可用模型列表；这里也可手动填写'}
             </p>
+
+            {modelsFailed && (
+              <button
+                type="button"
+                onClick={() => loadModels(form.reasoningEffort)}
+                className="mt-1.5 text-xs text-brand-600 underline-offset-2 hover:underline"
+              >
+                重新获取模型列表
+              </button>
+            )}
           </div>
 
           <div>

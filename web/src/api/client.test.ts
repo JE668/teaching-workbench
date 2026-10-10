@@ -184,3 +184,111 @@ describe('streamPost 错误处理', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
+
+/**
+ * 登录态失效（401）的全局处理。
+ *
+ * 背景：令牌可能因过期（7 天）或 JWT_SECRET 变更而失效，此时任何接口都返回 401。
+ * 若不统一处理，用户看到的是「保存失败：认证令牌无效或已过期」这种
+ * 无从下手的提示（真实用户反馈过）。这里锁定行为：
+ *   1) 带着令牌请求收到 401 → 清本地登录态 + 通知上层跳登录页
+ *   2) 登录/注册接口的 401 是「账号或密码错误」→ 绝不能清掉会话
+ *   3) 未带令牌的 401 → 不触发（本就没登录）
+ */
+describe('api 客户端 · 登录态失效（401）处理', () => {
+  function plainResponse(status: number, body: any = {}) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+      body: null,
+    } as any;
+  }
+
+  let onUnauthorized: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    localStorage.clear();
+    api.clearAuth();
+    onUnauthorized = vi.fn();
+    api.setUnauthorizedHandler(onUnauthorized as any);
+  });
+
+  it('带令牌请求收到 401：清登录态并通知跳登录页', async () => {
+    api.setToken('stale-token');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(plainResponse(401, { error: '登录已过期，请重新登录' }))
+    );
+
+    await expect(api.get('/settings')).rejects.toThrow('登录已过期，请重新登录');
+
+    expect(api.getToken()).toBeNull();
+    expect(localStorage.getItem('token')).toBeNull();
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('登录接口的 401 是密码错误：不清会话、不触发跳转', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(plainResponse(401, { error: '用户名或密码错误' }))
+    );
+
+    await expect(
+      api.post('/auth/login', { username: 'a', password: 'wrong' })
+    ).rejects.toThrow('用户名或密码错误');
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('注册接口的 401 同理不触发跳转', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(plainResponse(401, { error: '用户名已存在' })));
+
+    await expect(api.post('/auth/register', { username: 'a', password: 'b' })).rejects.toThrow();
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('未带令牌时的 401 不触发（本就没登录）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(plainResponse(401, { error: '未提供认证令牌' })));
+
+    await expect(api.get('/students')).rejects.toThrow();
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('其它错误码不触发跳转，且保留令牌', async () => {
+    api.setToken('good-token');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(plainResponse(500, { error: '服务器错误' })));
+
+    await expect(api.get('/students')).rejects.toThrow('服务器错误');
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(api.getToken()).toBe('good-token');
+  });
+
+  it('上传接口的 401 同样触发（图片鉴权失效也要回登录页）', async () => {
+    api.setToken('stale-token');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(plainResponse(401, { error: '登录状态已失效，请重新登录' }))
+    );
+
+    const fd = new FormData();
+    await expect(api.upload('/upload', fd)).rejects.toThrow('登录状态已失效');
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(api.getToken()).toBeNull();
+  });
+
+  it('令牌被清掉后的后续请求不再重复触发', async () => {
+    api.setToken('t');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(plainResponse(401, { error: 'x' })));
+
+    await expect(api.get('/a')).rejects.toThrow();
+    await expect(api.get('/b')).rejects.toThrow();
+
+    // 第一次已清掉令牌，第二次请求没带令牌 → 只应触发一次
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+});

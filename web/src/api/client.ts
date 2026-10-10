@@ -1,8 +1,36 @@
 const BASE_URL = '/api';
 
+type UnauthorizedHandler = () => void;
+
 class ApiClient {
   private token: string | null = null;
   private user: any = null;
+  private onUnauthorized: UnauthorizedHandler | null = null;
+
+  /**
+   * 注册「登录态失效」回调（由 AuthProvider 注入）。
+   * 作用：任何请求收到 401 时统一清掉本地登录态并跳回登录页，
+   * 而不是在页面上弹一句"认证令牌无效"让用户摸不着头脑。
+   */
+  setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+    this.onUnauthorized = handler;
+  }
+
+  /** 登录/注册接口自身的 401 是「账号或密码错误」，不能当成掉线 */
+  private isAuthPath(path: string) {
+    return path.startsWith('/auth/login') || path.startsWith('/auth/register');
+  }
+
+  /**
+   * 统一的 401 处理。
+   * 仅当"本次请求确实带了令牌"且"不是登录/注册接口"时才触发，
+   * 避免密码输错就把会话清掉。
+   */
+  private handleUnauthorized(path: string, hadToken: boolean) {
+    if (!hadToken || this.isAuthPath(path)) return;
+    this.clearAuth();
+    this.onUnauthorized?.();
+  }
 
   setToken(token: string) {
     this.token = token;
@@ -51,6 +79,9 @@ class ApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        this.handleUnauthorized(path, !!this.token);
+      }
       throw new Error(errorData.error || '请求失败');
     }
 
@@ -72,6 +103,10 @@ class ApiClient {
       // 解析 JSON 会失败。此时必须把 HTTP 状态带出来，
       // 否则用户只看到笼统的"上传失败"，无从排查。
       const errorData = await response.json().catch(() => ({} as any));
+
+      if (response.status === 401) {
+        this.handleUnauthorized(path, !!this.token);
+      }
 
       if (errorData?.error) throw new Error(errorData.error);
 
@@ -100,6 +135,9 @@ class ApiClient {
     const res = await fetch(BASE_URL + path, { method: 'GET', headers, signal });
 
     if (!res.ok) {
+      if (res.status === 401) {
+        this.handleUnauthorized(path, !!this.token);
+      }
       throw new Error('订阅失败: ' + res.status);
     }
     if (!res.body) {
@@ -177,6 +215,9 @@ class ApiClient {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({} as any));
+      if (res.status === 401) {
+        this.handleUnauthorized(path, !!this.token);
+      }
       throw new Error(err.error || '请求失败');
     }
     if (!res.body) {
@@ -252,6 +293,9 @@ class ApiClient {
     const res = await fetch(BASE_URL + path, { headers });
     if (!res.ok) {
       const err = await res.json().catch(() => ({} as any));
+      if (res.status === 401) {
+        this.handleUnauthorized(path, !!this.token);
+      }
       throw new Error(err.error || '下载失败');
     }
     return res.blob();
