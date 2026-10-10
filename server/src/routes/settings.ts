@@ -6,9 +6,93 @@ import {
   setSettings,
   bumpConfigVersion,
   maskSecret,
+  getAiConfig,
 } from '../config/settings.js';
 
 const router = Router();
+
+/**
+ * 内置的已知模型（兜底用）。
+ * 运行时会优先调 SenseNova 的 /v1/models 实时拉取 —— 平台会不断上新模型，
+ * 硬编码列表很快就过时，所以这里只放文档里确认存在的两个。
+ */
+const BUILTIN_MODELS = [
+  { id: 'sensenova-6.8-flash-lite', label: 'sensenova-6.8-flash-lite（默认 · 速度快）' },
+  { id: 'sensenova-6.7-flash-lite', label: 'sensenova-6.7-flash-lite' },
+];
+
+/** 查询上游模型列表的超时：设置页不该因为上游卡住而打不开 */
+const MODELS_FETCH_TIMEOUT_MS = 8000;
+
+/**
+ * 拉取当前 API Key 可用的模型列表。
+ * 优先走 OpenAI 兼容的 GET /models；失败时回落到内置列表，
+ * 并在响应里如实标注来源与错误信息，方便前端提示。
+ */
+async function fetchAvailableModels(): Promise<{
+  models: { id: string; label: string }[];
+  source: 'api' | 'builtin';
+  error?: string;
+  current?: string;
+}> {
+  const config = getAiConfig();
+
+  if (config.apiKey && config.baseUrl) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(config.baseUrl.replace(/\/$/, '') + '/models', {
+        headers: { Authorization: 'Bearer ' + config.apiKey },
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        const body: any = await res.json();
+        // OpenAI 格式是 { data: [{ id }] }；部分网关直接返回数组
+        const raw: any[] = Array.isArray(body) ? body : body?.data || [];
+
+        const ids = [
+          ...new Set(
+            raw
+              .map((m: any) => (typeof m === 'string' ? m : m?.id))
+              .filter((id): id is string => typeof id === 'string' && id.length > 0)
+          ),
+        ].sort();
+
+        if (ids.length > 0) {
+          return { models: ids.map((id) => ({ id, label: id })), source: 'api', current: config.model };
+        }
+      }
+    } catch (err: any) {
+      return {
+        models: BUILTIN_MODELS,
+        source: 'builtin',
+        error: err?.name === 'AbortError' ? '查询模型列表超时' : err?.message || '无法连接模型服务',
+        current: config.model,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return { models: BUILTIN_MODELS, source: 'builtin', current: config.model };
+}
+
+/** 可用模型列表（设置页下拉框的数据源） */
+router.get('/models', async (_req, res) => {
+  try {
+    const result = await fetchAvailableModels();
+    res.json(result);
+  } catch (error: any) {
+    // 任何意外都不该让设置页打不开
+    res.json({
+      models: BUILTIN_MODELS,
+      source: 'builtin',
+      error: error?.message || '获取模型列表失败',
+    });
+  }
+});
 
 /** 思考等级白名单（与 .env 校验保持一致） */
 const EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high'];

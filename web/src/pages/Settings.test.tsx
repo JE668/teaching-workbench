@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Settings from './Settings';
 import { renderWithProviders } from '../test/test-utils';
@@ -20,18 +20,34 @@ vi.mock('../api/client', () => ({
 const get = api.get as Mock;
 const put = api.put as Mock;
 
-function mockSettings(overrides: Record<string, any> = {}) {
-  get.mockResolvedValue({
-    settings: {
-      'ai.model': 'sensenova-6.8-flash-lite',
-      'ai.reasoningEffort': 'low',
-      'ai.baseUrl': 'https://token.sensenova.cn/v1',
-      'ai.timeoutMs': '60000',
-      'ai.apiKey': { configured: true, masked: '••••••••abcd' },
-      ...overrides,
-    },
-    overridden: [],
-    meta: { effortLevels: ['minimal', 'low', 'medium', 'high'] },
+/** 模型列表接口的默认 mock：当前模型在列表里（下拉模式） */
+const DEFAULT_MODELS = {
+  models: [
+    { id: 'model-a', label: 'model-a' },
+    { id: 'sensenova-6.8-flash-lite', label: 'sensenova-6.8-flash-lite' },
+  ],
+  source: 'api',
+  current: 'sensenova-6.8-flash-lite',
+};
+
+function mockSettings(
+  overrides: Record<string, any> = {},
+  models: any = DEFAULT_MODELS
+) {
+  get.mockImplementation((path: string) => {
+    if (String(path) === '/settings/models') return Promise.resolve(models);
+    return Promise.resolve({
+      settings: {
+        'ai.model': 'sensenova-6.8-flash-lite',
+        'ai.reasoningEffort': 'low',
+        'ai.baseUrl': 'https://token.sensenova.cn/v1',
+        'ai.timeoutMs': '60000',
+        'ai.apiKey': { configured: true, masked: '••••••••abcd' },
+        ...overrides,
+      },
+      overridden: [],
+      meta: { effortLevels: ['minimal', 'low', 'medium', 'high'] },
+    });
   });
 }
 
@@ -76,9 +92,8 @@ describe('设置页 · AI 设置', () => {
     renderWithProviders(<Settings />);
     await screen.findByDisplayValue('sensenova-6.8-flash-lite');
 
-    const modelInput = screen.getByDisplayValue('sensenova-6.8-flash-lite');
-    await user.clear(modelInput);
-    await user.type(modelInput, 'new-model-id');
+    // select 不能用 clear+type，改用下拉选择
+    await user.selectOptions(screen.getByLabelText('模型'), 'model-a');
     await user.selectOptions(screen.getByDisplayValue(/low（默认/), 'high');
 
     await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
@@ -86,10 +101,81 @@ describe('设置页 · AI 设置', () => {
     await waitFor(() => {
       expect(put).toHaveBeenCalledWith(
         '/settings',
-        expect.objectContaining({ 'ai.model': 'new-model-id', 'ai.reasoningEffort': 'high' })
+        expect.objectContaining({ 'ai.model': 'model-a', 'ai.reasoningEffort': 'high' })
       );
     });
     expect(await screen.findByText(/AI 设置已保存/)).toBeInTheDocument();
+  });
+
+  it('下拉显示平台返回的模型，并带"自定义模型…"入口', async () => {
+    mockSettings();
+    renderWithProviders(<Settings />);
+
+    const select = await screen.findByLabelText('模型');
+    const options = within(select).getAllByRole('option');
+
+    // 平台返回的两个 + 自定义入口
+    expect(options.map((o) => o.textContent)).toEqual([
+      'model-a',
+      'sensenova-6.8-flash-lite',
+      '自定义模型…',
+    ]);
+    // 默认选中当前配置的模型
+    expect((select as HTMLSelectElement).value).toBe('sensenova-6.8-flash-lite');
+    // 提示列表来自平台实时查询
+    expect(screen.getByText(/列表来自平台实时查询/)).toBeInTheDocument();
+  });
+
+  it('选择"自定义模型…"后切换为文本输入，可返回下拉', async () => {
+    const user = userEvent.setup();
+    mockSettings();
+    renderWithProviders(<Settings />);
+
+    const select = await screen.findByLabelText('模型');
+    await user.selectOptions(select, '__custom__');
+
+    // 出现文本输入框（带原有值，便于在它基础上改）
+    const input = screen.getByLabelText('模型名称') as HTMLInputElement;
+    expect(input.value).toBe('sensenova-6.8-flash-lite');
+
+    // 手填一个新模型并保存
+    await user.clear(input);
+    await user.type(input, 'brand-new-model');
+    await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith(
+        '/settings',
+        expect.objectContaining({ 'ai.model': 'brand-new-model' })
+      );
+    });
+
+    // 返回下拉选择
+    await user.click(screen.getByRole('button', { name: /返回下拉选择/ }));
+    expect(screen.getByLabelText('模型')).toBeInTheDocument();
+    expect(screen.queryByLabelText('模型名称')).not.toBeInTheDocument();
+  });
+
+  it('当前配置的模型不在平台列表中时，自动进入自定义模式', async () => {
+    mockSettings(
+      { 'ai.model': 'my-own-model' },
+      { ...DEFAULT_MODELS, current: 'my-own-model' }
+    );
+    renderWithProviders(<Settings />);
+
+    // 直接出现文本输入框，值为当前配置
+    const input = (await screen.findByLabelText('模型名称')) as HTMLInputElement;
+    expect(input.value).toBe('my-own-model');
+    expect(screen.queryByLabelText('模型')).not.toBeInTheDocument();
+  });
+
+  it('模型列表接口失败时仍可手填（不影响设置页可用）', async () => {
+    mockSettings({}, null); // /settings/models 返回 null → 前端忽略
+    renderWithProviders(<Settings />);
+
+    // 列表为空 → 退回文本输入
+    const input = (await screen.findByLabelText('模型名称')) as HTMLInputElement;
+    expect(input.value).toBe('sensenova-6.8-flash-lite');
   });
 
   it('只在真的输入了新密钥时才提交密钥字段', async () => {

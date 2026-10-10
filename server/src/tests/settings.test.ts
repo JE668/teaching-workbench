@@ -1,4 +1,5 @@
 import './setup.js';
+import http from 'http';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, createUser } from './helpers.js';
@@ -210,5 +211,132 @@ describe('修改密码', () => {
       body: { currentPassword: 'x', newPassword: 'yyyyyy' },
     });
     assert.equal(res.status, 401);
+  });
+});
+
+// ===== 模型下拉列表 =====
+// 用本地 mock 上游验证整条链路：设置 baseUrl/apiKey -> GET /models -> 实时返回
+describe('可用模型列表', () => {
+  /** 起一个假的 /v1/models 上游 */
+  function startMockModels(payload: unknown, status = 200): Promise<{ url: string; close: () => void }> {
+    return new Promise((resolve) => {
+      const srv = http.createServer((_req: any, res: any) => {
+        res.statusCode = status;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(payload));
+      });
+      srv.listen(0, '127.0.0.1', () => {
+        const { port } = srv.address() as any;
+        resolve({ url: 'http://127.0.0.1:' + port, close: () => srv.close() });
+      });
+    });
+  }
+
+  test('未配置 API Key 时返回内置列表并标注来源', async () => {
+    const fresh = await createUser('models-nokey');
+    const res = await req('GET', '/api/settings/models', { token: fresh });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.source, 'builtin');
+    assert.ok(res.body.models.length >= 2, '内置列表至少应有已知模型');
+    assert.ok(res.body.models.some((m: any) => m.id === 'sensenova-6.8-flash-lite'));
+  });
+
+  test('配置 Key 后实时查询上游（OpenAI data 格式）', async () => {
+    const t = await createUser('models-live');
+    const mock = await startMockModels({ data: [{ id: 'model-b' }, { id: 'model-a' }, { id: 'model-a' }] });
+
+    try {
+      await req('PUT', '/api/settings', {
+        token: t,
+        body: { 'ai.apiKey': 'test-key', 'ai.baseUrl': mock.url },
+      });
+
+      const res = await req('GET', '/api/settings/models', { token: t });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.source, 'api', '应标注为实时查询');
+      assert.deepEqual(
+        res.body.models.map((m: any) => m.id),
+        ['model-a', 'model-b']
+      );
+      assert.ok(!res.body.error, '实时查询成功时不应有错误信息');
+    } finally {
+      mock.close();
+    }
+  });
+
+  test('上游直接返回数组（部分网关的格式）也能解析', async () => {
+    const t = await createUser('models-array');
+    const mock = await startMockModels(['model-x', 'model-y']);
+
+    try {
+      await req('PUT', '/api/settings', {
+        token: t,
+        body: { 'ai.apiKey': 'test-key', 'ai.baseUrl': mock.url },
+      });
+
+      const res = await req('GET', '/api/settings/models', { token: t });
+      assert.equal(res.body.source, 'api');
+      assert.deepEqual(
+        res.body.models.map((m: any) => m.id),
+        ['model-x', 'model-y']
+      );
+    } finally {
+      mock.close();
+    }
+  });
+
+  test('上游不可达时回落内置列表并带上原因', async () => {
+    const t = await createUser('models-dead');
+    await req('PUT', '/api/settings', {
+      token: t,
+      body: { 'ai.apiKey': 'test-key', 'ai.baseUrl': 'http://127.0.0.1:1' },
+    });
+
+    const res = await req('GET', '/api/settings/models', { token: t });
+
+    assert.equal(res.status, 200, '上游挂了也不该报错，要能打开设置页');
+    assert.equal(res.body.source, 'builtin');
+    assert.ok(res.body.error, '应带上失败原因');
+    assert.ok(res.body.models.length >= 2);
+  });
+
+  test('上游返回非 200 时回落内置列表', async () => {
+    const t = await createUser('models-500');
+    const mock = await startMockModels({ message: 'boom' }, 500);
+
+    try {
+      await req('PUT', '/api/settings', {
+        token: t,
+        body: { 'ai.apiKey': 'test-key', 'ai.baseUrl': mock.url },
+      });
+
+      const res = await req('GET', '/api/settings/models', { token: t });
+      assert.equal(res.body.source, 'builtin');
+    } finally {
+      mock.close();
+    }
+  });
+
+  test('返回当前配置的模型，供前端判断是否需要切到自定义模式', async () => {
+    const t = await createUser('models-current');
+    const mock = await startMockModels({ data: [{ id: 'model-a' }] });
+
+    try {
+      await req('PUT', '/api/settings', {
+        token: t,
+        body: { 'ai.apiKey': 'test-key', 'ai.baseUrl': mock.url, 'ai.model': 'my-own-model' },
+      });
+
+      const res = await req('GET', '/api/settings/models', { token: t });
+      assert.equal(res.body.current, 'my-own-model');
+    } finally {
+      mock.close();
+    }
+  });
+
+  test('未登录返回 401', async () => {
+    assert.equal((await req('GET', '/api/settings/models')).status, 401);
   });
 });
