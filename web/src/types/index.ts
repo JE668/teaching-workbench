@@ -163,3 +163,19 @@ export function overallGradeLabel(v: string | null): string {
   if (!v) return '';
   return OVERALL_GRADES.find((x) => x.value === v)?.label ?? '';
 }
+
+/** 按被听课老师聚合的统计（老师统计看板用） */
+export interface TeacherStat {
+  teacherId: number;
+  teacherName: string;
+  subject: string | null;
+  obsCount: number;
+  lastObservedAt: string | null;
+  grades: {
+    excellent: number;
+    good: number;
+    pass: number;
+    needs_work: number;
+    ungraded: number;
+  };
+}
