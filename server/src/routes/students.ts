@@ -6,6 +6,7 @@ import { mapStudent, mapStudents, mapFollowUps } from '../utils/mappers.js';
 import { toMarkdown, toCsv, exportFilename } from '../services/export.js';
 import { validateBody } from '../utils/validation.js';
 import { studentCreateSchema, studentUpdateSchema } from '../utils/schemas.js';
+import { parseSections } from '../utils/sections.js';
 
 const router = Router();
 
@@ -71,8 +72,40 @@ router.get('/needs-followup', (req: any, res) => {
         ...mapStudent(r),
         lastFollowUpAt: lastAt,
         daysSince: lastMs ? Math.floor((now - lastMs) / 86400000) : null,
+        // 下面三个在"带出上次课后任务"时填充
+        lastTopic: null as string | null,
+        lastMastery: null as string | null,
+        lastTask: null as string | null,
       };
     });
+
+    // 给「有过回访」的待回访学生带出最近一条的【课后任务】等，
+    // 让老师点进表单前就知道上次布置了什么，不用再翻历史。
+    const ids = students.filter((s) => s.lastFollowUpAt).map((s) => s.id);
+    if (ids.length > 0) {
+      const ph = ids.map(() => '?').join(',');
+      const latest = db
+        .prepare(
+          `SELECT f.student_id, f.topic, f.mastery, f.content
+           FROM followups f
+           WHERE f.id IN (
+             SELECT MAX(id) FROM followups
+             WHERE user_id = ? AND student_id IS NOT NULL AND student_id IN (${ph})
+             GROUP BY student_id
+           )`
+        )
+        .all(userId, ...ids) as any[];
+
+      const byStudent = new Map(latest.map((r) => [r.student_id, r]));
+      for (const s of students) {
+        const last = byStudent.get(s.id);
+        if (last) {
+          s.lastTopic = last.topic;
+          s.lastMastery = last.mastery;
+          s.lastTask = parseSections(last.content).task;
+        }
+      }
+    }
 
     res.json({ students, days });
   } catch (error: any) {

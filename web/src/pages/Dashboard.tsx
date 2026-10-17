@@ -195,6 +195,12 @@ export default function Dashboard() {
                     <span className="block truncate text-xs text-slate-400">
                       {s.grade} · {s.subject}
                     </span>
+                    {s.lastTask ? (
+                      <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                        <span className="text-slate-500">上次任务：</span>
+                        {s.lastTask}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="shrink-0 text-xs text-amber-600">
                     {s.daysSince === null ? '从未回访' : s.daysSince + ' 天前'}

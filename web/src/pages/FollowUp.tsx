@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Sparkles,
+  History,
   ImagePlus,
   X,
   Wand2,
@@ -47,7 +48,7 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
-import { countWords, copyText, cn } from '../lib/utils';
+import { countWords, copyText, cn, relativeTime } from '../lib/utils';
 import { extractDroppedImages } from '../lib/dropFiles';
 
 const MASTERY_TONE: Record<string, string> = {
@@ -92,6 +93,8 @@ export default function FollowUp() {
   const [historyPhrases, setHistoryPhrases] = useState<string[]>([]);
   /** 保存后不跳转，继续写下一个 */
   const [keepGoing, setKeepGoing] = useState(false);
+  /** 当前 1对1 学生最近一条回访，用于「上次内容一键带入」 */
+  const [lastFollowup, setLastFollowup] = useState<Partial<FormState> & { createdAt?: string; wordCount?: number } | null>(null);
 
   // 图片 / 分组管理抽到自定义 hook（见 hooks/useImageUpload、useGroupManagement），主组件变薄。
   // 图片上传自闭合；分组管理含预设拉取 + 多选 + 存/删。
@@ -146,6 +149,37 @@ export default function FollowUp() {
         /* 建议只是锦上添花，失败静默 */
       });
   }, [form.studentId]);
+
+  // 「上次内容一键带入」：1对1 选了有历史的学生时，拉出最近一条供一键回填
+  useEffect(() => {
+    setLastFollowup(null);
+    if (!form.studentId) return;
+    let cancelled = false;
+    api
+      .get('/followups/last?studentId=' + form.studentId)
+      .then((r) => {
+        if (!cancelled && r.followup) setLastFollowup(r.followup);
+      })
+      .catch(() => {
+        /* 带入只是便利，失败静默 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.studentId]);
+
+  /** 把上次回访的主题/表现/掌握/课次回填进当前表单（作为起点，老师再改） */
+  const applyLast = () => {
+    if (!lastFollowup) return;
+    setForm((prev) => ({
+      ...prev,
+      topic: lastFollowup.topic ?? prev.topic,
+      performance: lastFollowup.performance ?? prev.performance,
+      mastery: lastFollowup.mastery ?? prev.mastery,
+      sessionCount: lastFollowup.sessionCount ?? prev.sessionCount,
+    }));
+    toast.info('已带入上次回访内容，请按需修改后再生成');
+  };
 
   // ===== 跨设备实时同步 =====
   // 电脑写文案 / 手机拍图上传来图，两边无需刷新即可看到
@@ -673,6 +707,19 @@ export default function FollowUp() {
                     }))}
                     placeholder="— 手动输入新学生 —"
                   />
+
+                  {lastFollowup ? (
+                    <button
+                      type="button"
+                      onClick={applyLast}
+                      className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-xl bg-brand-50 px-3 py-2 text-xs font-medium text-brand-700 ring-1 ring-brand-100 transition-colors hover:bg-brand-100"
+                    >
+                      <History className="h-3.5 w-3.5 text-brand-500" />
+                      带入上次回访（
+                      {lastFollowup.createdAt ? relativeTime(lastFollowup.createdAt) : '上次'}
+                      {lastFollowup.topic ? ' · ' + lastFollowup.topic : ''}）
+                    </button>
+                  ) : null}
 
                   <Input
                     label="学生姓名"
