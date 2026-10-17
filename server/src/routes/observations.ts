@@ -151,10 +151,37 @@ router.post('/', validateBody(observationCreateSchema), (req: AuthenticatedReque
   }
 });
 
-/** 按被听课老师做统计（听课次数 / 等级分布 / 最近听课）；须在 /:id 之前注册 */
+/** 按被听课老师做统计（听课次数 / 等级分布 / 最近听课）；支持 老师 / 时间窗 过滤；须在 /:id 之前注册 */
 router.get('/teacher-stats', (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.userId!;
+
+    // 听课记录维度的过滤（时间窗）必须写在 JOIN 的 ON 上：
+    // 写在 WHERE 会连带把没有任何记录的老师一起过滤掉。
+    const joinClauses: string[] = ['o.teacher_id = t.id', 'o.user_id = ?'];
+    const joinParams: any[] = [userId];
+    if (typeof req.query.from === 'string' && req.query.from) {
+      joinClauses.push('date(o.observed_at) >= date(?)');
+      joinParams.push(req.query.from);
+    }
+    if (typeof req.query.to === 'string' && req.query.to) {
+      joinClauses.push('date(o.observed_at) <= date(?)');
+      joinParams.push(req.query.to);
+    }
+    const hasTimeFilter = joinClauses.length > 2;
+
+    // 老师维度的过滤（只看某一位老师）
+    let whereClause = 't.user_id = ?';
+    const whereParams: any[] = [userId];
+    const qTeacher = req.query.teacherId != null ? parseInt(String(req.query.teacherId), 10) : NaN;
+    if (Number.isFinite(qTeacher)) {
+      whereClause += ' AND t.id = ?';
+      whereParams.push(qTeacher);
+    }
+
+    // 有时间窗时只保留确实听过课的老师，避免满屏零行
+    const having = hasTimeFilter ? 'HAVING COUNT(o.id) > 0' : '';
+
     const rows = db
       .prepare(
         `SELECT t.id AS teacher_id, t.name AS teacher_name, t.subject AS subject,
@@ -166,12 +193,13 @@ router.get('/teacher-stats', (req: AuthenticatedRequest, res: Response) => {
           COALESCE(SUM(CASE WHEN o.overall_grade = 'needs_work' THEN 1 ELSE 0 END),0) AS g_needs,
           COALESCE(SUM(CASE WHEN o.overall_grade IS NULL THEN 1 ELSE 0 END),0) AS g_ungraded
          FROM teachers t
-         LEFT JOIN observations o ON o.teacher_id = t.id AND o.user_id = ?
-         WHERE t.user_id = ?
+         LEFT JOIN observations o ON ${joinClauses.join(' AND ')}
+         WHERE ${whereClause}
          GROUP BY t.id
+         ${having}
          ORDER BY last_observed IS NULL, last_observed DESC, obs_count DESC`
       )
-      .all(userId, userId) as any[];
+      .all(...joinParams, ...whereParams) as any[];
 
     const teachers = rows.map((r) => ({
       teacherId: r.teacher_id,
@@ -190,6 +218,33 @@ router.get('/teacher-stats', (req: AuthenticatedRequest, res: Response) => {
     res.json({ teachers });
   } catch (error: any) {
     res.status(500).json({ error: '获取老师统计失败', message: error.message });
+  }
+});
+
+/** 回复闭环待办汇总（列表页角标 / 看板概览用）；须在 /:id 之前注册 */
+router.get('/reply-metrics', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const row = db
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END),0) AS pending,
+           COALESCE(SUM(CASE WHEN status <> 'draft' AND (teacher_reply IS NULL OR teacher_reply = '') THEN 1 ELSE 0 END),0) AS awaiting,
+           COALESCE(SUM(CASE WHEN teacher_reply IS NOT NULL AND teacher_reply <> '' THEN 1 ELSE 0 END),0) AS replied,
+           COUNT(*) AS total
+          FROM observations
+         WHERE user_id = ?`
+      )
+      .get(userId) as any;
+
+    res.json({
+      pending: Number(row?.pending || 0),
+      awaiting: Number(row?.awaiting || 0),
+      replied: Number(row?.replied || 0),
+      total: Number(row?.total || 0),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取回复闭环统计失败', message: error.message });
   }
 });
 
