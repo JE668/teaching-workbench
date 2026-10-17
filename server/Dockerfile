@@ -1,5 +1,5 @@
 # ========== Stage 1: Build ==========
-FROM node:20-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 
 # 安装系统依赖（better-sqlite3 原生模块需要）
@@ -14,7 +14,7 @@ COPY . .
 RUN npm run build
 
 # ========== Stage 2: Production ==========
-FROM node:20-bookworm-slim AS production
+FROM node:26-bookworm-slim AS production
 WORKDIR /app
 
 # 安装系统依赖（运行时必需）

@@ -102,7 +102,14 @@ teaching-workbench/
 ## 本地开发
 
 ### 环境要求
-- Node.js 18+
+- Node.js 22.12+（生产与 CI 使用 Node 26）
+
+> Node 20 已于 2026-04-30 停止维护。升级原因：
+> - `better-sqlite3@13`（原生模块）要求 Node ≥ 22，且已适配最新 V8 API
+> - `vitest@5` 的 engines 为 `^22.12.0 || ^24.0.0 || >=26.0.0`
+> - Node 26 原生提供了 `localStorage` 全局变量，会遮蔽 jsdom 的同名实现 ——
+>   vitest 2.x/4.x 的 jsdom 环境未把它列入拷贝白名单，测试会整体报错；
+>   vitest 5.x 已修复
 
 ### 配置 AI API Key
 
