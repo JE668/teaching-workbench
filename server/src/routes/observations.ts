@@ -9,8 +9,10 @@ import {
   normalizeLessonType,
   normalizeOverallGrade,
   LESSON_TYPE_LABELS,
+  OVERALL_GRADE_LABELS,
 } from '../utils/mappers.js';
 import { runObservationGeneration, parseSuggestedGrade, describeAiError } from '../services/observation.js';
+import { parseObservationReport, buildObservationDocx } from '../utils/observationDocx.js';
 import { log } from '../utils/logger.js';
 
 const router = Router();
@@ -253,6 +255,47 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
     const { httpStatus, message } = describeAiError(error);
     log.error({ httpStatus, error: message }, '评课生成失败');
     res.status(httpStatus).json({ error: message });
+  }
+});
+
+/** 导出已填写的 Word（.docx）：套用用户模板，把报告填进对应格子，供直接报送 */
+router.get('/:id/docx', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const id = parseInt(req.params.id, 10);
+    const row = fetchWithTeacher(userId, id);
+    if (!row) return res.status(404).json({ error: '听评课记录不存在' });
+    if (!row.report) return res.status(400).json({ error: '尚未生成评课报告，无法导出 Word' });
+
+    // 评课人签名：用当前登录用户名
+    const me = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const signature = me?.username ? String(me.username) : '';
+
+    const parsed = parseObservationReport(row.report);
+    // 等级：优先用户手选，其次 AI 建议，最后解析出的
+    const gradeCode = row.overall_grade || parseSuggestedGrade(row.report);
+    const gradeLabel = gradeCode ? (OVERALL_GRADE_LABELS[gradeCode] || gradeCode) : parsed.grade;
+
+    const buf = await buildObservationDocx({
+      teacher: row.teacher_name || '',
+      time: row.observed_at || '',
+      topic: row.topic,
+      type: LESSON_TYPE_LABELS[normalizeLessonType(row.lesson_type)] || '其他',
+      evals: parsed.items,
+      highlight: parsed.highlight,
+      optimize: parsed.optimize,
+      suggest: parsed.suggest,
+      grade: gradeLabel,
+      signature,
+    });
+
+    const fname = encodeURIComponent('听评课_' + (row.teacher_name || '老师') + '_' + row.topic + '.docx');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fname}`);
+    res.send(buf);
+  } catch (error: any) {
+    log.error({ error: error.message }, '导出听评课 Word 失败');
+    res.status(500).json({ error: '导出 Word 失败', message: error.message });
   }
 });
 
