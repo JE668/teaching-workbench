@@ -12,9 +12,9 @@
 /** 把报告拆成"听课人评价"（8 项）与"综合评价与建议"两大块。 */
 export function splitReport(report: string): { head: string; tail: string } {
   const idx = report.indexOf('【综合评价与建议】');
-  if (idx < 0) return { head: report.trim(), tail: '' };
-  const head = report.slice(0, idx).replace('【听课人评价】', '').trim();
-  const tail = report.slice(idx).trim();
+  const rawHead = idx >= 0 ? report.slice(0, idx) : report;
+  const head = rawHead.replace('【听课人评价】', '').trim();
+  const tail = idx >= 0 ? report.slice(idx).trim() : '';
   return { head, tail };
 }
 
