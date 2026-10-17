@@ -11,6 +11,7 @@ import FollowUp from './pages/FollowUp';
 import FollowUpList from './pages/FollowUpList';
 import Observations from './pages/Observations';
 import ObservationEdit from './pages/ObservationEdit';
+import ObservationStats from './pages/ObservationStats';
 import Settings from './pages/Settings';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -32,6 +33,7 @@ function AppRoutes() {
         <Route path="followups/history" element={<FollowUpList />} />
         <Route path="observations" element={<Observations />} />
         <Route path="observations/new" element={<ObservationEdit />} />
+        <Route path="observations/stats" element={<ObservationStats />} />
         <Route path="observations/:id" element={<ObservationEdit />} />
         <Route path="settings" element={<Settings />} />
       </Route>

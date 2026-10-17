@@ -146,6 +146,48 @@ router.post('/', validateBody(observationCreateSchema), (req: AuthenticatedReque
   }
 });
 
+/** 按被听课老师做统计（听课次数 / 等级分布 / 最近听课）；须在 /:id 之前注册 */
+router.get('/teacher-stats', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const rows = db
+      .prepare(
+        `SELECT t.id AS teacher_id, t.name AS teacher_name, t.subject AS subject,
+          COUNT(o.id) AS obs_count,
+          MAX(o.observed_at) AS last_observed,
+          COALESCE(SUM(CASE WHEN o.overall_grade = 'excellent' THEN 1 ELSE 0 END),0) AS g_excellent,
+          COALESCE(SUM(CASE WHEN o.overall_grade = 'good' THEN 1 ELSE 0 END),0) AS g_good,
+          COALESCE(SUM(CASE WHEN o.overall_grade = 'pass' THEN 1 ELSE 0 END),0) AS g_pass,
+          COALESCE(SUM(CASE WHEN o.overall_grade = 'needs_work' THEN 1 ELSE 0 END),0) AS g_needs,
+          COALESCE(SUM(CASE WHEN o.overall_grade IS NULL THEN 1 ELSE 0 END),0) AS g_ungraded
+         FROM teachers t
+         LEFT JOIN observations o ON o.teacher_id = t.id AND o.user_id = ?
+         WHERE t.user_id = ?
+         GROUP BY t.id
+         ORDER BY last_observed IS NULL, last_observed DESC, obs_count DESC`
+      )
+      .all(userId, userId) as any[];
+
+    const teachers = rows.map((r) => ({
+      teacherId: r.teacher_id,
+      teacherName: r.teacher_name,
+      subject: r.subject ?? null,
+      obsCount: Number(r.obs_count || 0),
+      lastObservedAt: r.last_observed || null,
+      grades: {
+        excellent: Number(r.g_excellent || 0),
+        good: Number(r.g_good || 0),
+        pass: Number(r.g_pass || 0),
+        needs_work: Number(r.g_needs || 0),
+        ungraded: Number(r.g_ungraded || 0),
+      },
+    }));
+    res.json({ teachers });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取老师统计失败', message: error.message });
+  }
+});
+
 /** 单条详情 */
 router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   try {
