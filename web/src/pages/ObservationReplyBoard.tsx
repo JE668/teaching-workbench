@@ -2,14 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Inbox, Send, MessageSquareText, Clock } from 'lucide-react';
 import { api } from '../api/client';
-import { Observation, overallGradeLabel } from '../types/index';
+import { Observation, overallGradeLabel, Teacher } from '../types/index';
 import { Card } from '../components/ui/Card';
+import { FilterBar } from '../components/ui/FilterBar';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import { relativeTime } from '../lib/utils';
+import { rangeFromDays, toQueryString, type RangeKey } from '../lib/dateRange';
 
 type Bucket = { key: string; title: string; icon: React.ReactNode; hint: string; tone: string };
 
@@ -21,17 +23,40 @@ const BUCKETS: Bucket[] = [
 
 export default function ObservationReplyBoard() {
   const [obs, setObs] = useState<Observation[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
+  const [teacherId, setTeacherId] = useState('');
+  const [range, setRange] = useState<RangeKey>('');
   const navigate = useNavigate();
   const toast = useToast();
 
   useEffect(() => {
+    // 老师列表仅用于筛选下拉，加载失败不影响主流程
     api
-      .get('/observations')
-      .then((r: any) => setObs(r.observations || []))
-      .catch((err: any) => toast.error('加载失败：' + err.message))
-      .finally(() => setLoading(false));
+      .get('/teachers')
+      .then((r: any) => setTeachers(r.teachers || []))
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const qs = toQueryString({ teacherId, ...rangeFromDays(range) });
+    setLoading(true);
+    api
+      .get('/observations' + qs)
+      .then((r: any) => {
+        if (!cancelled) setObs(r.observations || []);
+      })
+      .catch((err: any) => toast.error('加载失败：' + err.message))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teacherId, range]);
+
+  const filtered = teacherId !== '' || range !== '';
 
   const replied = obs.filter((o) => o.teacherReply && o.teacherReply.trim());
   const pending = obs.filter((o) => !(o.teacherReply && o.teacherReply.trim()) && o.status === 'draft');
@@ -61,6 +86,14 @@ export default function ObservationReplyBoard() {
         </div>
       </div>
 
+      <FilterBar
+        teachers={teachers}
+        teacherId={teacherId}
+        onTeacherChange={setTeacherId}
+        range={range}
+        onRangeChange={setRange}
+      />
+
       {loading ? (
         <Card>
           <div className="p-5">
@@ -70,8 +103,12 @@ export default function ObservationReplyBoard() {
       ) : obs.length === 0 ? (
         <EmptyState
           icon={<Inbox className="h-7 w-7" />}
-          title="还没有听评课记录"
-          description="新建听课记录并生成评课报告后，就能在这里跟踪反馈闭环"
+          title={filtered ? '该条件下暂无记录' : '还没有听评课记录'}
+          description={
+            filtered
+              ? '换一位老师，或把时间范围调大再试试'
+              : '新建听课记录并生成评课报告后，就能在这里跟踪反馈闭环'
+          }
           action={
             <Button variant="gradient" onClick={() => navigate('/observations/new')}>
               去新建

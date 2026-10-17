@@ -228,7 +228,7 @@ router.get('/reply-metrics', (req: AuthenticatedRequest, res: Response) => {
     const row = db
       .prepare(
         `SELECT
-           COALESCE(SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END),0) AS pending,
+           COALESCE(SUM(CASE WHEN status = 'draft' AND (teacher_reply IS NULL OR teacher_reply = '') THEN 1 ELSE 0 END),0) AS pending,
            COALESCE(SUM(CASE WHEN status <> 'draft' AND (teacher_reply IS NULL OR teacher_reply = '') THEN 1 ELSE 0 END),0) AS awaiting,
            COALESCE(SUM(CASE WHEN teacher_reply IS NOT NULL AND teacher_reply <> '' THEN 1 ELSE 0 END),0) AS replied,
            COUNT(*) AS total
