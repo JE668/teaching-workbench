@@ -163,7 +163,7 @@ export async function generateObservationReport(p: ObservationReportParams): Pro
 export async function* streamObservationGeneration(p: ObservationReportParams): AsyncGenerator<string> {
   const ai = getSharedClient();
   const config = getAiConfig();
-  const stream = (await ai.chat.completions.create({
+  const body: any = {
     model: config.model,
     messages: [
       {
@@ -176,7 +176,8 @@ export async function* streamObservationGeneration(p: ObservationReportParams): 
     temperature: 0.5,
     reasoning_effort: config.reasoningEffort,
     stream: true,
-  })) as any;
+  };
+  const stream = (await ai.chat.completions.create(body)) as any;
   for await (const chunk of stream) {
     const delta = chunk?.choices?.[0]?.delta?.content;
     if (delta) yield delta as string;
