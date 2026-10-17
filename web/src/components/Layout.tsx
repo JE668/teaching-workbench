@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
+import { OfflineBanner } from './OfflineBanner';
 
 const navItems = [
   { to: '/', label: '工作台', icon: LayoutDashboard, end: true },
@@ -172,6 +173,7 @@ export default function Layout() {
       {/* ===== 主内容 ===== */}
       <main className="lg:ml-[248px]">
         <div className="mx-auto max-w-[1400px] p-4 sm:p-6 lg:p-8">
+          <OfflineBanner />
           <Outlet />
         </div>
       </main>
