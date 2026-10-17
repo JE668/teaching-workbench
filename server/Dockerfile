@@ -13,6 +13,10 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+# 移除 devDependencies，但保留 build 阶段编译出的 better-sqlite3.node，
+# 供生产阶段直接复用 —— 生产阶段没有 Python/make/g++，无法二次编译。
+RUN npm prune --omit=dev
+
 # ========== Stage 2: Production ==========
 FROM node:26-bookworm-slim AS production
 WORKDIR /app
@@ -24,11 +28,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends     wget     &&
 RUN addgroup --system --gid 1001 nodejs     && adduser --system --uid 1001 nodejs
 
 # 仅安装生产依赖
-COPY package*.json ./
-RUN npm ci --omit=dev
-
+# 直接复用 build 阶段已编译好的依赖，而不是在这里重新 npm ci：
+# better-sqlite3@13 已移除 prebuild-install，始终源码编译，
+# 而本阶段只有 wget、没有 Python/make/g++，重新安装必然失败。
+COPY --from=build /app/node_modules ./node_modules
 # 复制编译产物
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 
 # 创建数据目录
