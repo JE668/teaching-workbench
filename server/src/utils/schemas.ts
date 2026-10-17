@@ -89,6 +89,48 @@ export const followUpUpdateSchema = z
   })
   .passthrough();
 
+// ============ 听评课（独立于回访） ============
+export const teacherCreateSchema = z
+  .object({
+    name: reqd('请填写老师姓名'),
+    subject: z.string().trim().optional().nullable(),
+  })
+  .passthrough();
+
+export const observationCreateSchema = z
+  .object({
+    topic: reqd('请填写课题'),
+    teacherId: z.union([z.number(), z.coerce.number(), z.null()]).optional(),
+    lessonType: z.string().optional(),
+    observedAt: z.string().trim().optional().nullable(),
+    grade: z.string().trim().optional().nullable(),
+    subject: z.string().trim().optional().nullable(),
+    level: z.string().trim().optional().nullable(),
+    studentName: z.string().trim().optional().nullable(),
+    classNotes: z.string().optional(),
+    overallGrade: z.string().optional().nullable(),
+    status: z.string().optional(),
+    teacherReply: z.string().optional(),
+  })
+  .passthrough();
+
+export const observationUpdateSchema = z
+  .object({
+    topic: z.string().trim().optional(),
+    teacherId: z.union([z.number(), z.coerce.number(), z.null()]).optional(),
+    lessonType: z.string().optional(),
+    observedAt: z.string().trim().optional().nullable(),
+    grade: z.string().trim().optional().nullable(),
+    subject: z.string().trim().optional().nullable(),
+    level: z.string().trim().optional().nullable(),
+    studentName: z.string().trim().optional().nullable(),
+    classNotes: z.string().optional(),
+    overallGrade: z.string().optional().nullable(),
+    status: z.string().optional(),
+    teacherReply: z.string().optional(),
+  })
+  .passthrough();
+
 // ============ 认证 ============
 export const registerSchema = z
   .object({

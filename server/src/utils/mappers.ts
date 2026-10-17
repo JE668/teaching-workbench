@@ -1,4 +1,4 @@
-import { Student, FollowUp, UserPublic } from '../types/index.js';
+import { Student, FollowUp, UserPublic, Teacher, Observation } from '../types/index.js';
 
 /**
  * 数据库行 (snake_case) → API 响应 (camelCase)
@@ -79,4 +79,76 @@ export function parseImages(value: any): string[] {
   } catch {
     return [];
   }
+}
+
+// ============ 听评课 ============
+
+/** 课型：代码 → 中文（对应 Word 表"课型"栏） */
+export const LESSON_TYPE_LABELS: Record<string, string> = {
+  new: '新授课',
+  review: '复习课',
+  practice: '练习课',
+  explain: '讲评课',
+  other: '其他',
+};
+
+/** 总体评价等级：代码 → 中文（对应 Word 表"总体评价等级"栏） */
+export const OVERALL_GRADE_LABELS: Record<string, string> = {
+  excellent: '优秀',
+  good: '良好',
+  pass: '合格',
+  needs_work: '有待提高',
+};
+
+export function normalizeLessonType(value: any): 'new' | 'review' | 'practice' | 'explain' | 'other' {
+  return value === 'new' || value === 'review' || value === 'practice' || value === 'explain'
+    ? value
+    : 'other';
+}
+
+export function normalizeOverallGrade(value: any): 'excellent' | 'good' | 'pass' | 'needs_work' | null {
+  return value === 'excellent' || value === 'good' || value === 'pass' || value === 'needs_work'
+    ? value
+    : null;
+}
+
+export function mapTeacher(row: any): Teacher {
+  return {
+    id: row.id,
+    name: row.name,
+    subject: row.subject ?? null,
+    createdAt: row.created_at,
+  };
+}
+
+export function mapTeachers(rows: any[]): Teacher[] {
+  return rows.map(mapTeacher);
+}
+
+export function mapObservation(row: any, teacherName?: string | null): Observation {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    teacherId: row.teacher_id ?? null,
+    teacherName: teacherName ?? '—',
+    topic: row.topic,
+    lessonType: normalizeLessonType(row.lesson_type),
+    observedAt: row.observed_at ?? null,
+    grade: row.grade ?? null,
+    subject: row.subject ?? null,
+    level: row.level ?? null,
+    studentName: row.student_name ?? null,
+    classNotes: row.class_notes ?? '',
+    report: row.report ?? '',
+    reportAt: row.report_at ?? null,
+    overallGrade: normalizeOverallGrade(row.overall_grade),
+    status: row.status || 'draft',
+    teacherReply: row.teacher_reply ?? '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapObservations(rows: any[]): Observation[] {
+  return rows.map((r) => mapObservation(r, r.teacher_name ?? null));
 }

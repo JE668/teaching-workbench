@@ -15,6 +15,8 @@ import uploadRoutes from './routes/uploads.js';
 import draftRoutes from './routes/draft.js';
 import groupRoutes from './routes/groups.js';
 import settingsRoutes from './routes/settings.js';
+import teacherRoutes from './routes/teachers.js';
+import observationRoutes from './routes/observations.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -133,6 +135,8 @@ export function createApp() {
   app.use('/api/followups', authMiddleware, followupRoutes);
   app.use('/api/settings', authMiddleware, settingsRoutes);
   app.use('/api/groups', authMiddleware, groupRoutes);
+  app.use('/api/teachers', authMiddleware, teacherRoutes);
+  app.use('/api/observations', authMiddleware, observationRoutes);
   app.use('/api/draft', authMiddleware, draftRoutes);
   app.use('/api', authMiddleware, uploadRoutes);
 
