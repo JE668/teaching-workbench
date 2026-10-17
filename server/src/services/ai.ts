@@ -4,6 +4,7 @@ import { deriveNickname } from '../utils/nickname.js';
 import { getAiConfig, getConfigVersion, AiConfig } from '../config/settings.js';
 import fs from 'fs';
 import path from 'path';
+import { log } from '../utils/logger.js';
 
 // ============ SenseNova 客户端（OpenAI 兼容） ============
 // 配置可在前端设置页修改，因此客户端要能按版本号重建，
@@ -295,7 +296,7 @@ function buildUserContent(params: FollowUpGenerateParams, correction?: string): 
         image_url: { url: imageToBase64DataUrl(imagePath) },
       });
     } catch (error: any) {
-      console.warn('[AI] 图片加载失败: ' + imagePath + ' - ' + error.message);
+      log.warn({ image: imagePath, err: error.message }, '图片加载失败');
     }
   }
 
@@ -383,7 +384,7 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
     return first;
   }
 
-  console.warn('[AI] 首轮字数 ' + firstWords + ' 不在 ' + MIN_WORDS + '-' + MAX_WORDS + ' 区间，触发票重试');
+  log.warn({ firstWords, minWords: MIN_WORDS, maxWords: MAX_WORDS }, '首轮字数不在要求区间，触发重试');
 
   try {
     const retry = await generateOnce(params, '约 ' + firstWords + ' 字');
@@ -400,7 +401,7 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
 
     return distance(retryWords) < distance(firstWords) ? retry : first;
   } catch (error: any) {
-    console.warn('[AI] 重试失败，返回首轮结果: ' + error.message);
+    log.warn({ err: error.message }, '重试失败，返回首轮结果');
     return first;
   }
 }

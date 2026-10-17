@@ -3,6 +3,7 @@ import path from 'path';
 import { db } from '../config/database.js';
 import { env } from '../config/env.js';
 import { parseImages } from '../utils/mappers.js';
+import { log } from '../utils/logger.js';
 
 /**
  * 图片生命周期管理。
@@ -84,7 +85,7 @@ export function commitImages(userId: number, images: string[]): string[] {
     const rest = rel.slice(stagingPrefix.length);
     const parts = rest.split('/');
     if (parts.length !== 2) {
-      console.warn('[图片提交] 暂存路径格式异常，跳过: ' + rel);
+      log.warn({ image: rel }, '图片提交：暂存路径格式异常，跳过');
       continue;
     }
 
@@ -93,12 +94,12 @@ export function commitImages(userId: number, images: string[]): string[] {
 
     // 防穿越：源必须仍在暂存区内
     if (!from.startsWith(stagingRoot() + path.sep)) {
-      console.warn('[图片提交] 暂存路径越界，跳过: ' + rel);
+      log.warn({ image: rel }, '图片提交：暂存路径越界，跳过');
       continue;
     }
 
     if (!fs.existsSync(from)) {
-      console.warn('[图片提交] 暂存图已不存在（可能被清理），跳过: ' + rel);
+      log.warn({ image: rel }, '图片提交：暂存图已不存在（可能被清理），跳过');
       continue;
     }
 
