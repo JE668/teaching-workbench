@@ -237,6 +237,22 @@ crontab -e
 - 后端: ghcr.io/je668/teaching-workbench-backend:latest
 - 前端: ghcr.io/je668/teaching-workbench-frontend:latest
 
+> **⚠️ 自己手动构建后端镜像时注意（Node 26 + better-sqlite3@13）**
+>
+> `better-sqlite3@13` 已经移除 `prebuild-install`，**不再有预编译二进制**，任何环境下都只能走
+> `node-gyp rebuild` 从源码编译。这带来一个坑：
+>
+> - 构建阶段（`node:26-bookworm-slim` + `npm ci` + `npm run build`）没问题，镜像里带了
+>   `python3` / `make` / `g++`，能编过，产物是 `node_modules/better-sqlite3/build/Release/better_sqlite3.node`
+> - 但如果你在生产阶段再执行 `npm ci --omit=dev`，`npm` 会把刚编译好的 `.node` 当依赖**重新装一遍**，
+>   而生产阶段是精简镜像、没有编译工具链 → 直接失败
+>
+> 正确做法（本仓库 `server/Dockerfile` 已这么写）：
+> 1. 构建阶段装完整依赖、编译、`tsc`，然后 `npm prune --omit=dev` **只删 dev 依赖，保留已编译的 `.node`**
+> 2. 生产阶段用 `COPY --from=build /app/node_modules` 直接复用，**不要在生产阶段再跑 `npm ci`**
+>
+> 前端 `node:26-alpine` 没有这个问题（纯前端产物，无原生模块）。
+
 ### 生产架构
 
 ```
