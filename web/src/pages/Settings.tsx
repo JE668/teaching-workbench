@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
-import { Input, Select } from '../components/ui/Field';
+import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 
 /** 档位文案（依据官方文档；各模型支持的档位不同，下拉里按所选模型过滤） */
@@ -23,6 +23,7 @@ interface SettingsState {
   reasoningEffort: string;
   baseUrl: string;
   timeoutMs: string;
+  promptStyle: string;
 }
 
 export default function Settings() {
@@ -42,6 +43,7 @@ export default function Settings() {
     reasoningEffort: 'low',
     baseUrl: '',
     timeoutMs: '60000',
+    promptStyle: '',
   });
 
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' });
@@ -100,6 +102,7 @@ export default function Settings() {
         reasoningEffort: s['ai.reasoningEffort'] || 'low',
         baseUrl: s['ai.baseUrl'] || '',
         timeoutMs: s['ai.timeoutMs'] || '60000',
+        promptStyle: s['ai.prompt.style'] || '',
       });
       setApiKeyMasked(s['ai.apiKey']?.masked || '');
       setApiKeyConfigured(!!s['ai.apiKey']?.configured);
@@ -129,6 +132,7 @@ export default function Settings() {
         'ai.reasoningEffort': form.reasoningEffort,
         'ai.baseUrl': form.baseUrl,
         'ai.timeoutMs': form.timeoutMs,
+        'ai.prompt.style': form.promptStyle,
       };
       // 只有真的输入了新 key 才提交（否则会把掩码写回去）
       if (apiKey.trim()) patch['ai.apiKey'] = apiKey.trim();
@@ -343,6 +347,17 @@ export default function Settings() {
               )}
               <span className="text-slate-400">出于安全考虑，密钥不会回显完整内容</span>
             </div>
+          </div>
+
+          <div>
+            <Textarea
+              label="风格偏好（可选）"
+              value={form.promptStyle}
+              onChange={(e) => setForm({ ...form, promptStyle: e.target.value })}
+              placeholder="例如：少用 emoji，语气更正式；重点鼓励、少提缺点"
+              hint="填了会作为「风格偏好」追加进 AI 提示词；留空则用默认语气。最多 500 字。"
+              rows={3}
+            />
           </div>
 
           {overridden.length > 0 && (

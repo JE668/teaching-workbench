@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import { env } from './env.js';
+import { log } from '../utils/logger.js';
 
 const dbPath = path.join(env.DATA_DIR, 'teaching.db');
 
@@ -32,7 +33,7 @@ function ensureColumn(table: string, column: string, definition: string): void {
   if (columns.some((c) => c.name === column)) return;
 
   db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
-  console.log('[DB] 迁移: ' + table + '.' + column + ' 已添加 (默认 ' + definition + ')');
+  log.info({ table, column, default: definition }, '数据库迁移：添加列');
 }
 
 // 初始化表结构
@@ -93,7 +94,7 @@ export function initDatabase() {
   if (!adminExists) {
     const hashedPassword = bcrypt.hashSync(env.DEFAULT_ADMIN_PASS, 10);
     db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(env.DEFAULT_ADMIN_USER, hashedPassword);
-    console.log(`[DB] 默认管理员已创建: ${env.DEFAULT_ADMIN_USER} / ${env.DEFAULT_ADMIN_PASS}`);
+    log.warn({ user: env.DEFAULT_ADMIN_USER }, '默认管理员已创建（弱口令，请尽快在 .env 中修改 DEFAULT_ADMIN_PASS）');
   }
 
   // 进行中的回访草稿（跨设备实时同步的服务端副本，每人一份）

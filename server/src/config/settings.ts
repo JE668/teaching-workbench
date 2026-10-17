@@ -16,6 +16,8 @@ const FALLBACK: Record<string, () => string> = {
   'ai.apiKey': () => env.SENSENOVA_API_KEY,
   'ai.reasoningEffort': () => env.SENSENOVA_REASONING_EFFORT,
   'ai.timeoutMs': () => String(env.SENSENOVA_TIMEOUT_MS),
+  // 回访 prompt 的风格补充。留空 = 用内置默认语气，不追加任何内容。
+  'ai.prompt.style': () => '',
 };
 
 /** 前端不允许写入的键（防止写入任意内容） */

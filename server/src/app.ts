@@ -7,6 +7,7 @@ import { db, initDatabase } from './config/database.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requireMediaAuth } from './middleware/mediaAuth.js';
 import { errorHandler, notFound } from './middleware/error.js';
+import { log } from './utils/logger.js';
 import authRoutes from './routes/auth.js';
 import studentRoutes from './routes/students.js';
 import followupRoutes from './routes/followups.js';
@@ -61,16 +62,9 @@ export function createApp() {
         const status = res.statusCode;
         // 仅记录写操作与错误请求，避免日志噪音
         if (status < 400 && method === 'GET') return;
-        console.log(
-          '[HTTP]',
-          JSON.stringify({
-            timestamp: new Date().toISOString(),
-            method,
-            url,
-            status,
-            duration: Date.now() - start + 'ms',
-            ip: req.ip,
-          })
+        log.info(
+          { status, method, url, durationMs: Date.now() - start, ip: req.ip },
+          'HTTP 请求'
         );
       });
 

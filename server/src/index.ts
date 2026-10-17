@@ -8,6 +8,7 @@ import {
   gcStagedImages,
   cleanupOrphanImages,
 } from './services/imageLifecycle.js';
+import { log } from './utils/logger.js';
 
 // ========== 初始化 ==========
 const app = createApp();
@@ -18,10 +19,10 @@ const app = createApp();
 try {
   const repaired = repairAllUsers();
   if (repaired > 0) {
-    console.log('[DB] 已把 ' + repaired + ' 条未关联的历史回访归位到对应学生档案');
+    log.info({ repaired }, '已把未关联的历史回访归位到对应学生档案');
   }
 } catch (err: any) {
-  console.warn('[DB] 历史回访归位失败（不影响启动）: ' + err.message);
+  log.warn({ err: err.message }, '历史回访归位失败（不影响启动）');
 }
 
 // ========== 图片目录整理（幂等，可重复执行） ==========
@@ -30,12 +31,10 @@ try {
 try {
   const migrated = migrateLegacyFolders();
   if (migrated.movedFiles > 0 || migrated.renamedDirs > 0) {
-    console.log(
-      '[图片] 已迁移 ' + migrated.movedFiles + ' 个文件到账户名目录，改名 ' + migrated.renamedDirs + ' 个旧目录'
-    );
+    log.info({ movedFiles: migrated.movedFiles, renamedDirs: migrated.renamedDirs }, '已迁移历史图片目录到账户名目录');
   }
 } catch (err: any) {
-  console.warn('[图片] 历史目录迁移失败（不影响启动）: ' + err.message);
+  log.warn({ err: err.message }, '历史目录迁移失败（不影响启动）');
 }
 
 // 2) 清理：过期的暂存图（没保存回访的）+ 没有任何记录引用的孤儿文件。
@@ -44,10 +43,10 @@ try {
   const staged = gcStagedImages();
   const orphans = cleanupOrphanImages();
   if (staged + orphans > 0) {
-    console.log('[图片] 已清理 ' + staged + ' 个过期暂存图，' + orphans + ' 个无引用孤儿文件');
+    log.info({ staged, orphans }, '已清理过期暂存图与无引用孤儿文件');
   }
 } catch (err: any) {
-  console.warn('[图片] 清理失败（不影响启动）: ' + err.message);
+  log.warn({ err: err.message }, '清理失败（不影响启动）');
 }
 
 // 每日跑一次清理，让长期运行的服务也能持续回收空间
@@ -56,10 +55,10 @@ const gcTimer = setInterval(() => {
     const staged = gcStagedImages();
     const orphans = cleanupOrphanImages();
     if (staged + orphans > 0) {
-      console.log('[图片] 定时清理：暂存 ' + staged + ' 个，孤儿 ' + orphans + ' 个');
+      log.info({ staged, orphans }, '定时清理：过期暂存图与孤儿文件');
     }
   } catch (err: any) {
-    console.warn('[图片] 定时清理失败: ' + err.message);
+    log.warn({ err: err.message }, '定时清理失败');
   }
 }, 24 * 60 * 60 * 1000);
 gcTimer.unref?.();
@@ -69,30 +68,26 @@ const server = http.createServer(app);
 // ========== 启动服务器 ==========
 server.listen(env.PORT, env.HOST, () => {
   const allowed = (env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
-  console.log('=========================================');
-  console.log('  1对1老师教学服务工作台 - 后端服务');
-  console.log('=========================================');
-  console.log('[Server] 监听 ' + env.HOST + ':' + env.PORT);
-  console.log('[Server] SenseNova Model: ' + env.SENSENOVA_MODEL);
-  console.log('[Server] 思考强度: ' + env.SENSENOVA_REASONING_EFFORT);
-  console.log('[Server] CORS 白名单: ' + (allowed.length ? allowed.join(', ') : '(未配置，仅同源访问)'));
-  console.log('=========================================');
+  log.info(
+    { host: env.HOST, port: env.PORT, model: env.SENSENOVA_MODEL, reasoningEffort: env.SENSENOVA_REASONING_EFFORT, cors: allowed.length ? allowed.join(', ') : '(未配置，仅同源访问)' },
+    '1对1老师教学服务工作台 - 后端服务已启动'
+  );
 });
 
 // ========== 优雅关闭 ==========
 function gracefulShutdown(signal: string) {
-  console.log('[Server] 收到 ' + signal + '，正在优雅关闭...');
+  log.info({ signal }, '收到信号，正在优雅关闭');
 
   server.close(() => {
-    console.log('[Server] HTTP 服务器已关闭');
+    log.info({}, 'HTTP 服务器已关闭');
     db.close();
-    console.log('[DB] 数据库连接已关闭');
+    log.info({}, '数据库连接已关闭');
     process.exit(0);
   });
 
   // 强制退出兜底（10 秒）
   setTimeout(() => {
-    console.error('[Server] 关闭超时，强制退出');
+    log.error({ signal }, '关闭超时，强制退出');
     process.exit(1);
   }, 10000).unref();
 }
@@ -101,10 +96,10 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[ERROR] 未处理的 Promise 拒绝:', reason);
+  log.error({ reason: String(reason) }, '未处理的 Promise 拒绝');
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('[FATAL] 未捕获的异常:', error);
+  log.fatal({ err: error.stack }, '未捕获的异常');
   gracefulShutdown('uncaughtException');
 });

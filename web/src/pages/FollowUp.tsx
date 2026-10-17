@@ -30,7 +30,6 @@ import {
   CourseType,
 } from '../types/index';
 import { deriveNickname } from '../lib/nickname';
-import { prepareImageForUpload, formatBytes } from '../lib/image';
 import {
   loadDraft,
   saveDraft,
@@ -39,6 +38,8 @@ import {
   appendPhrase,
 } from '../lib/draft';
 import { useDraftSync, DraftPayload } from '../hooks/useDraftSync';
+import { useImageUpload } from '../hooks/useImageUpload';
+import { useGroupManagement } from '../hooks/useGroupManagement';
 import { usePreferences } from '../hooks/usePreferences';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -77,8 +78,6 @@ export default function FollowUp() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
 
   // 从本地草稿恢复（切到微信再回来不会白填一场）
   const restored = useMemo(() => loadDraft(), []);
@@ -88,20 +87,38 @@ export default function FollowUp() {
     ...DEFAULT_FORM,
     ...((restored?.form || {}) as Partial<FormState>),
   }));
-  /** 小组课选中的学生 id */
-  const [selectedIds, setSelectedIds] = useState<number[]>(() => restored?.selectedIds || []);
   /** 从自己历史里学到的常用主题与短语 */
   const [suggestedTopics, setSuggestedTopics] = useState<string[]>([]);
   const [historyPhrases, setHistoryPhrases] = useState<string[]>([]);
   /** 保存后不跳转，继续写下一个 */
   const [keepGoing, setKeepGoing] = useState(false);
-  /** 小组课分组预设 */
-  const [groups, setGroups] = useState<{ id: number; name: string; studentIds: number[]; memberCount: number }[]>([]);
-  const [showGroupSave, setShowGroupSave] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [images, setImages] = useState<string[]>(() => restored?.images || []);
-  const [uploading, setUploading] = useState(false);
-  const [dragging, setDragging] = useState(false);
+
+  // 图片 / 分组管理抽到自定义 hook（见 hooks/useImageUpload、useGroupManagement），主组件变薄。
+  // 图片上传自闭合；分组管理含预设拉取 + 多选 + 存/删。
+  const {
+    images,
+    setImages,
+    uploading,
+    dragging,
+    setDragging,
+    fileRef,
+    cameraRef,
+    uploadFiles,
+    onPaste,
+  } = useImageUpload();
+  const {
+    groups,
+    selectedIds,
+    setSelectedIds,
+    showGroupSave,
+    setShowGroupSave,
+    newGroupName,
+    setNewGroupName,
+    applyGroup,
+    saveGroup,
+    deleteGroup,
+    toggleStudent,
+  } = useGroupManagement();
 
   const [generating, setGenerating] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -114,16 +131,6 @@ export default function FollowUp() {
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
-  }, []);
-
-  // 分组预设（小组课用）
-  useEffect(() => {
-    api
-      .get('/groups')
-      .then((r) => setGroups(r.groups || []))
-      .catch(() => {
-        /* 分组只是便利功能，失败静默 */
-      });
   }, []);
 
   // 历史联想：选中的学生有历史就用它的，否则用全局（新学生也有词可用）
@@ -235,122 +242,6 @@ export default function FollowUp() {
     if (courseType === form.courseType) return;
     setForm((prev) => ({ ...prev, courseType, studentId: null, studentName: '' }));
     setSelectedIds([]);
-  };
-
-  /** 应用分组：默认全选，老师再手动取消请假的 */
-  const applyGroup = (g: { studentIds: number[] }) => {
-    setSelectedIds(g.studentIds);
-  };
-
-  const saveGroup = async () => {
-    const name = newGroupName.trim();
-    if (!name) {
-      toast.error('请填写分组名称');
-      return;
-    }
-    if (selectedIds.length === 0) {
-      toast.error('请先选择学生，再存为分组');
-      return;
-    }
-
-    try {
-      const r = await api.post('/groups', { name, studentIds: selectedIds });
-      setGroups((prev) => [r.group, ...prev]);
-      setNewGroupName('');
-      setShowGroupSave(false);
-      toast.success('已保存分组「' + name + '」');
-    } catch (err: any) {
-      toast.error('保存分组失败：' + err.message);
-    }
-  };
-
-  const deleteGroup = async (id: number, name: string) => {
-    try {
-      await api.delete('/groups/' + id);
-      setGroups((prev) => prev.filter((x) => x.id !== id));
-      toast.success('已删除分组「' + name + '」');
-    } catch (err: any) {
-      toast.error('删除分组失败：' + err.message);
-    }
-  };
-
-  const toggleStudent = (id: number) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
-  const uploadFiles = async (files: FileList | File[], source: 'drop' | 'paste' | 'picker' = 'picker') => {
-    const list = Array.from(files);
-
-    if (list.length === 0) {
-      // 关键：不能静默失败。用户拖了图却什么都没发生，会以为是坏了。
-      toast.error(
-        source === 'drop'
-          ? '没有从拖拽中识别到图片，请改用「点击上传」或直接粘贴（Ctrl/⌘+V）'
-          : '没有识别到图片'
-      );
-      return;
-    }
-
-    setUploading(true);
-    try {
-      let added = 0;
-      let compressedCount = 0;
-      let savedBytes = 0;
-
-      for (const file of list) {
-        // 手机照片动辄 20-40MB：先在浏览器里缩到 2048px，
-        // 上传更快、不撞体积限制，而 AI 看到的内容完全一样。
-        const prepared = await prepareImageForUpload(file);
-        if (prepared.compressed) {
-          compressedCount++;
-          savedBytes += prepared.originalSize - prepared.finalSize;
-        }
-
-        const fd = new FormData();
-        fd.append('images', prepared.file);
-
-        const res = await api.upload('/upload', fd);
-        if (res.paths?.length) {
-          setImages((prev) => [...prev, ...res.paths]);
-          added += res.paths.length;
-        }
-      }
-
-      if (added) {
-        const suffix = compressedCount > 0 ? '（已压缩 ' + formatBytes(savedBytes) + '）' : '';
-        toast.success('已上传 ' + added + ' 张图片' + suffix);
-      }
-    } catch (err: any) {
-      toast.error('图片上传失败：' + err.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const onPaste = (e: React.ClipboardEvent) => {
-    const items = Array.from(e.clipboardData?.items || []);
-
-    // 先走标准路径（截图粘贴）
-    const files = items
-      .filter((i) => i.kind === 'file')
-      .map((i) => i.getAsFile())
-      .filter((f): f is File => !!f);
-
-    if (files.length) {
-      e.preventDefault();
-      uploadFiles(files, 'paste');
-      return;
-    }
-
-    // 兜底：某些应用粘贴的是含 data: 图片的 HTML
-    const dt = e.clipboardData as unknown as DataTransfer | undefined;
-    if (dt) {
-      const { files: fromHtml } = extractDroppedImages(dt);
-      if (fromHtml.length) {
-        e.preventDefault();
-        uploadFiles(fromHtml, 'paste');
-      }
-    }
   };
 
   const isGroup = form.courseType === 'group';

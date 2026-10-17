@@ -4,6 +4,8 @@ import { linkOrphansByName } from '../services/linkOrphans.js';
 import { StudentCreate, StudentUpdate } from '../types/index.js';
 import { mapStudent, mapStudents, mapFollowUps } from '../utils/mappers.js';
 import { toMarkdown, toCsv, exportFilename } from '../services/export.js';
+import { validateBody } from '../utils/validation.js';
+import { studentCreateSchema, studentUpdateSchema } from '../utils/schemas.js';
 
 const router = Router();
 
@@ -174,7 +176,7 @@ router.get('/:id', (req: any, res) => {
 });
 
 // 创建学生
-router.post('/', (req: any, res) => {
+router.post('/', validateBody(studentCreateSchema), (req: any, res) => {
   try {
     const userId = req.userId;
     const { name, grade, subject, phone, notes } = req.body as StudentCreate;
@@ -205,7 +207,7 @@ router.post('/', (req: any, res) => {
 });
 
 // 更新学生
-router.put('/:id', (req: any, res) => {
+router.put('/:id', validateBody(studentUpdateSchema), (req: any, res) => {
   try {
     const userId = req.userId;
     const studentId = parseInt(req.params.id);
