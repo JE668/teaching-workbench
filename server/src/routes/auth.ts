@@ -7,6 +7,8 @@ import { authMiddleware } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { setMediaCookie, clearMediaCookie } from '../middleware/mediaAuth.js';
 import { mapUser } from '../utils/mappers.js';
+import { validateBody } from '../utils/validation.js';
+import { registerSchema, loginSchema, changePasswordSchema } from '../utils/schemas.js';
 
 const router = Router();
 
@@ -20,7 +22,7 @@ const authLimiter = rateLimit({
 });
 
 // 注册
-router.post('/register', authLimiter, async (req, res) => {
+router.post('/register', authLimiter, validateBody(registerSchema), async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -68,7 +70,7 @@ router.post('/register', authLimiter, async (req, res) => {
 });
 
 // 登录
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', authLimiter, validateBody(loginSchema), async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -104,7 +106,7 @@ router.post('/login', authLimiter, async (req, res) => {
  * 修改密码。
  * 必须校验当前密码 —— 否则 token 泄露后可直接改密码夺取账号。
  */
-router.put('/password', authMiddleware, (req: any, res) => {
+router.put('/password', authMiddleware, validateBody(changePasswordSchema), (req: any, res) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
 

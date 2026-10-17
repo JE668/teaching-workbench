@@ -261,6 +261,9 @@ router.put('/', (req, res) => {
       if (key === 'ai.model' && value.length > 100) {
         return res.status(400).json({ error: '模型名过长' });
       }
+      if (key === 'ai.prompt.style' && value.length > 500) {
+        return res.status(400).json({ error: '风格偏好不超过 500 字' });
+      }
 
       patch[key] = value;
     }

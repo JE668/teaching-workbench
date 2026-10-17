@@ -12,6 +12,8 @@ import {
 } from '../services/ai.js';
 import { normalizeCourseType, normalizeSessionCount } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
+import { validateBody } from '../utils/validation.js';
+import { followUpGenerateSchema } from '../utils/schemas.js';
 
 /**
  * AI 生成路由（不落库，由前端确认后再保存）：
@@ -37,7 +39,7 @@ function validateGenerateInput(body: any): string | null {
   return null;
 }
 
-router.post('/generate', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/generate', validateBody(followUpGenerateSchema), async (req: AuthenticatedRequest, res: Response) => {
   const error = validateGenerateInput(req.body);
   if (error) return res.status(400).json({ error });
 
@@ -72,7 +74,7 @@ router.post('/generate', async (req: AuthenticatedRequest, res: Response) => {
  * 事件：delta -> regenerating? -> done | error
  * 首轮流式输出，若字数不达标则自动重试一次并以最终版本收尾。
  */
-router.post('/generate/stream', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req: AuthenticatedRequest, res: Response) => {
   const error = validateGenerateInput(req.body);
   if (error) return res.status(400).json({ error });
 

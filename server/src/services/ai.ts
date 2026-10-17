@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { env } from '../config/env.js';
 import { deriveNickname } from '../utils/nickname.js';
-import { getAiConfig, getConfigVersion, AiConfig } from '../config/settings.js';
+import { getAiConfig, getConfigVersion, getSetting, AiConfig } from '../config/settings.js';
 import fs from 'fs';
 import path from 'path';
 import { log } from '../utils/logger.js';
@@ -240,6 +240,17 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     '（如 ✨📚💪🌟👍），全文用 2-4 个即可，放在句子或段落末尾；',
     '不要每句都加，不要堆砌，也不要使用与学习场景无关的表情。',
     '',
+  );
+
+  // 老师自定义的风格补充（设置页可改，留空则不追加）。
+  // 刻意只做"追加"而不是"整段替换"：小组课隐私、图片指代禁令、三段格式
+  // 这些硬性约束必须留在代码里，不能被一条自定义设置误删。
+  const styleHint = getSetting('ai.prompt.style').trim();
+  if (styleHint) {
+    lines.push('# 风格偏好（老师自定义，优先遵循）', styleHint, '');
+  }
+
+  lines.push(
     '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
     '【课堂内容】',
     '说明' + scopePhrase + '讲授的知识点、教学重点与进度' +

@@ -1,5 +1,4 @@
 import pino from 'pino';
-import { env } from '../config/env.js';
 
 /**
  * 全局结构化日志器（pino）。

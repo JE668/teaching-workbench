@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
+import { validateBody } from '../utils/validation.js';
+import { groupCreateSchema, groupUpdateSchema } from '../utils/schemas.js';
 
 const router = Router();
 
@@ -66,7 +68,7 @@ router.get('/', (req: any, res) => {
 });
 
 /** 新建分组 */
-router.post('/', (req: any, res) => {
+router.post('/', validateBody(groupCreateSchema), (req: any, res) => {
   try {
     const userId = req.userId;
     const name = String(req.body?.name || '').trim();
@@ -97,7 +99,7 @@ router.post('/', (req: any, res) => {
 });
 
 /** 更新分组（改名或改成员） */
-router.put('/:id', (req: any, res) => {
+router.put('/:id', validateBody(groupUpdateSchema), (req: any, res) => {
   try {
     const userId = req.userId;
     const groupId = parseInt(req.params.id, 10);

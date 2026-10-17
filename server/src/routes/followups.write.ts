@@ -9,6 +9,8 @@ import {
 } from '../utils/mappers.js';
 import { countWords } from '../services/ai.js';
 import { commitImages } from '../services/imageLifecycle.js';
+import { validateBody } from '../utils/validation.js';
+import { followUpCreateSchema, followUpUpdateSchema } from '../utils/schemas.js';
 
 /**
  * 写操作路由：创建（1对1 + 小组课）/ 更新 / 删除。
@@ -29,7 +31,7 @@ function backfillFollowUps(userId: number, studentId: number, studentName: strin
 }
 
 // 保存回访记录（图片 + AI内容一并归档到学生档案）
-router.post('/', (req: AuthenticatedRequest, res: Response) => {
+router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.userId!;
     const { studentId, studentName, grade, subject, topic, performance, mastery, images, content } =
@@ -158,7 +160,7 @@ router.post('/', (req: AuthenticatedRequest, res: Response) => {
 });
 
 // 更新回访
-router.put('/:id', (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.userId!;
     const followupId = parseInt(req.params.id, 10);
