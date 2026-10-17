@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { ToastProvider } from './components/ui/Toast';
+import { ToastProvider, useToast } from './components/ui/Toast';
+import { onAppUpdated } from './lib/serviceWorker';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -19,6 +20,22 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
+}
+
+/**
+ * 全局提示：检测到新版本已激活时提醒一次。
+ * 不自动刷新 —— 编辑页有手动保存的输入，自动 reload 会丢掉未保存的内容。
+ */
+function GlobalNotices() {
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  useEffect(
+    () => onAppUpdated(() => toastRef.current.info('有新版本已就绪，刷新一下即可生效')),
+    []
+  );
+  return null;
 }
 
 function AppRoutes() {
@@ -49,6 +66,7 @@ export default function App() {
     <BrowserRouter>
       <ToastProvider>
         <AuthProvider>
+          <GlobalNotices />
           <AppRoutes />
         </AuthProvider>
       </ToastProvider>
