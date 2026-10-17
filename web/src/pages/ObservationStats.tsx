@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Users, CalendarDays } from 'lucide-react';
 import { api } from '../api/client';
-import { TeacherStat } from '../types/index';
+import { TeacherStat, Teacher } from '../types/index';
 import { Card, CardHeader } from '../components/ui/Card';
+import { FilterBar } from '../components/ui/FilterBar';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import EmptyState from '../components/ui/EmptyState';
 import { useToast } from '../components/ui/Toast';
 import { formatDate, relativeTime } from '../lib/utils';
+import { rangeFromDays, toQueryString, type RangeKey } from '../lib/dateRange';
 
 const GRADE_CHIPS: { key: keyof TeacherStat['grades']; label: string; dot: string }[] = [
   { key: 'excellent', label: '优', dot: 'bg-emerald-500' },
@@ -19,16 +21,39 @@ const GRADE_CHIPS: { key: keyof TeacherStat['grades']; label: string; dot: strin
 
 export default function ObservationStats() {
   const [rows, setRows] = useState<TeacherStat[]>([]);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [loading, setLoading] = useState(true);
+  const [teacherId, setTeacherId] = useState('');
+  const [range, setRange] = useState<RangeKey>('');
   const toast = useToast();
 
   useEffect(() => {
+    // 老师列表仅用于筛选下拉，加载失败不影响主流程
     api
-      .get('/observations/teacher-stats')
-      .then((r: any) => setRows(r.teachers || []))
-      .catch((err: any) => toast.error('加载统计失败：' + err.message))
-      .finally(() => setLoading(false));
+      .get('/teachers')
+      .then((r: any) => setTeachers(r.teachers || []))
+      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const qs = toQueryString({ teacherId, ...rangeFromDays(range) });
+    setLoading(true);
+    api
+      .get('/observations/teacher-stats' + qs)
+      .then((r: any) => {
+        if (!cancelled) setRows(r.teachers || []);
+      })
+      .catch((err: any) => toast.error('加载统计失败：' + err.message))
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [teacherId, range]);
+
+  const filtered = teacherId !== '' || range !== '';
 
   const totalObs = rows.reduce((s, r) => s + r.obsCount, 0);
   const latest =
@@ -49,6 +74,14 @@ export default function ObservationStats() {
           <p className="mt-0.5 text-sm text-slate-400">按被听课老师看听课次数与评价等级分布</p>
         </div>
       </div>
+
+      <FilterBar
+        teachers={teachers}
+        teacherId={teacherId}
+        onTeacherChange={setTeacherId}
+        range={range}
+        onRangeChange={setRange}
+      />
 
       {/* 概览 */}
       <div className="grid gap-4 sm:grid-cols-3">
@@ -98,8 +131,12 @@ export default function ObservationStats() {
         ) : rows.length === 0 ? (
           <EmptyState
             icon={<Users className="h-7 w-7" />}
-            title="还没有被听课老师"
-            description="新建听课记录并关联老师后，这里会按老师汇总统计"
+            title={filtered ? '该条件下暂无统计' : '还没有被听课老师'}
+            description={
+              filtered
+                ? '换一位老师，或把时间范围调大再试试'
+                : '新建听课记录并关联老师后，这里会按老师汇总统计'
+            }
           />
         ) : (
           <div className="overflow-x-auto">

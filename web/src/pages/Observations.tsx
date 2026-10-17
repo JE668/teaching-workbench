@@ -31,12 +31,18 @@ export default function Observations() {
   const [lessonTypeFilter, setLessonTypeFilter] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Observation | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** 回复闭环待办数（待反馈 + 已反馈未回），列表页角标提醒 */
+  const [replyOpen, setReplyOpen] = useState(0);
   const navigate = useNavigate();
   const toast = useToast();
 
   useEffect(() => {
     load(lessonTypeFilter || undefined);
   }, [lessonTypeFilter]);
+
+  useEffect(() => {
+    refreshReplyMetrics();
+  }, []);
 
   const load = async (lessonType?: string) => {
     try {
@@ -47,7 +53,16 @@ export default function Observations() {
       toast.error('加载听评课失败：' + err.message);
     } finally {
       setLoading(false);
+      refreshReplyMetrics();
     }
+  };
+
+  /** 拉取闭环待办数；失败静默（角标只是提醒，不该挡住列表） */
+  const refreshReplyMetrics = () => {
+    api
+      .get('/observations/reply-metrics')
+      .then((r: any) => setReplyOpen((r.pending || 0) + (r.awaiting || 0)))
+      .catch(() => undefined);
   };
 
   const confirmDelete = async () => {
@@ -62,6 +77,7 @@ export default function Observations() {
       toast.error('删除失败：' + err.message);
     } finally {
       setDeleting(false);
+      refreshReplyMetrics();
     }
   };
 
@@ -85,6 +101,14 @@ export default function Observations() {
             onClick={() => navigate('/observations/reply-board')}
           >
             回复闭环
+            {replyOpen > 0 ? (
+              <span
+                className="ml-0.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white"
+                title="待反馈 + 已反馈未回"
+              >
+                {replyOpen}
+              </span>
+            ) : null}
           </Button>
           <Button variant="gradient" icon={<Plus className="h-4 w-4" />} onClick={() => navigate('/observations/new')}>
             新建听课记录
