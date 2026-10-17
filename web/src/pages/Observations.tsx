@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Plus, Sparkles, Trash2, ClipboardCheck, BarChart3 } from 'lucide-react';
+import { Eye, EyeOff, Plus, Sparkles, Trash2, ClipboardCheck, BarChart3, MessageSquareText } from 'lucide-react';
 import { api } from '../api/client';
 import {
   Observation,
@@ -75,9 +75,16 @@ export default function Observations() {
             旁听 1对1 课堂 · 记录实录 · AI 生成评课报告 · 复制进「听评课表」
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" icon={<BarChart3 className="h-4 w-4" />} onClick={() => navigate('/observations/stats')}>
             老师统计
+          </Button>
+          <Button
+            variant="outline"
+            icon={<MessageSquareText className="h-4 w-4" />}
+            onClick={() => navigate('/observations/reply-board')}
+          >
+            回复闭环
           </Button>
           <Button variant="gradient" icon={<Plus className="h-4 w-4" />} onClick={() => navigate('/observations/new')}>
             新建听课记录
