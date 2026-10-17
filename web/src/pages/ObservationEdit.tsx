@@ -61,6 +61,7 @@ export default function ObservationEdit() {
   const [reportAt, setReportAt] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   // 载入老师列表
   useEffect(() => {
@@ -195,6 +196,22 @@ export default function ObservationEdit() {
       form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
     saveBlob(blob, buildReportFilename(display, form.topic));
     toast.success('已导出 .txt');
+  };
+
+  const downloadDocx = async () => {
+    if (!recordId) return;
+    setDownloading(true);
+    try {
+      const blob = await api.download('/observations/' + recordId + '/docx');
+      const display =
+        form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
+      saveBlob(blob, buildReportFilename(display, form.topic).replace(/\.txt$/, '.docx'));
+      toast.success('已导出 Word');
+    } catch (err: any) {
+      toast.error('导出 Word 失败：' + err.message);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const doCopy = async (text: string, label: string) => {
@@ -371,6 +388,17 @@ export default function ObservationEdit() {
                   {report ? (
                     <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={downloadTxt}>
                       下载 .txt
+                    </Button>
+                  ) : null}
+                  {report && recordId ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<FileText className="h-3.5 w-3.5" />}
+                      loading={downloading}
+                      onClick={downloadDocx}
+                    >
+                      下载 Word
                     </Button>
                   ) : null}
                 </div>
