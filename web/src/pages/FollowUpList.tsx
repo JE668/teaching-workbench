@@ -15,6 +15,7 @@ import {
   Save,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { downloadFollowUpCard } from '../lib/followupCard';
 import {
   FollowUp,
   GRADES,
@@ -114,6 +115,24 @@ export default function FollowUpList() {
   const handleCopy = async (f: FollowUp) => {
     const ok = await copyText(f.content);
     ok ? toast.success('已复制回访内容') : toast.error('复制失败，请手动选择文本');
+  };
+
+  /** 生成一张排版好的图片卡片并下载，手机上可直接转发家长 */
+  const handleCard = (f: FollowUp) => {
+    try {
+      downloadFollowUpCard({
+        title: '课后回访',
+        subject: f.subject,
+        grade: f.grade,
+        studentName: f.studentName,
+        topic: f.topic,
+        dateLabel: formatDate(f.createdAt),
+        content: f.content,
+      });
+      toast.success('图片卡片已生成并下载');
+    } catch {
+      toast.error('图片卡片生成失败，浏览器可能不支持 canvas');
+    }
   };
 
   const openEdit = (f: FollowUp) => {
@@ -372,6 +391,13 @@ export default function FollowUpList() {
             <>
               <Button variant="outline" onClick={() => handleCopy(detail)} icon={<Copy className="h-4 w-4" />}>
                 复制内容
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => handleCard(detail)}
+                icon={<ImageIcon className="h-4 w-4" />}
+              >
+                图片卡片
               </Button>
               <Button variant="primary" onClick={() => openEdit(detail)} icon={<Pencil className="h-4 w-4" />}>
                 编辑
