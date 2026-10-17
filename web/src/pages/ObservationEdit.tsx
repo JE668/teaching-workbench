@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   FileText,
+  Image as ImageIcon,
   Plus,
   GraduationCap,
 } from 'lucide-react';
@@ -28,6 +29,7 @@ import { useToast } from '../components/ui/Toast';
 import { VoiceButton } from '../components/ui/VoiceButton';
 import { copyText, saveBlob, relativeTime } from '../lib/utils';
 import { splitReport, buildReportFilename } from '../lib/observation';
+import { downloadObservationCard } from '../lib/observationCard';
 
 const NEW = '__new__';
 
@@ -217,6 +219,22 @@ export default function ObservationEdit() {
     }
   };
 
+  const downloadCard = () => {
+    const display =
+      form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
+    downloadObservationCard(
+      {
+        content: report,
+        teacherName: display || undefined,
+        topic: form.topic || undefined,
+        dateLabel: form.observedAt || undefined,
+        gradeLabel: overallGradeLabel(form.overallGrade) || undefined,
+      },
+      buildReportFilename(display, form.topic).replace(/\.txt$/, '.png')
+    );
+    toast.success('已导出图片卡片');
+  };
+
   const doCopy = async (text: string, label: string) => {
     const ok = await copyText(text);
     ok ? toast.success('已复制' + label) : toast.error('复制失败，请手动选择文本');
@@ -402,6 +420,16 @@ export default function ObservationEdit() {
                       onClick={downloadDocx}
                     >
                       下载 Word
+                    </Button>
+                  ) : null}
+                  {report ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      icon={<ImageIcon className="h-3.5 w-3.5" />}
+                      onClick={downloadCard}
+                    >
+                      图片卡片
                     </Button>
                   ) : null}
                 </div>
