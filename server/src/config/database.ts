@@ -128,6 +128,44 @@ export function initDatabase() {
     )
   `);
 
+  // 被听课老师（听评课模块用；下拉选择、可统计"评过哪些老师"）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS teachers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      subject TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // 听评课记录（独立于课后回访）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS observations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      teacher_id INTEGER,
+      topic TEXT NOT NULL,
+      lesson_type TEXT NOT NULL DEFAULT 'other',
+      observed_at TEXT,
+      grade TEXT,
+      subject TEXT,
+      level TEXT,
+      student_name TEXT,
+      class_notes TEXT NOT NULL DEFAULT '',
+      report TEXT NOT NULL DEFAULT '',
+      report_at TEXT,
+      overall_grade TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      teacher_reply TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
+    )
+  `);
+
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
   ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
@@ -143,4 +181,8 @@ export function initDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_student ON followups(student_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_created ON followups(created_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_batch ON followups(batch_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_teachers_user ON teachers(user_id)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_user_name ON teachers(user_id, name)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_observations_user ON observations(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_observations_date ON observations(observed_at DESC)');
 }

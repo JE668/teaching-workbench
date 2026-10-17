@@ -30,6 +30,14 @@ function getClient(config: AiConfig): OpenAI {
   return client;
 }
 
+/**
+ * 取当前配置的共享客户端（供回访之外的其它 AI 能力复用，如听评课）。
+ * 与 followup 走同一个模型/密钥/超时，无需各自维护。
+ */
+export function getSharedClient(): OpenAI {
+  return getClient(getAiConfig());
+}
+
 export interface FollowUpGenerateParams {
   studentName: string;
   grade: string;
