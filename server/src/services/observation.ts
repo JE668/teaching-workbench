@@ -159,5 +159,43 @@ export async function generateObservationReport(p: ObservationReportParams): Pro
   return text;
 }
 
+/** 流式生成：逐块产出评课文本增量（SSE 用），不含字数窗口 */
+export async function* streamObservationGeneration(p: ObservationReportParams): AsyncGenerator<string> {
+  const ai = getSharedClient();
+  const config = getAiConfig();
+  const stream = (await ai.chat.completions.create({
+    model: config.model,
+    messages: [
+      {
+        role: 'system',
+        content: '你是一位资深教研员，擅长 1对1 课堂听评课。评价具体、可落地，不空谈。',
+      },
+      { role: 'user', content: buildObservationPrompt(p) },
+    ],
+    max_tokens: 4000,
+    temperature: 0.5,
+    reasoning_effort: config.reasoningEffort,
+    stream: true,
+  })) as any;
+  for await (const chunk of stream) {
+    const delta = chunk?.choices?.[0]?.delta?.content;
+    if (delta) yield delta as string;
+  }
+}
+
+/** 流式生成接缝（供测试替换，避免真实 API 请求） */
+type ObservationStreamer = (p: ObservationReportParams) => AsyncGenerator<string>;
+let streamerImpl: ObservationStreamer = streamObservationGeneration;
+export function setObservationStreamer(fn: ObservationStreamer): void {
+  streamerImpl = fn;
+}
+export function resetObservationStreamer(): void {
+  streamerImpl = streamObservationGeneration;
+}
+/** 路由统一流式入口 */
+export function runObservationStream(p: ObservationReportParams): AsyncGenerator<string> {
+  return streamerImpl(p);
+}
+
 /** 暴露错误翻译，供路由复用（与回访一致的用户友好提示） */
 export { describeAiError };

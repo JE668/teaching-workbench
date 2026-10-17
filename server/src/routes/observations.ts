@@ -11,7 +11,12 @@ import {
   LESSON_TYPE_LABELS,
   OVERALL_GRADE_LABELS,
 } from '../utils/mappers.js';
-import { runObservationGeneration, parseSuggestedGrade, describeAiError } from '../services/observation.js';
+import {
+  runObservationGeneration,
+  runObservationStream,
+  parseSuggestedGrade,
+  describeAiError,
+} from '../services/observation.js';
 import { parseObservationReport, buildObservationDocx } from '../utils/observationDocx.js';
 import { log } from '../utils/logger.js';
 
@@ -297,6 +302,71 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
     const { httpStatus, message } = describeAiError(error);
     log.error({ httpStatus, error: message }, '评课生成失败');
     res.status(httpStatus).json({ error: message });
+  }
+});
+
+/** SSE 流式生成评课报告（边生成边下发；结束时落库） */
+router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.userId!;
+  const id = parseInt(req.params.id, 10);
+  const row = fetchWithTeacher(userId, id);
+  if (!row) return res.status(404).json({ error: '听评课记录不存在' });
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  let clientGone = false;
+  res.on('close', () => {
+    if (!res.writableEnded) clientGone = true;
+  });
+  const send = (event: string, data: any) => {
+    if (clientGone || res.writableEnded) return;
+    try {
+      res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+    } catch {
+      clientGone = true;
+    }
+  };
+
+  try {
+    const params = {
+      teacherName: row.teacher_name || (row.teacher_id ? '老师' : '被听课老师'),
+      topic: row.topic,
+      lessonTypeLabel: LESSON_TYPE_LABELS[normalizeLessonType(row.lesson_type)] || '其他',
+      observedAt: row.observed_at,
+      grade: row.grade,
+      subject: row.subject,
+      level: row.level,
+      studentName: row.student_name,
+      classNotes: row.class_notes,
+    };
+
+    let full = '';
+    for await (const delta of runObservationStream(params)) {
+      if (clientGone) break;
+      full += delta;
+      send('delta', { text: delta });
+    }
+
+    const report = full.trim();
+    const suggested = parseSuggestedGrade(report);
+    db.prepare(
+      `UPDATE observations SET report = ?, report_at = datetime('now','localtime'),
+        overall_grade = COALESCE(overall_grade, ?),
+        updated_at = datetime('now','localtime')
+       WHERE id = ? AND user_id = ?`
+    ).run(report, suggested, id, userId);
+
+    send('done', { report, suggestedGrade: suggested, overallGrade: row.overall_grade ?? suggested });
+  } catch (error: any) {
+    const { message } = describeAiError(error);
+    log.error({ error: message }, '评课流式生成失败');
+    send('error', { error: message });
+  } finally {
+    if (!res.writableEnded) res.end();
   }
 });
 
