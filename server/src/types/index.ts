@@ -64,6 +64,8 @@ export interface FollowUp {
   images: string[]; // 图片路径数组（API 层已解析）
   content: string;
   wordCount: number;
+  /** 小组课批次 id：同一次小组课拆出的 N 条共享；1对1 为 null */
+  batchId: string | null;
   createdAt: string;
   updatedAt: string;
 }

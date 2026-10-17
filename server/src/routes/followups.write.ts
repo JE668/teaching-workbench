@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import crypto from 'crypto';
 import { db } from '../config/database.js';
 import { FollowUpCreate, AuthenticatedRequest } from '../types/index.js';
 import {
@@ -51,8 +52,8 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
     const imagesJson = JSON.stringify(committedImages);
 
     const insert = db.prepare(
-      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, course_type, images, content, word_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, course_type, images, content, word_count, batch_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // ============ 小组课：为每个选中的学生各存一条相同内容 ============
@@ -73,12 +74,14 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
         return res.status(400).json({ error: '有学生不存在或无权访问' });
       }
 
+      // 整批共享一个 batch_id，编辑时可同步更新整批
+      const batchId = crypto.randomUUID();
       const run = db.transaction((rows: any[]) => {
         const newIds: number[] = [];
         for (const s of rows) {
           const r = insert.run(
             userId, s.id, s.name, grade, subject, topic, performance, mastery,
-            sessionCount, 'group', imagesJson, content, wordCount
+            sessionCount, 'group', imagesJson, content, wordCount, batchId
           );
           newIds.push(Number(r.lastInsertRowid));
         }
@@ -99,6 +102,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
         followups,
         created: followups.length,
         backfilled,
+        batchId,
       });
     }
 
@@ -143,7 +147,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
 
     const result = insert.run(
       userId, linkedStudentId, studentName, grade, subject, topic, performance, mastery,
-      sessionCount, 'one_on_one', imagesJson, content, wordCount
+      sessionCount, 'one_on_one', imagesJson, content, wordCount, null
     );
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(result.lastInsertRowid);
@@ -164,7 +168,7 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
   try {
     const userId = req.userId!;
     const followupId = parseInt(req.params.id, 10);
-    const { studentId, studentName, grade, subject, topic, performance, mastery, images, content } = req.body;
+    const { studentId, studentName, grade, subject, topic, performance, mastery, images, content, syncBatch } = req.body;
 
     const existing = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(followupId, userId) as any;
     if (!existing) {
@@ -181,6 +185,38 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
     const courseType = normalizeCourseType(
       req.body.courseType !== undefined ? req.body.courseType : existing.course_type
     );
+
+    // ===== 小组课批次同步：一次改整批 N 条，保持一致 =====
+    // 共享字段（年级/学科/主题/表现/掌握/课次/图片/正文）同步更新；
+    // 每条的 student_id / student_name 保持各自不变（不同学生）。
+    if (syncBatch === true && existing.batch_id) {
+      const result = db
+        .prepare(
+          `UPDATE followups
+           SET grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime')
+           WHERE user_id=? AND batch_id=?`
+        )
+        .run(
+          grade ?? existing.grade,
+          subject ?? existing.subject,
+          topic ?? existing.topic,
+          performance ?? existing.performance,
+          mastery ?? existing.mastery,
+          sessionCount,
+          courseType,
+          imagesJson,
+          content ?? existing.content,
+          wordCount,
+          userId,
+          existing.batch_id
+        );
+      const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(followupId);
+      return res.json({
+        followup: mapFollowUp(row),
+        batchId: existing.batch_id,
+        batchSynced: result.changes,
+      });
+    }
 
     db.prepare(
       `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`

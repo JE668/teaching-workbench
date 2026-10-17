@@ -47,6 +47,7 @@ export function mapFollowUp(row: any): FollowUp {
     images: parseImages(row.images),
     content: row.content,
     wordCount: row.word_count,
+    batchId: row.batch_id ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
