@@ -133,10 +133,14 @@ export function initDatabase() {
   ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn('followups', 'course_type', "TEXT NOT NULL DEFAULT 'one_on_one'");
+  // 小组课批量一致性：同一次小组课拆出的 N 条记录共享一个 batch_id，
+  // 编辑时可同步更新整批，避免 8 人里 1 条和其余不一致。
+  ensureColumn('followups', 'batch_id', 'TEXT');
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_user ON followups(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_student ON followups(student_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_created ON followups(created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_followups_batch ON followups(batch_id)');
 }

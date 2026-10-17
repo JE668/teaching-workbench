@@ -180,6 +180,41 @@ router.get('/last', (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+/**
+ * 取某条回访所属的小组课批次（整批 N 条成员）。
+ * 1对1 或无批次返回 batch: null；前端据此显示「N 人小组课」徽标。
+ */
+router.get('/:id/batch', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const followupId = parseInt(req.params.id, 10);
+    const f = db
+      .prepare('SELECT id, batch_id FROM followups WHERE id = ? AND user_id = ?')
+      .get(followupId, userId) as any;
+
+    if (!f) {
+      return res.status(404).json({ error: '回访记录不存在' });
+    }
+    if (!f.batch_id) {
+      return res.json({ batch: null });
+    }
+
+    const members = db
+      .prepare('SELECT * FROM followups WHERE user_id = ? AND batch_id = ? ORDER BY student_id ASC')
+      .all(userId, f.batch_id) as any[];
+
+    res.json({
+      batch: {
+        id: f.batch_id,
+        size: members.length,
+        followups: mapFollowUps(members),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取批次信息失败', message: error.message });
+  }
+});
+
 /** 获取单条回访 */
 router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   try {

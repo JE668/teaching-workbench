@@ -84,6 +84,8 @@ export const followUpUpdateSchema = z
     mastery: z.string().trim().optional(),
     content: z.string().optional(),
     images: z.array(z.string()).optional(),
+    /** 小组课：true 时把本次修改同步到整批 N 条，保持一致 */
+    syncBatch: z.boolean().optional(),
   })
   .passthrough();
 

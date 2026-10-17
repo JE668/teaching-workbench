@@ -61,12 +61,32 @@ export default function FollowUpList() {
     content: '',
   });
   const [editSaving, setEditSaving] = useState(false);
+  /** 当前详情所属的小组课批次（N 人），供徽标展示 + 编辑时同步 */
+  const [batchInfo, setBatchInfo] = useState<{ id: string; size: number; followups: FollowUp[] } | null>(null);
+  /** 保存编辑时是否同步到整批 */
+  const [syncBatch, setSyncBatch] = useState(false);
 
   const toast = useToast();
 
   useEffect(() => {
     load();
   }, [subject, grade, page]);
+
+  // 打开的小组课（详情或编辑），拉出它所属的批次（N 人）供展示 + 编辑同步
+  const activeFollowup = editing ?? detail;
+  useEffect(() => {
+    setBatchInfo(null);
+    setSyncBatch(false);
+    const f = activeFollowup;
+    if (f && f.courseType === 'group' && f.batchId) {
+      api
+        .get('/followups/' + f.id + '/batch')
+        .then((r) => setBatchInfo(r.batch))
+        .catch(() => {
+          /* 批次信息只是提示，失败静默 */
+        });
+    }
+  }, [editing?.id, detail?.id]);
 
   const load = async () => {
     setLoading(true);
@@ -120,9 +140,16 @@ export default function FollowUpList() {
       const res = await api.put('/followups/' + editing.id, {
         ...editing,
         ...editForm,
+        ...(syncBatch ? { syncBatch: true } : {}),
       });
-      setItems((prev) => prev.map((f) => (f.id === res.followup.id ? res.followup : f)));
-      toast.success('回访内容已更新');
+      if (res.batchSynced) {
+        // 同步了整批：批次里其它记录（不同学生）也变了，重拉列表保证一致
+        load();
+        toast.success('已同步更新本批次 ' + res.batchSynced + ' 条');
+      } else {
+        setItems((prev) => prev.map((f) => (f.id === res.followup.id ? res.followup : f)));
+        toast.success('回访内容已更新');
+      }
       setEditing(null);
     } catch (err: any) {
       toast.error('保存失败：' + err.message);
@@ -370,6 +397,13 @@ export default function FollowUpList() {
               ))}
             </div>
 
+            {batchInfo && batchInfo.size > 1 ? (
+              <div className="flex items-center gap-2 rounded-xl bg-brand-50 px-4 py-2.5 text-xs font-medium text-brand-700 ring-1 ring-brand-100">
+                <User className="h-4 w-4 shrink-0" />
+                小组课批次 · 本次反馈已归档给 {batchInfo.size} 名学生。编辑时可选择同步整批，保持一致。
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap items-center gap-3">
               <div>
                 <p className="mb-1.5 text-xs font-semibold text-slate-400">课程主题</p>
@@ -446,6 +480,20 @@ export default function FollowUpList() {
         }
       >
         <div className="space-y-4">
+          {batchInfo && batchInfo.size > 1 ? (
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl bg-amber-50 px-4 py-3 text-sm ring-1 ring-amber-100">
+              <input
+                type="checkbox"
+                checked={syncBatch}
+                onChange={(e) => setSyncBatch(e.target.checked)}
+                className="h-4 w-4 shrink-0 accent-amber-500"
+              />
+              <span className="text-amber-700">
+                同步到本批次全部 {batchInfo.size} 条（改这条时，一并更新其余 {batchInfo.size - 1} 名学生的记录）
+              </span>
+            </label>
+          ) : null}
+
           <div>
             <p className="mb-2 text-sm font-medium text-slate-700">课程类型</p>
             <div className="grid grid-cols-2 gap-2">
