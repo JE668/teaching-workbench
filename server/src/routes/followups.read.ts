@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { mapFollowUp, mapFollowUps, parseImages } from '../utils/mappers.js';
+import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount, normalizeCourseType } from '../utils/mappers.js';
 
 /**
  * 只读查询路由：列表 / 统计 / 历史建议 / 单条。
@@ -133,6 +133,50 @@ router.get('/suggestions', (req: AuthenticatedRequest, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: '获取历史建议失败', message: error.message });
+  }
+});
+
+/**
+ * 取某学生最近一条回访，供「上次内容一键带入」使用。
+ * 只回传写表单真正需要的字段，避免把 content 全文拖出来。
+ * 必须先于参数化路径 /:id 注册（'last' 会被当成 id）。
+ */
+router.get('/last', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const studentId = parseInt(String(req.query.studentId), 10);
+    if (!Number.isFinite(studentId) || studentId <= 0) {
+      return res.status(400).json({ error: '缺少 studentId' });
+    }
+
+    const row = db
+      .prepare(
+        `SELECT id, topic, performance, mastery, session_count, course_type, subject, grade, word_count, created_at
+         FROM followups WHERE user_id = ? AND student_id = ?
+         ORDER BY created_at DESC, id DESC LIMIT 1`
+      )
+      .get(userId, studentId) as any;
+
+    if (!row) {
+      return res.json({ followup: null });
+    }
+
+    res.json({
+      followup: {
+        id: row.id,
+        topic: row.topic,
+        performance: row.performance,
+        mastery: row.mastery,
+        sessionCount: normalizeSessionCount(row.session_count),
+        courseType: normalizeCourseType(row.course_type),
+        subject: row.subject,
+        grade: row.grade,
+        wordCount: row.word_count,
+        createdAt: row.created_at,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取最近回访失败', message: error.message });
   }
 });
 
