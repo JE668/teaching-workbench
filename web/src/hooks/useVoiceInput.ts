@@ -7,6 +7,8 @@ export interface VoiceInput {
   listening: boolean;
   /** 未定稿的实时转写（用户还在说） */
   interim: string;
+  /** 最近一次失败的提示文案（用户能看懂、能照着修）；无错误时为 null */
+  error: string | null;
   /** 开始 / 停止 */
   start: () => void;
   stop: () => void;
@@ -34,6 +36,32 @@ function getCtor(): Ctor | null {
 }
 
 /**
+ * 语音识别错误码 → 用户看得懂的处理办法。
+ *
+ * 以前这些错误是静默吞掉的，手机上表现就是"点了没反应"，
+ * 用户完全不知道是权限问题还是浏览器不支持。
+ */
+export function describeVoiceError(code?: string): string {
+  switch (code) {
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return '麦克风权限被拒绝：请在浏览器「设置 → 麦克风」里允许后再试';
+    case 'no-speech':
+      return '没听清，请靠近麦克风再说一次';
+    case 'service-not-available':
+      return '当前浏览器没有可用的语音识别服务，请改用 Chrome';
+    case 'network':
+      return '语音识别需要联网，当前网络连不上服务';
+    case 'audio-capture':
+      return '没找到麦克风，请检查耳机 / 外接音频';
+    case 'aborted':
+      return '语音输入已取消';
+    default:
+      return code ? '语音输入失败：' + code : '语音输入失败';
+  }
+}
+
+/**
  * 模块级"当前活动识别器"。
  * 一个工作台里可能同时挂多个语音按钮（课程主题 + 课堂表现），
  * 麦克风同一时刻只能被一个识别器占用，故用这个单例做互斥：
@@ -48,6 +76,8 @@ let activeRecognition: SpeechRecognitionLike | null = null;
  *   不支持的浏览器 `supported` 为 false，UI 层据此隐藏按钮。
  * - 定稿（isFinal）即通过 `onFinal` 写回；未定稿的实时文本通过 `onInterim` 展示。
  * - 首次调用会触发浏览器麦克风权限弹窗，属正常现象。
+ * - 失败（权限被拒 / 服务不可用 / start 抛异常）会通过 `error` 冒出来，
+ *   绝不静默——静默等于把按钮变成"点了没反应"。
  */
 export function useVoiceInput(
   onFinal: (text: string) => void,
@@ -56,12 +86,24 @@ export function useVoiceInput(
 ): VoiceInput {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
+  /** 手动 stop() 之后触发的 aborted 不算失败 */
+  const userStopped = useRef(false);
   const supported = useRef(getCtor() !== null).current;
+
+  const clearState = () => {
+    setListening(false);
+    setInterim('');
+    onInterim('');
+  };
 
   const start = () => {
     const Ctor = getCtor();
     if (!Ctor || listening) return;
+
+    userStopped.current = false;
+    setError(null);
 
     // 关掉上一个活动的识别器（若有）
     if (activeRecognition && activeRecognition !== recRef.current) {
@@ -88,32 +130,37 @@ export function useVoiceInput(
       onInterim(partial);
     };
     rec.onend = () => {
-      setListening(false);
-      setInterim('');
-      onInterim('');
+      clearState();
       if (activeRecognition === rec) activeRecognition = null;
     };
-    rec.onerror = () => {
-      // 权限被拒 / 网络等：静默回到未录音状态，不弹错打扰
-      setListening(false);
-      setInterim('');
-      onInterim('');
+    rec.onerror = (e: any) => {
+      // 手动 stop() 会触发 aborted，那不是失败，别吓用户
+      if (userStopped.current || e?.error === 'aborted') {
+        clearState();
+        if (activeRecognition === rec) activeRecognition = null;
+        return;
+      }
+      setError(describeVoiceError(e?.error));
+      clearState();
       if (activeRecognition === rec) activeRecognition = null;
     };
 
     recRef.current = rec;
     activeRecognition = rec;
-    setListening(true);
     try {
       rec.start();
-    } catch {
-      // 连续重复 start() 会抛 InvalidStateError，忽略
+      // start() 成功才进入录音态：Edge 等浏览器可能同步抛异常，
+      // 那时若已置 listening，按钮会卡在"停止"却根本没有在录音。
+      setListening(true);
+    } catch (err: any) {
       if (activeRecognition === rec) activeRecognition = null;
+      setError(err?.name ? '语音无法启动：' + err.name : '语音无法启动，请换一个浏览器试试');
     }
   };
 
   const stop = () => {
     const rec = recRef.current;
+    userStopped.current = true;
     if (rec) {
       try {
         rec.stop();
@@ -121,10 +168,8 @@ export function useVoiceInput(
         /* 忽略 */
       }
     }
-    setListening(false);
-    setInterim('');
-    onInterim('');
+    clearState();
   };
 
-  return { supported, listening, interim, start, stop };
+  return { supported, listening, interim, error, start, stop };
 }

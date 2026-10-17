@@ -14,6 +14,7 @@ interface VoiceButtonProps {
  * 语音输入按钮（放进字段右侧 hint 插槽）。
  * 手机上点一下说"本节课讲了分数加减法"，松开即写入，免去敲字。
  * 浏览器不支持时自动隐藏（返回 null）。
+ * 失败（权限被拒 / 服务不可用）会在按钮下方就地提示原因，绝不静默。
  */
 export function VoiceButton({ onText, lang = 'zh-CN' }: VoiceButtonProps) {
   const [interim, setInterim] = useState('');
@@ -23,12 +24,13 @@ export function VoiceButton({ onText, lang = 'zh-CN' }: VoiceButtonProps) {
 
   const active = voice.listening;
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       {active && interim ? (
         <span className="max-w-[160px] truncate text-[11px] italic text-slate-400">{interim}…</span>
       ) : null}
       <button
         type="button"
+        title={voice.error || '语音输入（中文）'}
         onClick={() => (active ? voice.stop() : voice.start())}
         className={cn(
           'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium ring-1 transition-colors',
@@ -41,6 +43,11 @@ export function VoiceButton({ onText, lang = 'zh-CN' }: VoiceButtonProps) {
         {active ? <Square className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
         {active ? '停止' : '语音'}
       </button>
+      {voice.error ? (
+        <span role="status" className="w-full max-w-[230px] text-left text-[11px] leading-snug text-rose-500">
+          {voice.error}
+        </span>
+      ) : null}
     </span>
   );
 }
