@@ -5,6 +5,7 @@ import {
   Users,
   MessageSquarePlus,
   History,
+  Eye,
   LogOut,
   GraduationCap,
   Sparkles,
@@ -20,6 +21,7 @@ const navItems = [
   { to: '/students', label: '学生管理', icon: Users },
   { to: '/followups', label: '课后回访', icon: MessageSquarePlus },
   { to: '/followups/history', label: '回访历史', icon: History },
+  { to: '/observations', label: '听评课', icon: Eye },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 

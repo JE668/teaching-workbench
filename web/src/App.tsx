@@ -9,6 +9,8 @@ import Students from './pages/Students';
 import StudentProfile from './pages/StudentProfile';
 import FollowUp from './pages/FollowUp';
 import FollowUpList from './pages/FollowUpList';
+import Observations from './pages/Observations';
+import ObservationEdit from './pages/ObservationEdit';
 import Settings from './pages/Settings';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -28,6 +30,9 @@ function AppRoutes() {
         <Route path="students/:id" element={<StudentProfile />} />
         <Route path="followups" element={<FollowUp />} />
         <Route path="followups/history" element={<FollowUpList />} />
+        <Route path="observations" element={<Observations />} />
+        <Route path="observations/new" element={<ObservationEdit />} />
+        <Route path="observations/:id" element={<ObservationEdit />} />
         <Route path="settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
