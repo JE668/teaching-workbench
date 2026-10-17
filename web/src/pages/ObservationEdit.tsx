@@ -163,15 +163,18 @@ export default function ObservationEdit() {
     setGenerating(true);
     try {
       const tid = await save();
-      const r = await api.post('/observations/' + tid + '/report', {});
-      setReport(r.report || '');
-      setReportAt(new Date().toISOString());
-      if (r.suggestedGrade && !form.overallGrade) {
-        setForm((f) => ({ ...f, overallGrade: r.suggestedGrade }));
-      } else if (r.overallGrade && !form.overallGrade) {
-        setForm((f) => ({ ...f, overallGrade: r.overallGrade }));
-      }
-      toast.success('评课报告已生成');
+      setReport(''); // 清空旧报告，开始流式
+      await api.streamPost('/observations/' + tid + '/report/stream', {}, {
+        onDelta: (text) => setReport((prev) => prev + text),
+        onDone: (payload: any) => {
+          if (payload?.report) setReport(payload.report);
+          setReportAt(new Date().toISOString());
+          const grade = payload?.suggestedGrade || payload?.overallGrade;
+          if (grade) setForm((f) => ({ ...f, overallGrade: f.overallGrade || grade }));
+          toast.success('评课报告已生成');
+        },
+        onError: (msg: string) => toast.error('生成失败：' + msg),
+      });
     } catch (err: any) {
       toast.error('生成失败：' + err.message);
     } finally {
