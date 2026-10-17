@@ -50,6 +50,7 @@ import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { countWords, copyText, cn, relativeTime } from '../lib/utils';
 import { extractDroppedImages } from '../lib/dropFiles';
+import { VoiceButton } from '../components/ui/VoiceButton';
 
 const MASTERY_TONE: Record<string, string> = {
   excellent: 'data-[on=true]:bg-emerald-500 data-[on=true]:ring-emerald-500',
@@ -810,6 +811,14 @@ export default function FollowUp() {
                 placeholder={
                   form.sessionCount > 1 ? '如：分数加减法、分数乘法' : '如：分数加减法运算'
                 }
+                hint={
+                  <VoiceButton
+                    onText={(t) => {
+                      markLocalEdit('topic');
+                      setForm((f) => ({ ...f, topic: f.topic + t }));
+                    }}
+                  />
+                }
               />
 
               {/* 历史主题联想：一个学期就那些主题，不用重复打 */}
@@ -831,6 +840,14 @@ export default function FollowUp() {
                     setForm({ ...form, performance: e.target.value });
                   }}
                   placeholder="如：本节课专注度较高，能主动回答问题，但计算速度还需提高…"
+                  hint={
+                    <VoiceButton
+                      onText={(t) => {
+                        markLocalEdit('performance');
+                        setForm((f) => ({ ...f, performance: f.performance + t }));
+                      }}
+                    />
+                  }
                 />
 
                 {/* 手机上敲中文很慢，常用描述点一下即可插入 */}
