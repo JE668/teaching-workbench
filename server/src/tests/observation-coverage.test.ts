@@ -15,11 +15,19 @@ after(async () => {
   await stopServer();
 });
 
-/** N 天前的本地日期字符串 */
+/**
+ * N 天前的日期字符串。
+ *
+ * 锚点是「北京今天」而不是 runner 的本地今天：daysSince 的口径是北京日历日，
+ * 测试也用同一口径生成数据，才能得到稳定结果。
+ * 用本地今天当锚点的话，UTC 20:00（= 北京次日 04:00）会算出相差 1 天，
+ * CI 和本机各红各的。
+ */
 function iso(daysAgo: number): string {
-  const d = new Date(Date.now() - daysAgo * 86_400_000);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  const beijingToday = Date.parse(
+    new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10)
+  );
+  return new Date(beijingToday - daysAgo * 86_400_000).toISOString().slice(0, 10);
 }
 
 async function makeTeacher(name: string, subject?: string) {
