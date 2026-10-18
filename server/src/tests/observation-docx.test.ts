@@ -8,6 +8,9 @@ import { parseObservationReport } from '../utils/observationDocx.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
+/** 未勾选的等级用不间断空格占位；zip 库会把它还原成字面 NBSP 字符 */
+const NBSP = '\u00a0';
+
 const REPORT = [
   '【听课人评价】',
   '教学目标：目标明确，贴合课程标准。',
@@ -167,9 +170,33 @@ describe('听评课 Word 导出（docx）', () => {
     assert.ok(xml.includes('王丽'), '老师姓名应填入');
     assert.ok(xml.includes('分数加减法运算'), '课题应填入');
     assert.ok(xml.includes('新授课'), '课型应填入');
-    assert.ok(xml.includes('良好'), '等级应填入');
-    assert.ok(xml.includes('docx-听课人'), '签名应为登录用户名');
     assert.ok(xml.includes('导入用生活实例'), '综合评价亮点应填入');
+
+    // 等级是「勾选括号」而不是「本课评定等级：良好」这种尾巴行
+    // 注意要剥掉 XML 标签再看：模板把这行文字拆成了两个 run，「（」和「）」不在同一个 run 里
+    const plain = xml.replace(/<[^>]+>/g, '');
+    assert.ok(plain.includes('良好（✓'), '命中的等级应勾选 ✓，例如 良好（✓）');
+    assert.ok(plain.includes('优秀（' + NBSP + '）'), '未命中的等级保留空格');
+    assert.ok(!plain.includes('本课评定等级'), '不应再出现「本课评定等级：xx」那行尾巴');
+
+    // 签名紧跟在模板自带的「评课人签名：」后面，不是单独一行
+    const signIdx = xml.indexOf('评课人签名：');
+    assert.ok(signIdx >= 0, '模板里的「评课人签名：」应保留');
+    assert.ok(xml.slice(signIdx, signIdx + 80).includes('docx-听课人'), '签名应写在评课人签名后面');
+
+    // 听课时间格式：26.10.17
+    assert.ok(xml.includes('26.10.17'), '听课时间格式应为 26.10.17');
+
+    // 填入内容强制小五（9pt）
+    const teacherRun = xml.match(/<w:r>[\s\S]*?<w:t[^>]*>王丽<\/w:t>[\s\S]*?<\/w:r>/);
+    assert.ok(teacherRun, '应能找到填入老师姓名的 run');
+    assert.match(teacherRun[0], /<w:sz w:val="18"\/>/, '填入内容字号应为小五（18 半点）');
+
+    // 文件名：星火个性化教学听评课表 {MM.DD} {签名}.docx
+    const cd = res.headers.get('content-disposition') || '';
+    const m = cd.match(/filename\*=UTF-8''(.+)$/);
+    const fname = decodeURIComponent(m ? m[1] : '');
+    assert.equal(fname, '星火个性化教学听评课表 10.17 docx-听课人.docx');
   });
 
   test('尚未生成报告 → 400', async () => {
@@ -182,6 +209,120 @@ describe('听评课 Word 导出（docx）', () => {
       headers: { Authorization: 'Bearer ' + token },
     });
     assert.equal(res.status, 400);
+  });
+
+  /** 从 document.xml 里取出每个段落的纯文本 */
+  function paragraphs(xml: string): string[] {
+    const out: string[] = [];
+    const re = /<w:p[\s>][\s\S]*?<\/w:p>/g;
+    let m;
+    while ((m = re.exec(xml))) {
+      let text = '';
+      const tre = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+      let t;
+      while ((t = tre.exec(m[0]))) text += t[1];
+      out.push(text);
+    }
+    return out;
+  }
+
+  async function makeAndExport(report: string): Promise<string> {
+    resetObservationGenerator();
+    setObservationGenerator(async () => report);
+    const o = await req('POST', '/api/observations', {
+      token,
+      body: { topic: '格式校验', lessonType: 'new', observedAt: '2026-10-17', classNotes: 'x' },
+    });
+    assert.equal(o.status, 200);
+    const rep = await req('POST', `/api/observations/${o.body.observation.id}/report`, { token, body: {} });
+    assert.equal(rep.status, 200);
+    const res = await fetch(url(`/api/observations/${o.body.observation.id}/docx`), {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    assert.equal(res.status, 200);
+    const zip = await JSZip.loadAsync(Buffer.from(await res.arrayBuffer()));
+    return (zip.file('word/document.xml') as any).async('string');
+  }
+
+  test('综合评价多点 → 每点一段，不挤在同一行', async () => {
+    const xml = await makeAndExport(
+      [
+        '【综合评价与建议】',
+        '一、本节课亮点：',
+        '1. 导入用生活实例唤起兴趣。',
+        '2. 板书清晰规范。',
+        '3. 提问有梯度。',
+        '二、有待优化的部分：',
+        '1. 练习梯度偏单一。',
+        '三、教学建议：',
+        '1. 分层布置练习。',
+        '2. 扩大提问面。',
+        '四、总体评价等级：良好',
+      ].join('\n'),
+    );
+
+    const paras = paragraphs(xml);
+    // 同一块里的多个点必须落在不同段落
+    assert.ok(!paras.some((p) => p.includes('导入用生活实例') && p.includes('板书清晰规范')));
+    assert.ok(!paras.some((p) => p.includes('板书清晰规范') && p.includes('提问有梯度')));
+    assert.ok(!paras.some((p) => p.includes('分层布置练习') && p.includes('扩大提问面')));
+    // 每个点各自成段
+    assert.equal(paras.filter((p) => p.trim() === '导入用生活实例唤起兴趣。').length, 1);
+    assert.equal(paras.filter((p) => p.trim() === '扩大提问面。').length, 1);
+    // 拆段时去掉原来的「1.」「2.」序号，避免排版上重复编号
+    assert.ok(!paras.some((p) => /^1[.、]/.test(p.trim()) && p.includes('导入用生活实例')));
+  });
+
+  test('综合块为空 → 不生成多余文字', async () => {
+    const xml = await makeAndExport('【综合评价与建议】\n四、总体评价等级：优秀');
+    const paras = paragraphs(xml).map((p) => p.trim());
+    // 没有一条段落是空 run 残留出来的占位符
+    assert.ok(!paras.some((p) => p.includes('{{highlight}}') || p.includes('{{suggest}}')));
+  });
+
+  test('签名取自「设置」，没填则回落登录用户名', async () => {
+    const pref = await req('PUT', '/api/auth/preferences', { token, body: { signature: '周江凌' } });
+    assert.equal(pref.status, 200);
+    assert.equal(pref.body.preferences.signature, '周江凌');
+
+    const xml = await makeAndExport('【综合评价与建议】\n四、总体评价等级：良好');
+    const signIdx = xml.indexOf('评课人签名：');
+    assert.ok(xml.slice(signIdx, signIdx + 80).includes('周江凌'), '签名应取偏好设置里的值');
+
+    // 清空后回落登录用户名
+    await req('PUT', '/api/auth/preferences', { token, body: { signature: '' } });
+    const xml2 = await makeAndExport('【综合评价与建议】\n四、总体评价等级：良好');
+    const s2 = xml2.indexOf('评课人签名：');
+    assert.ok(xml2.slice(s2, s2 + 80).includes('docx-听课人'), '签名为空时应回落登录用户名');
+
+    // 超长签名截断到 20 字，避免溢出纸面
+    const long = await req('PUT', '/api/auth/preferences', {
+      token,
+      body: { signature: '一二三四五六七八九十一二三四五六七八九十' + '十一二三四五六七八九十' },
+    });
+    assert.equal(long.body.preferences.signature.length, 20);
+  });
+
+  test('各等级各自勾选正确的括号', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['优秀', '优秀（✓', '良好（' + NBSP + '）'],
+      ['合格', '合格（✓', '优秀（' + NBSP + '）'],
+      ['有待提高', '有待提高（✓', '良好（' + NBSP + '）'],
+    ];
+    for (const [grade, hit, miss] of cases) {
+      const xml = await makeAndExport(`【综合评价与建议】\n四、总体评价等级：${grade}`);
+      const xmlText = xml.replace(/<[^>]+>/g, '');
+      assert.ok(xmlText.includes(hit), `${grade} 应勾选自己的括号`);
+      assert.ok(xmlText.includes(miss), `${grade} 时其它括号保持空格`);
+      // 四个括号里最多只有一个 ✓
+      assert.equal((xmlText.match(/（✓）/g) || []).length, 1);
+    }
+  });
+
+  test('等级缺失时四个括号都不勾（不误判）', async () => {
+    const xml = await makeAndExport('【综合评价与建议】\n三、教学建议：继续优化。');
+    const xmlText = xml.replace(/<[^>]+>/g, '');
+    assert.equal((xmlText.match(/（✓）/g) || []).length, 0);
   });
 
   test('他人记录 → 404（数据隔离）', async () => {

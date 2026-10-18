@@ -13,12 +13,15 @@ export interface Preferences {
   phraseMode: 'mixed' | 'history_only';
   /** 工作台「待回访」的默认天数 */
   pendingDays: number;
+  /** 听评课 Word 里的评课人签名；留空时导出回落到登录用户名 */
+  signature: string;
 }
 
 const DEFAULTS: Preferences = {
   phraseMode: 'mixed',
   // 一周一次课的节奏：7 天刚到期就提醒
   pendingDays: 7,
+  signature: '',
 };
 
 export function usePreferences() {

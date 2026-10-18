@@ -9,7 +9,6 @@ import {
   normalizeLessonType,
   normalizeOverallGrade,
   LESSON_TYPE_LABELS,
-  OVERALL_GRADE_LABELS,
 } from '../utils/mappers.js';
 import {
   runObservationGeneration,
@@ -17,7 +16,8 @@ import {
   parseSuggestedGrade,
   describeAiError,
 } from '../services/observation.js';
-import { parseObservationReport, buildObservationDocx } from '../utils/observationDocx.js';
+import { parseObservationReport, buildObservationDocx, buildDocxFilename } from '../utils/observationDocx.js';
+import { readPreferences } from './auth.js';
 import { log } from '../utils/logger.js';
 
 const router = Router();
@@ -515,14 +515,14 @@ router.get('/:id/docx', async (req: AuthenticatedRequest, res: Response) => {
     if (!row) return res.status(404).json({ error: '听评课记录不存在' });
     if (!row.report) return res.status(400).json({ error: '尚未生成评课报告，无法导出 Word' });
 
-    // 评课人签名：用当前登录用户名
+    // 评课人签名：优先用「设置」里填的签名，没填则回落登录用户名
+    const pref = readPreferences(userId);
     const me = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
-    const signature = me?.username ? String(me.username) : '';
+    const signature = (pref.signature || (me?.username ? String(me.username) : '')).trim();
 
     const parsed = parseObservationReport(row.report);
-    // 等级：优先用户手选，其次 AI 建议，最后解析出的
-    const gradeCode = row.overall_grade || parseSuggestedGrade(row.report);
-    const gradeLabel = gradeCode ? (OVERALL_GRADE_LABELS[gradeCode] || gradeCode) : parsed.grade;
+    // 等级：优先用户手选，其次 AI 建议 —— 只传代码，模板按代码勾选对应括号
+    const gradeCode = row.overall_grade || parseSuggestedGrade(row.report) || '';
 
     const buf = await buildObservationDocx({
       teacher: row.teacher_name || '',
@@ -533,11 +533,11 @@ router.get('/:id/docx', async (req: AuthenticatedRequest, res: Response) => {
       highlight: parsed.highlight,
       optimize: parsed.optimize,
       suggest: parsed.suggest,
-      grade: gradeLabel,
+      grade: gradeCode,
       signature,
     });
 
-    const fname = encodeURIComponent('听评课_' + (row.teacher_name || '老师') + '_' + row.topic + '.docx');
+    const fname = encodeURIComponent(buildDocxFilename(row.observed_at || '', signature));
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fname}`);
     res.send(buf);

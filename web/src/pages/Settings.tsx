@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle } from 'lucide-react';
+import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle, PenLine } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
+import { usePreferences } from '../hooks/usePreferences';
+import { useAuth } from '../context/AuthContext';
 
 /** 档位文案（依据官方文档；各模型支持的档位不同，下拉里按所选模型过滤） */
 const EFFORT_LABELS: Record<string, string> = {
@@ -48,6 +50,27 @@ export default function Settings() {
 
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' });
   const [changingPwd, setChangingPwd] = useState(false);
+
+  // 听评课 Word 导出：评课人签名（也用于导出文件名）
+  const { preferences, update: updatePreferences, loaded: prefsLoaded } = usePreferences();
+  const { user } = useAuth();
+  const [sigInput, setSigInput] = useState('');
+  const [savingSig, setSavingSig] = useState(false);
+  useEffect(() => {
+    if (prefsLoaded) setSigInput(preferences.signature);
+  }, [prefsLoaded, preferences.signature]);
+
+  async function saveSignature() {
+    setSavingSig(true);
+    try {
+      await updatePreferences({ signature: sigInput.trim() });
+      toast.success('签名已保存');
+    } catch {
+      toast.error('保存失败，请重试');
+    } finally {
+      setSavingSig(false);
+    }
+  }
 
   // 模型下拉：后端用 API Key 实时查 /v1/models，查不到时回落内置列表
   const [modelOptions, setModelOptions] = useState<
@@ -382,6 +405,33 @@ export default function Settings() {
 
           <Button onClick={saveAi} loading={saving} icon={<Save className="h-4 w-4" />}>
             保存 AI 设置
+          </Button>
+        </div>
+      </Card>
+
+      {/* ===== 听评课 Word 导出 ===== */}
+      <Card className="lg:max-w-3xl">
+        <CardHeader
+          title="听评课 Word 导出"
+          description="导出《星火个性化教学听评课表》时会填到表上的信息"
+          icon={<PenLine className="h-4 w-4" />}
+        />
+        <div className="space-y-4 p-5">
+          <Input
+            label="评课人签名"
+            value={sigInput}
+            onChange={(e) => setSigInput(e.target.value)}
+            placeholder={user?.username || '留空则用登录用户名'}
+            maxLength={20}
+            hint="填在表末「评课人签名：」后面，同时用于导出文件名，例如 星火个性化教学听评课表 10.17 周江凌.docx"
+          />
+          <Button
+            onClick={saveSignature}
+            loading={savingSig}
+            disabled={sigInput.trim() === preferences.signature}
+            icon={<Save className="h-4 w-4" />}
+          >
+            保存签名
           </Button>
         </div>
       </Card>

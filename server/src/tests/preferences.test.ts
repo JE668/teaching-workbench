@@ -22,6 +22,7 @@ describe('用户偏好', () => {
     assert.equal(res.body.preferences.phraseMode, 'mixed');
     // 一周一次课的节奏：7 天刚到期就提醒
     assert.equal(res.body.preferences.pendingDays, 7);
+    assert.equal(res.body.preferences.signature, '', '签名默认为空（导出时回落登录用户名）');
   });
 
   test('可保存并读回', async () => {
@@ -87,8 +88,48 @@ describe('用户偏好', () => {
     });
 
     const read = await req('GET', '/api/auth/preferences', { token });
-    assert.deepEqual(Object.keys(read.body.preferences).sort(), ['pendingDays', 'phraseMode']);
+    assert.deepEqual(Object.keys(read.body.preferences).sort(), [
+      'pendingDays',
+      'phraseMode',
+      'signature',
+    ]);
     assert.equal(({} as any).polluted, undefined, '不应污染原型');
+  });
+
+  test('评课人签名：可保存、可清空、超长截断', async () => {
+    const ok = await req('PUT', '/api/auth/preferences', {
+      token,
+      body: { signature: '  周江凌  ' },
+    });
+    assert.equal(ok.body.preferences.signature, '周江凌', '应去掉首尾空白');
+
+    const read = await req('GET', '/api/auth/preferences', { token });
+    assert.equal(read.body.preferences.signature, '周江凌');
+
+    // 清空 → 空字符串（导出时回落登录用户名）
+    const cleared = await req('PUT', '/api/auth/preferences', { token, body: { signature: '' } });
+    assert.equal(cleared.body.preferences.signature, '');
+
+    // 超过 20 字截断：签名要落在正式报送表上，长文本没有意义
+    const long = await req('PUT', '/api/auth/preferences', {
+      token,
+      body: { signature: '一二三四五六七八九十' + '一二三四五六七八九十' },
+    });
+    assert.equal(long.body.preferences.signature.length, 20);
+
+    // 部分更新不影响签名
+    await req('PUT', '/api/auth/preferences', { token, body: { pendingDays: 3 } });
+    const kept = await req('GET', '/api/auth/preferences', { token });
+    assert.equal(kept.body.preferences.signature.length, 20, '未被提及的签名应保持');
+    assert.equal(kept.body.preferences.pendingDays, 3);
+  });
+
+  test('非法签名类型不会写入奇怪的值', async () => {
+    await req('PUT', '/api/auth/preferences', { token, body: { signature: '周江凌' } });
+    for (const bad of [123, null, ['周江凌'], { name: 'x' }]) {
+      const res = await req('PUT', '/api/auth/preferences', { token, body: { signature: bad } });
+      assert.equal(res.body.preferences.signature, '周江凌', '非字符串不应覆盖原值');
+    }
   });
 
   test('脏数据回落到默认值', async () => {

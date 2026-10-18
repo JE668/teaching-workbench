@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginViaApi } from './helpers';
+import { loginViaApi, getToken } from './helpers';
 
 /**
  * 设置页回归测试。
@@ -43,6 +43,50 @@ test.describe('设置页', () => {
 
     await page.getByRole('button', { name: /返回下拉选择/ }).click();
     await expect(page.getByLabel('模型', { exact: true })).toBeVisible();
+  });
+
+  test('评课人签名：可填写、保存后跨会话保留', async ({ page }) => {
+    await loginViaApi(page);
+
+    // .e2e-data 在多次运行之间是复用的：先清空签名，否则第二次跑时
+    // 输入值和已存值相同 → 保存按钮保持禁用 → 点击超时
+    const token = await getToken(page);
+    await page.request.put('/api/auth/preferences', {
+      headers: { Authorization: 'Bearer ' + token },
+      data: { signature: '' },
+    });
+
+    await page.goto('/settings');
+
+    const input = page.getByLabel('评课人签名');
+    await expect(input).toBeVisible();
+    expect(await input.evaluate((el) => (el as HTMLInputElement).maxLength)).toBe(20);
+    await expect(input).toHaveValue('');
+
+    await input.fill('周江凌');
+    await page.getByRole('button', { name: '保存签名' }).click();
+
+    // 按钮的禁用态来自前端乐观更新，证明不了已落库 —— 直接查接口确认
+    await expect
+      .poll(
+        async () => {
+          const r = await page.request.get('/api/auth/preferences', {
+            headers: { Authorization: 'Bearer ' + token },
+          });
+          return (await r.json()).preferences.signature;
+        },
+        { timeout: 5000 }
+      )
+      .toBe('周江凌');
+
+    // 新开会话（重新注入登录态）再进设置页，签名仍在
+    await page.evaluate(() => {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    });
+    await loginViaApi(page);
+    await page.goto('/settings');
+    await expect(page.getByLabel('评课人签名')).toHaveValue('周江凌');
   });
 
   test('令牌失效时自动跳回登录页并说明原因', async ({ page }) => {
