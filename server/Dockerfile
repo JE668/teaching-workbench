@@ -34,6 +34,9 @@ RUN addgroup --system --gid 1001 nodejs     && adduser --system --uid 1001 nodej
 COPY --from=build /app/node_modules ./node_modules
 # 复制编译产物
 COPY --from=build /app/dist ./dist
+# 听评课 Word 导出依赖的模板。必须在 dist 之外单独 COPY ——
+# 漏掉这一步生产环境会 ENOENT，Word 导出直接 500，而本地测试全绿。
+COPY --from=build /app/templates ./templates
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 

@@ -67,6 +67,37 @@ jobs:
         working-directory: web
         run: npm test
 
+  # ===== 部署资产检查 =====
+  # 事故：Dockerfile 曾只 COPY dist/，漏了 templates/ ——
+  # 本地和测试环境模板都在，测试全绿，只有线上容器 ENOENT，Word 导出 500。
+  # 这个 job 不依赖 docker 守护进程，纯静态校验。
+  deploy-assets:
+    name: Docker Deploy Assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: 模板文件必须打进生产镜像
+        run: |
+          set -euo pipefail
+
+          test -f server/templates/observation-template.docx || {
+            echo "::error::缺少 Word 模板文件 server/templates/observation-template.docx"; exit 1; }
+
+          grep -q 'COPY --from=build /app/templates ./templates' server/Dockerfile || {
+            echo "::error::Dockerfile 未 COPY templates/ —— 生产镜像缺失 Word 模板，导出会 500"; exit 1; }
+
+          for f in server/templates/*; do
+            n="${f##*/}"
+            case "$(cat server/.dockerignore 2>/dev/null || true)" in
+              *"templates"*|*"$n"*)
+                echo "::error::.dockerignore 排除了 $n（生产镜像将缺失该文件）"; exit 1 ;;
+            esac
+          done
+
+          echo "✅ 模板文件已纳入生产镜像"
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
