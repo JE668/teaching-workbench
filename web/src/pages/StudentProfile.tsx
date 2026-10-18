@@ -15,9 +15,14 @@ import {
   Download,
   Sheet,
   CalendarRange,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  ChartNoAxesCombined,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { MASTERY_LEVELS } from '../types/index';
+import { buildProgression, TREND_META } from '../lib/progression';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -69,6 +74,23 @@ interface ProfileData {
 const masteryTone = (v: string) =>
   v === 'excellent' ? 'success' : v === 'good' ? 'info' : v === 'average' ? 'warning' : 'danger';
 const masteryLabel = (v: string) => MASTERY_LEVELS.find((m) => m.value === v)?.label || v;
+
+/** 掌握程度 → 走势条颜色（未知值用灰，不假装认识它） */
+const MASTERY_BAR: Record<string, string> = {
+  excellent: 'bg-emerald-500',
+  good: 'bg-sky-500',
+  average: 'bg-amber-400',
+  needs_improvement: 'bg-rose-400',
+};
+const trendBadgeTone: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
+  emerald: 'success',
+  green: 'success',
+  amber: 'warning',
+  rose: 'danger',
+  slate: 'neutral',
+};
+const TrendIcon = { emerald: TrendingUp, green: TrendingUp, amber: TrendingDown, rose: TrendingDown, slate: Minus } as const;
+
 
 export default function StudentProfile() {
   const { id } = useParams<{ id: string }>();
@@ -135,6 +157,14 @@ export default function StudentProfile() {
   }
 
   const { student, followups, stats } = data;
+
+  // 掌握程度走势：至少两次回访且都有可识别的掌握程度才展示
+  const progression = buildProgression(followups);
+  const trendMeta = TREND_META[progression.trend];
+  const TrendIconCmp = TrendIcon[trendMeta.tone] || Minus;
+  const firstPoint = progression.points[0];
+  const lastPoint = progression.points[progression.points.length - 1];
+
 
   const statCards = [
     { label: '回访次数', value: stats.totalFollowups, icon: MessageSquareText, color: 'text-brand-600 bg-brand-50' },
@@ -207,6 +237,62 @@ export default function StudentProfile() {
           </Card>
         ))}
       </div>
+
+      {/* 掌握程度走势 */}
+      {progression.trend !== 'insufficient' && (
+        <Card data-testid="progression-card">
+          <CardHeader
+            title="掌握程度走势"
+            description="对比前后两段回访的掌握程度，看这个孩子是进步了还是退步了"
+            icon={<ChartNoAxesCombined className="h-4 w-4" />}
+            action={
+              <Badge tone={trendBadgeTone[trendMeta.tone] || 'neutral'}>
+                <TrendIconCmp className="h-3 w-3" />
+                {trendMeta.label}
+              </Badge>
+            }
+          />
+          <div className="p-5 space-y-5">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
+              <span className="text-slate-400">首次回访</span>
+              <Badge tone={masteryTone(firstPoint.mastery)}>{masteryLabel(firstPoint.mastery)}</Badge>
+              <span className="text-slate-400 text-xs">{formatDate(firstPoint.date)}</span>
+              <TrendingUp className="h-4 w-4 text-slate-300" />
+              <span className="text-slate-400">最近一次</span>
+              <Badge tone={masteryTone(lastPoint.mastery)}>{masteryLabel(lastPoint.mastery)}</Badge>
+              <span className="text-slate-400 text-xs">{formatDate(lastPoint.date)}</span>
+            </div>
+
+            <div className="flex items-end gap-1.5 sm:gap-2" aria-label="掌握程度走势">
+              {progression.points.map((p, i) => {
+                const pct = p.score !== null ? Math.round((p.score / 4) * 100) : 12;
+                return (
+                  <div key={p.date + '-' + i} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+                    <div
+                      title={formatDate(p.date) + ' · ' + p.topic + ' · ' + masteryLabel(p.mastery)}
+                      style={{ height: Math.max(pct, 14) + 'px' }}
+                      data-testid="progression-bar"
+                      className={cn('w-full rounded-lg', MASTERY_BAR[p.mastery] || 'bg-slate-300')}
+                    />
+                    <p className="text-[11px] text-slate-400">
+                      {p.date.split(' ')[0].split('-').slice(1).join('-')}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-400">
+              {MASTERY_LEVELS.map((m) => (
+                <span key={m.value} className="flex items-center gap-1.5">
+                  <span className={'h-2 w-2 rounded-sm ' + (MASTERY_BAR[m.value] || 'bg-slate-300')} />
+                  {m.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* 备注 */}
       {student.notes && (
