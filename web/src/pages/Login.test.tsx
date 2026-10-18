@@ -7,6 +7,9 @@ import { renderWithProviders } from '../test/test-utils';
 const login = vi.fn();
 const register = vi.fn();
 
+/** 注册开关：名额用完时后端会让它变成 false */
+const authState = vi.hoisted(() => ({ registerEnabled: true }));
+
 vi.mock('../context/AuthContext', () => ({
   useAuth: () => ({
     login,
@@ -14,6 +17,7 @@ vi.mock('../context/AuthContext', () => ({
     logout: vi.fn(),
     isAuthenticated: false,
     user: null,
+    registerEnabled: authState.registerEnabled,
   }),
 }));
 
@@ -34,6 +38,7 @@ function formError(text: string | RegExp) {
 beforeEach(() => {
   login.mockReset();
   register.mockReset();
+  authState.registerEnabled = true;
 });
 
 describe('登录页 · 登录', () => {
@@ -123,5 +128,27 @@ describe('登录页 · 注册校验', () => {
 
     // 表单内错误应被清空（Toast 会按自己的生命周期自然消失，不在断言范围）
     expect(formError('用户名或密码错误')).not.toBeInTheDocument();
+  });
+});
+
+describe('登录页 · 注册名额', () => {
+  it('名额用完时隐藏注册入口，只留登录', () => {
+    authState.registerEnabled = false;
+    renderWithProviders(<Login />);
+
+    // 只剩「登录」标签，没有「注册」
+    expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '注册' })).not.toBeInTheDocument();
+
+    // 明确告知原因，而不是让人去点一个必然失败的东西
+    expect(screen.getByText(/注册已关闭/)).toBeInTheDocument();
+  });
+
+  it('名额未满时正常显示登录 / 注册两个入口', () => {
+    authState.registerEnabled = true;
+    renderWithProviders(<Login />);
+
+    expect(screen.getByRole('button', { name: '注册' })).toBeInTheDocument();
+    expect(screen.queryByText(/注册已关闭/)).not.toBeInTheDocument();
   });
 });

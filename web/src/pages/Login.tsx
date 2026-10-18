@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   GraduationCap,
@@ -31,9 +31,15 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { login, register } = useAuth();
+  const { login, register, registerEnabled } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
+
+  // 名额用完就不显示「注册」入口，免得白填一遍再收到 403
+  const tabs = useMemo(
+    () => (registerEnabled ? [{ label: '登录', value: false }, { label: '注册', value: true }] : [{ label: '登录', value: false }]),
+    [registerEnabled]
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,25 +145,30 @@ export default function Login() {
           </div>
 
           {/* 模式切换 */}
-          <div className="mb-6 flex gap-1 rounded-xl bg-slate-100 p-1">
-            {[
-              { label: '登录', value: false },
-              { label: '注册', value: true },
-            ].map((tab) => (
-              <button
-                key={tab.label}
-                onClick={() => switchMode(tab.value)}
-                className={cn(
-                  'flex-1 rounded-lg py-2 text-sm font-medium transition-all duration-200',
-                  isRegister === tab.value
-                    ? 'bg-white text-brand-700 shadow-soft'
-                    : 'text-slate-500 hover:text-slate-700'
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          {registerEnabled && (
+            <div className="mb-6 flex gap-1 rounded-xl bg-slate-100 p-1">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.label}
+                  onClick={() => switchMode(tab.value)}
+                  className={cn(
+                    'flex-1 rounded-lg py-2 text-sm font-medium transition-all duration-200',
+                    isRegister === tab.value
+                      ? 'bg-white text-brand-700 shadow-soft'
+                      : 'text-slate-500 hover:text-slate-700'
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!registerEnabled && (
+            <p className="mb-6 rounded-lg bg-slate-100 px-3 py-2 text-center text-xs text-slate-400">
+              注册已关闭，请直接登录
+            </p>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input

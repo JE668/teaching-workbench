@@ -86,6 +86,10 @@ function resolveReasoningEffort(): string {
 
 const DEFAULT_ADMIN_PASS = process.env.DEFAULT_ADMIN_PASS || '123456';
 
+// 最多允许多少个账号。默认 2 —— 注册名额用完即关闭注册。
+// 设为 0 表示完全关闭注册；设为负数表示不限（不推荐）。
+const MAX_USERS = parseInt(process.env.MAX_USERS || '2', 10);
+
 // 弱口令告警
 if (['123456', 'password', 'admin', ''].includes(DEFAULT_ADMIN_PASS)) {
   console.warn('[SECURITY] 管理员密码仍为弱口令，请尽快在 .env 中修改 DEFAULT_ADMIN_PASS');
@@ -105,6 +109,7 @@ export const env = {
   SENSENOVA_TIMEOUT_MS: parseInt(process.env.SENSENOVA_TIMEOUT_MS || '60000', 10),
   DEFAULT_ADMIN_USER: process.env.DEFAULT_ADMIN_USER || 'admin',
   DEFAULT_ADMIN_PASS,
+  MAX_USERS,
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000',
   UPLOAD_DIR: path.resolve(DATA_DIR, 'uploads'),
   DATA_DIR,

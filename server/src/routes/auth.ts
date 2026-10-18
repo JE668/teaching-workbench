@@ -12,6 +12,31 @@ import { registerSchema, loginSchema, changePasswordSchema } from '../utils/sche
 
 const router = Router();
 
+/**
+ * 注册名额。默认 MAX_USERS=2：注册满 2 个账号后注册自动关闭。
+ * MAX_USERS=0 完全关闭；负数不限（不推荐，等于开放注册）。
+ *
+ * 名额用完不影响登录 —— 已有账号照常使用。
+ */
+export function registrationInfo() {
+  const max = env.MAX_USERS;
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM users').get() as any;
+  return {
+    maxUsers: max,
+    userCount: n,
+    registerEnabled: max < 0 || (max > 0 && n < max),
+  };
+}
+
+// 注册状态：登录页用来决定是否显示「注册」入口。公开接口，只暴露名额信息。
+router.get('/status', (_req, res) => {
+  try {
+    res.json(registrationInfo());
+  } catch (error: any) {
+    res.status(500).json({ error: '获取注册状态失败', message: error.message });
+  }
+});
+
 // 登录/注册限流：15 分钟内同一 IP 最多 20 次【失败】尝试，防止暴力破解。
 // 只统计失败：正常用户反复登录（如网络抖动重试）不会被误锁。
 const authLimiter = rateLimit({
@@ -32,6 +57,11 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req, 
 
     if (password.length < 6) {
       return res.status(400).json({ error: '密码长度至少6位' });
+    }
+
+    // 名额检查放最前面：注册已关闭时直接 403，不要让人白填一遍表单
+    if (!registrationInfo().registerEnabled) {
+      return res.status(403).json({ error: '注册已关闭，如需账号请联系管理员' });
     }
 
     // 用户名会作为图片归档的目录名，必须保证可安全用作路径片段。

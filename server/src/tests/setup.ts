@@ -15,6 +15,8 @@ process.env.JWT_SECRET = 'test-only-secret-do-not-use-in-production';
 process.env.SENSENOVA_API_KEY = '';
 process.env.DEFAULT_ADMIN_USER = 'admin';
 process.env.DEFAULT_ADMIN_PASS = 'test-pass-123456';
+// 测试要自由建用户验证数据隔离，不限名额
+process.env.MAX_USERS = '-1';
 // 关闭思考强度相关的重试干扰
 process.env.SENSENOVA_REASONING_EFFORT = 'none';
 

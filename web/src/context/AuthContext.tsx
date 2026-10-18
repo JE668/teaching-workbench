@@ -30,6 +30,8 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  /** 注册是否还开着（名额用完后为 false）。失败时按开放处理，不挡住已有用户登录 */
+  registerEnabled: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   logout: () => void;
@@ -46,6 +48,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 用 ref 持有最新 toast：注册回调只做一次，不因 toast 身份变化反复注册
   const toastRef = useRef(toast);
   toastRef.current = toast;
+
+  // 注册名额：名额用完后登录页不再显示「注册」入口
+  const [registerEnabled, setRegisterEnabled] = useState(true);
+  useEffect(() => {
+    api
+      .get('/auth/status')
+      .then((r: any) => setRegisterEnabled(!!r.registerEnabled))
+      .catch(() => {});
+  }, []);
 
   /**
    * 全局「登录态失效」处理。
@@ -100,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         token,
         isAuthenticated: !!token,
+        registerEnabled,
         login,
         register,
         logout,
