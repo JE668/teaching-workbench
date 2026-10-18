@@ -28,7 +28,7 @@ import Button from '../components/ui/Button';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { VoiceButton } from '../components/ui/VoiceButton';
-import { copyText, saveBlob, relativeTime } from '../lib/utils';
+import { copyText, saveBlob, relativeTime, localNowISO } from '../lib/utils';
 import { splitReport, buildReportFilename } from '../lib/observation';
 import { downloadObservationCard } from '../lib/observationCard';
 
@@ -180,7 +180,7 @@ export default function ObservationEdit() {
         onDelta: (text) => setReport((prev) => prev + text),
         onDone: (payload: any) => {
           if (payload?.report) setReport(payload.report);
-          setReportAt(new Date().toISOString());
+          setReportAt(localNowISO());
           const grade = payload?.suggestedGrade || payload?.overallGrade;
           if (grade) setForm((f) => ({ ...f, overallGrade: f.overallGrade || grade }));
           toast.success('评课报告已生成');

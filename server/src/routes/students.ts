@@ -58,7 +58,7 @@ router.get('/needs-followup', (req: any, res) => {
          LEFT JOIN followups f ON f.student_id = s.id AND f.user_id = s.user_id
          WHERE s.user_id = ?
          GROUP BY s.id
-         HAVING last_at IS NULL OR last_at <= datetime('now', 'localtime', ?)
+         HAVING last_at IS NULL OR last_at <= datetime('now', '+8 hours', ?)
          ORDER BY last_at IS NOT NULL, last_at ASC, s.created_at ASC`
       )
       .all(userId, '-' + days + ' days') as any[];
@@ -252,7 +252,7 @@ router.put('/:id', validateBody(studentUpdateSchema), (req: any, res) => {
     }
 
     db.prepare(
-      "UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime('now', 'localtime') WHERE id = ?"
+      "UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
     ).run(
       name || existing.name,
       grade || existing.grade,

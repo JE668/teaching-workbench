@@ -108,7 +108,7 @@ router.put('/', (req: any, res) => {
     }
 
     db.prepare(
-      `INSERT INTO drafts (user_id, payload, updated_at) VALUES (?, ?, datetime('now','localtime'))
+      `INSERT INTO drafts (user_id, payload, updated_at) VALUES (?, ?, datetime('now','+8 hours'))
        ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`
     ).run(userId, json);
 

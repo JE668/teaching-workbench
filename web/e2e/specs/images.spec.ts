@@ -20,6 +20,14 @@ async function uploadImage(page: Page): Promise<string> {
   return (await res.json()).paths[0] as string;
 }
 
+/** 进回访编辑页并等拖拽区渲染出来。
+ * 该页面是 lazy 加载的，goto 返回时 React 可能还没挂载完，
+ * 直接 querySelector 会拿到 null —— CI 机器慢一点就必现。 */
+async function gotoFollowupEditor(page: Page) {
+  await page.goto('/followups');
+  await page.waitForSelector('[data-testid="dropzone"]');
+}
+
 async function seedFollowUpWithImage(page: Page, studentId: number, imagePath: string, topic: string) {
   const token = await getToken(page);
   const res = await page.request.post('/api/followups', {
@@ -103,7 +111,7 @@ test.describe('图片链路', () => {
    */
   test('拖拽无 MIME 类型的图片也能上传（回归：微信拖拽失效）', async ({ page }) => {
     await loginViaApi(page);
-    await page.goto('/followups');
+    await gotoFollowupEditor(page);
 
     const b64 = TINY_PNG.toString('base64');
 
@@ -126,7 +134,7 @@ test.describe('图片链路', () => {
 
   test('拖拽确实无图时给出明确提示（不再静默失败）', async ({ page }) => {
     await loginViaApi(page);
-    await page.goto('/followups');
+    await gotoFollowupEditor(page);
 
     await page.evaluate(() => {
       const dt = new DataTransfer();

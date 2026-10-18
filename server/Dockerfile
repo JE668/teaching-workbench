@@ -22,7 +22,12 @@ FROM node:26-bookworm-slim AS production
 WORKDIR /app
 
 # 安装系统依赖（运行时必需）
-RUN apt-get update && apt-get install -y --no-install-recommends     wget     && rm -rf /var/lib/apt/lists/*
+# tzdata 不能省：SQLite 的 datetime('now',...) 依赖容器时区，
+# 不设 TZ 时容器默认是 UTC，所有时间戳会比北京时间慢 8 小时。
+# 代码里已改用显式 '+8 hours' 兜底，这里设 TZ 是双保险。
+RUN apt-get update && apt-get install -y --no-install-recommends     wget tzdata     && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime     && echo 'Asia/Shanghai' > /etc/timezone     && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=Asia/Shanghai
 
 # 创建非 root 用户
 RUN addgroup --system --gid 1001 nodejs     && adduser --system --uid 1001 nodejs

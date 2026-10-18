@@ -10,6 +10,8 @@ services:
       - "3000"
     environment:
       - NODE_ENV=production
+      # 时区必须显式声明：容器默认 UTC，不设的话库里所有时间戳慢 8 小时
+      - TZ=Asia/Shanghai
       - PORT=3000
       - HOST=0.0.0.0
       - JWT_SECRET=${JWT_SECRET}

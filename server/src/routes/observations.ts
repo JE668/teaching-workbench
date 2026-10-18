@@ -44,7 +44,7 @@ function ownedTeacherId(userId: number, raw: any): number | null {
   return row ? id : null;
 }
 
-/** 本地日期 → 'YYYY-MM-DD'（与库里 datetime('now','localtime') 存的一致） */
+/** 本地日期 → 'YYYY-MM-DD'（与库里 datetime('now','+8 hours') 存的一致） */
 function toDateStr(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
@@ -365,7 +365,7 @@ router.put('/:id', validateBody(observationUpdateSchema), (req: AuthenticatedReq
         teacher_id = ?, topic = ?, lesson_type = ?, observed_at = ?,
         grade = ?, subject = ?, level = ?, student_name = ?,
         class_notes = ?, overall_grade = ?, status = ?, teacher_reply = ?,
-        updated_at = datetime('now','localtime')
+        updated_at = datetime('now','+8 hours')
        WHERE id = ? AND user_id = ?`
     ).run(
       next.teacher_id, next.topic, next.lesson_type, next.observed_at,
@@ -423,9 +423,9 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
     const gradeToStore = chosenGrade ?? row.overall_grade ?? suggested;
 
     db.prepare(
-      `UPDATE observations SET report = ?, report_at = datetime('now','localtime'),
+      `UPDATE observations SET report = ?, report_at = datetime('now','+8 hours'),
         overall_grade = COALESCE(overall_grade, ?),
-        updated_at = datetime('now','localtime')
+        updated_at = datetime('now','+8 hours')
        WHERE id = ? AND user_id = ?`
     ).run(report, suggested, id, userId);
 
@@ -490,9 +490,9 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
     const suggested = parseSuggestedGrade(report);
     const gradeToStore = chosenGrade ?? row.overall_grade ?? suggested;
     db.prepare(
-      `UPDATE observations SET report = ?, report_at = datetime('now','localtime'),
+      `UPDATE observations SET report = ?, report_at = datetime('now','+8 hours'),
         overall_grade = COALESCE(overall_grade, ?),
-        updated_at = datetime('now','localtime')
+        updated_at = datetime('now','+8 hours')
        WHERE id = ? AND user_id = ?`
     ).run(report, suggested, id, userId);
 
