@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import StudentProfile from './StudentProfile';
 import { renderWithProviders, makeStudent, makeFollowUp } from '../test/test-utils';
@@ -76,8 +76,9 @@ describe('学生档案 · 渲染', () => {
 
     expect(await screen.findByText('分数加减法运算')).toBeInTheDocument();
     expect(screen.getByText('分数乘法与约分')).toBeInTheDocument();
-    // 掌握程度以中文标签展示
-    expect(screen.getByText('优秀')).toBeInTheDocument();
+    // 掌握程度以中文标签展示（限定在回访档案卡片内：走势卡片也会渲染同名标签）
+    const timelineCard = screen.getByText('回访档案').closest('.rounded-2xl') as HTMLElement;
+    expect(within(timelineCard).getByText('优秀')).toBeInTheDocument();
     expect(screen.getByText('2 条记录')).toBeInTheDocument();
   });
 
@@ -232,5 +233,104 @@ describe('学生档案 · 导出', () => {
     await user.click(screen.getByRole('button', { name: '导出' }));
 
     expect(await screen.findByText(/导出失败：导出失败/)).toBeInTheDocument();
+  });
+});
+
+describe('学生档案 · 掌握程度走势', () => {
+  it('两次回访且掌握程度有变化时，展示走势卡片并给出判定', async () => {
+    get.mockResolvedValue(profilePayload());
+
+    renderProfile();
+
+    const card = (await screen.findByText('掌握程度走势')).closest('.rounded-2xl') as HTMLElement;
+
+    // 前一条良好 → 后一条优秀，跨一档：稳步提升
+    // 判定文案在头部和图例行各出现一次，这里断言头部那处
+    const header = card.querySelector('.border-b') as HTMLElement;
+    expect(within(header).getByText('稳步提升')).toBeInTheDocument();
+    expect(within(card).getAllByTestId('progression-bar')).toHaveLength(2);
+
+    // 首尾对照行：只出现首尾两次的掌握程度，图例不会算进来
+    const summary = card.querySelector('.space-y-5 > div') as HTMLElement;
+    expect(within(summary).getByText('首次回访')).toBeInTheDocument();
+    expect(within(summary).getByText('最近一次')).toBeInTheDocument();
+    expect(within(summary).getAllByText('良好')).toHaveLength(1);
+    expect(within(summary).getAllByText('优秀')).toHaveLength(1);
+
+    // 图例四项齐全，方便对照条柱颜色（限定在图例行，首尾对照行也有同名标签）
+    const legend = card.querySelector('.space-y-5 > div:last-child') as HTMLElement;
+    for (const label of ['优秀', '良好', '一般', '需加强']) {
+      expect(within(legend).getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  it('只有一次回访时不硬凑趋势，隐藏走势卡片', async () => {
+    get.mockResolvedValue(profilePayload({ followups: [makeFollowUp({ id: 1 })] }));
+
+    renderProfile();
+    await screen.findByText('回访次数');
+
+    expect(screen.queryByText('掌握程度走势')).not.toBeInTheDocument();
+  });
+
+  it('掌握程度全是脏值时无法比较，同样隐藏', async () => {
+    get.mockResolvedValue(
+      profilePayload({
+        followups: [
+          makeFollowUp({ id: 1, mastery: '写得很好', createdAt: '2026-09-08 10:00:00' }),
+          makeFollowUp({ id: 2, mastery: '还可以', createdAt: '2026-10-08 10:00:00' }),
+        ],
+      })
+    );
+
+    renderProfile();
+    await screen.findByText('回访次数');
+
+    expect(screen.queryByText('掌握程度走势')).not.toBeInTheDocument();
+  });
+
+  it('掌握程度倒退时给出下滑判定', async () => {
+    get.mockResolvedValue(
+      profilePayload({
+        followups: [
+          makeFollowUp({ id: 1, mastery: 'excellent', createdAt: '2026-09-08 10:00:00' }),
+          makeFollowUp({ id: 2, mastery: 'needs_improvement', createdAt: '2026-10-08 10:00:00' }),
+        ],
+      })
+    );
+
+    renderProfile();
+
+    const card = (await screen.findByText('掌握程度走势')).closest('.rounded-2xl') as HTMLElement;
+    expect(within(card).getByText('明显下滑')).toBeInTheDocument();
+  });
+
+  it('按时间从早到晚排列，条柱数量等于回访数量', async () => {
+    get.mockResolvedValue(
+      profilePayload({
+        followups: [
+          makeFollowUp({ id: 4, mastery: 'excellent', createdAt: '2026-10-20 10:00:00' }),
+          makeFollowUp({ id: 1, mastery: 'needs_improvement', createdAt: '2026-09-08 10:00:00' }),
+          makeFollowUp({ id: 2, mastery: 'average', createdAt: '2026-09-22 10:00:00' }),
+          makeFollowUp({ id: 3, mastery: 'good', createdAt: '2026-10-06 10:00:00' }),
+        ],
+      })
+    );
+
+    renderProfile();
+
+    const card = (await screen.findByText('掌握程度走势')).closest('.rounded-2xl') as HTMLElement;
+    const bars = within(card).getAllByTestId('progression-bar');
+    expect(bars).toHaveLength(4);
+
+    // 日期标签升序，即使入参是乱序
+    const dates = within(card).getAllByText(/^\d{2}-\d{2}$/).map((el) => el.textContent!.trim());
+    expect(dates).toEqual(['09-08', '09-22', '10-06', '10-20']);
+
+    // 条柱高度随掌握程度递增：1 → 2 → 3 → 4 档
+    const heights = bars.map((el) => parseInt(el.getAttribute('style')!.match(/height:\s*(\d+)px/)![1], 10));
+    expect(heights[0]).toBeLessThan(heights[1]);
+    expect(heights[1]).toBeLessThan(heights[2]);
+    expect(heights[2]).toBeLessThan(heights[3]);
   });
 });
