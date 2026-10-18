@@ -255,6 +255,53 @@ export function initDatabase() {
     )
   `);
 
+  // 全年课程体系目录（从老师维护的 Excel 批量导入，供课程总结/课程规划取数）
+  // 一次导入 = 一行 catalog_imports，导入的课程明细挂在 course_catalog.import_id 上
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS catalog_imports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      band TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      file_sha256 TEXT NOT NULL,
+      courses_total INTEGER NOT NULL DEFAULT 0,
+      courses_imported INTEGER NOT NULL DEFAULT 0,
+      courses_duplicated INTEGER NOT NULL DEFAULT 0,
+      failed_sheets TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS course_catalog (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      import_id INTEGER,
+      band TEXT NOT NULL,
+      term TEXT NOT NULL,
+      grade TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      track TEXT NOT NULL DEFAULT '',
+      seq INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT '',
+      score TEXT NOT NULL DEFAULT '',
+      difficulty TEXT NOT NULL DEFAULT '',
+      impact TEXT NOT NULL DEFAULT '',
+      textbook TEXT NOT NULL DEFAULT '',
+      section TEXT NOT NULL DEFAULT '',
+      sheet TEXT NOT NULL DEFAULT '',
+      source_row INTEGER NOT NULL DEFAULT 0,
+      -- 掌握星级：AI 先给一档，用户可手改
+      mastery_star INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (import_id) REFERENCES catalog_imports(id) ON DELETE SET NULL
+    )
+  `);
+
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
   ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
@@ -277,4 +324,9 @@ export function initDatabase() {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_user_name ON teachers(user_id, name)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_observations_user ON observations(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_observations_date ON observations(observed_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_catalog_imports_user ON catalog_imports(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_catalog_imports_sha ON catalog_imports(user_id, file_sha256)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_user ON course_catalog(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_filter ON course_catalog(user_id, grade, subject, term)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_content ON course_catalog(user_id, band, grade, subject, track, term, seq)');
 }
