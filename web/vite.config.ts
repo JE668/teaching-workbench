@@ -15,6 +15,20 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react()],
+  // 路由级分包之后，再手动切一层 vendor，避免每个页面 chunk 都各自重复打包 react。
+  // 注意：这里只放「稳定不变的第三方库」。
+  // 业务模块（含 framer-motion，被多个页面共享）交给 Rollup 的动态分块处理，
+  // 强行指定会触发 "Manually-specified chunks contain circular dependencies" 警告。
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          icons: ['lucide-react'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy,

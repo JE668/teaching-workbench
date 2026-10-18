@@ -15,7 +15,7 @@
 export const MAX_EDGE = 2048;
 /** 小于这个体积且尺寸不超标，就完全不折腾 */
 export const SMALL_BYTES = 1.5 * 1024 * 1024;
-const JPEG_QUALITY = 0.85;
+const JPEG_QUALITY = 0.72;
 /** 解码兜底的超时上限：宁可跳过压缩，也不能让上传卡住 */
 export const DECODE_TIMEOUT_MS = 10000;
 
