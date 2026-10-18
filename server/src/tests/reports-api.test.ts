@@ -1,0 +1,373 @@
+import './setup.js';
+import { test, before, after, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { startServer, stopServer, req, createUser, createStudent } from './helpers.js';
+
+let token = '';
+let otherToken = '';
+let student: any = null;
+/** 各用例共享的报告与明细 id */
+let report: any = null;
+let summaryItem: any = null;
+
+before(async () => {
+  await startServer();
+  token = await createUser('report-teacher');
+  otherToken = await createUser('report-other');
+  student = await createStudent(token, { name: '一可', grade: '初二', subject: '物理' });
+});
+after(async () => {
+  await stopServer();
+});
+
+async function makeReport(overrides: Record<string, any> = {}) {
+  const res = await req('POST', '/api/reports', {
+    token,
+    body: { studentId: student.id, yearMonth: '2026-09', term: '秋季', ...overrides },
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  return res.body.report;
+}
+
+describe('月度报告 · 创建与查询', () => {
+  test('未登录不能访问', async () => {
+    assert.equal((await req('GET', '/api/reports')).status, 401);
+  });
+
+  test('年级学科从学生带过来', async () => {
+    const r = await makeReport();
+    report = r;
+    assert.equal(r.student_name, '一可');
+    assert.equal(r.grade, '初二');
+    assert.equal(r.subject, '物理');
+    assert.equal(r.term, '秋季');
+    assert.equal(r.year_month, '2026-09');
+    // 总结与规划默认都开
+    assert.equal(r.summary_enabled, true);
+    assert.equal(r.plan_enabled, true);
+    assert.equal(r.item_count, 0);
+  });
+
+  test('缺少学生返回 400', async () => {
+    const res = await req('POST', '/api/reports', { token, body: { yearMonth: '2026-09' } });
+    assert.equal(res.status, 400);
+  });
+
+  test('月份格式不合法返回 400', async () => {
+    for (const bad of ['2026-13', '2026-0', '202609', '九月', '']) {
+      const res = await req('POST', '/api/reports', {
+        token,
+        body: { studentId: student.id, yearMonth: bad },
+      });
+      assert.equal(res.status, 400, 'bad=' + bad);
+    }
+  });
+
+  test('别人不存在的学生不能建', async () => {
+    const res = await req('POST', '/api/reports', { token, body: { studentId: 999999, yearMonth: '2026-09' } });
+    assert.equal(res.status, 404);
+  });
+
+  test('同名学生同月重复创建返回已存在那条', async () => {
+    const again = await req('POST', '/api/reports', {
+      token,
+      body: { studentId: student.id, yearMonth: '2026-09', term: '秋季' },
+    });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.duplicated, true);
+    assert.equal(again.body.report.id, report.id);
+  });
+
+  test('列表默认返回自己的报告，可按学生过滤', async () => {
+    await makeReport({ yearMonth: '2026-10' });
+
+    const all = await req('GET', '/api/reports', { token });
+    assert.equal(all.status, 200);
+    assert.equal(all.body.reports.length, 2);
+
+    const filtered = await req('GET', '/api/reports?studentId=' + student.id, { token });
+    assert.equal(filtered.body.reports.length, 2);
+
+    const none = await req('GET', '/api/reports?studentId=424242', { token });
+    assert.equal(none.body.reports.length, 0);
+  });
+
+  test('其他用户的报告看不到', async () => {
+    const res = await req('GET', '/api/reports', { token: otherToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.reports.length, 0);
+  });
+
+  test('详情带出明细，按 sort 排序', async () => {
+    const id = report.id;
+    await req('POST', `/api/reports/${id}/items`, { token, body: { kind: 'plan', content: '第一课' } });
+    await req('POST', `/api/reports/${id}/items`, { token, body: { kind: 'plan', content: '第二课' } });
+
+    const res = await req('GET', `/api/reports/${id}`, { token });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.items.length, 2);
+    assert.equal(res.body.items[0].content, '第一课');
+    assert.equal(res.body.items[1].content, '第二课');
+    assert.deepEqual(res.body.items.map((i: any) => i.sort), [1, 2]);
+  });
+
+  test('查不存在的报告返回 404', async () => {
+    assert.equal((await req('GET', '/api/reports/999999', { token })).status, 404);
+  });
+});
+
+describe('月度报告 · 修改', () => {
+  test('可以改学期、两个开关与两段摘要、祝福语', async () => {
+    const id = report.id;
+    const res = await req('PATCH', `/api/reports/${id}`, {
+      token,
+      body: {
+        term: '秋季学期',
+        planEnabled: false,
+        summaryIntro: '📚课堂情况：本月计划 3 次课\n📖学习内容：透镜成像',
+        farewell: '下个月继续加油呀～',
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.report.term, '秋季学期');
+    assert.equal(res.body.report.plan_enabled, false);
+    assert.equal(res.body.report.summary_enabled, true);
+    assert.match(res.body.report.summary_intro, /透镜成像/);
+    assert.equal(res.body.report.farewell, '下个月继续加油呀～');
+  });
+
+  test('月份改成非法值返回 400', async () => {
+    const id = report.id;
+    const res = await req('PATCH', `/api/reports/${id}`, { token, body: { yearMonth: '2026-99' } });
+    assert.equal(res.status, 400);
+  });
+
+  test('空 body 返回 400', async () => {
+    const id = report.id;
+    assert.equal((await req('PATCH', `/api/reports/${id}`, { token, body: {} })).status, 400);
+  });
+
+  test('改别人的报告返回 404', async () => {
+    const id = report.id;
+    assert.equal(
+      (await req('PATCH', `/api/reports/${id}`, { token: otherToken, body: { term: '春季' } })).status,
+      404
+    );
+  });
+});
+
+describe('明细行', () => {
+  test('新增规划行，字段齐全', async () => {
+    const id = report.id;
+    const res = await req('POST', `/api/reports/${id}/items`, {
+      token,
+      body: {
+        kind: 'plan',
+        seq: 3,
+        content: '眼睛与眼镜',
+        type: '同步',
+        score: '8-10',
+        difficulty: '★★★★★',
+        scheduledAt: '2026-09-13',
+      },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const it = res.body.item;
+    assert.equal(it.kind, 'plan');
+    assert.equal(it.content, '眼睛与眼镜');
+    assert.equal(it.type, '同步');
+    assert.equal(it.score, '8-10');
+    assert.equal(it.difficulty, '★★★★★');
+    assert.equal(it.scheduled_at, '2026-09-13');
+    assert.equal(it.sort, 3);
+  });
+
+  test('新增总结行可以带出勤与考试情况', async () => {
+    const id = report.id;
+    const res = await req('POST', `/api/reports/${id}/items`, {
+      token,
+      body: {
+        kind: 'summary',
+        content: '凸透镜成像的规律探究',
+        type: '同步',
+        scheduledAt: '2026-09-13',
+        attendance: '请假',
+        notesDone: '✅️',
+        mistakesDone: '✅️',
+        homeworkDone: '✅️',
+        exam: '/',
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.item.attendance, '请假');
+    assert.equal(res.body.item.exam, '/');
+    summaryItem = res.body.item;
+  });
+
+  test('行类型不合法返回 400', async () => {
+    const id = report.id;
+    for (const bad of ['summarys', 'PLAN', '', 'other']) {
+      const res = await req('POST', `/api/reports/${id}/items`, { token, body: { kind: bad } });
+      assert.equal(res.status, 400, 'kind=' + bad);
+    }
+  });
+
+  test('可以在明细里改单格', async () => {
+    const id = report.id;
+    const itemId = summaryItem.id;
+    const res = await req('PATCH', `/api/reports/${id}/items/${itemId}`, {
+      token,
+      body: { attendance: '补', exam: 87 },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.item.attendance, '补');
+    assert.equal(String(res.body.item.exam), '87');
+  });
+
+  test('上移下移可以调整顺序', async () => {
+    const id = report.id;
+    const list = (await req('GET', `/api/reports/${id}`, { token })).body.items;
+    const before = list.map((i: any) => i.content);
+
+    // 把第 3 行上移
+    const res = await req('POST', `/api/reports/${id}/items/move`, {
+      token,
+      body: { itemId: list[2].id, dir: 'up' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.moved, true);
+    const after = res.body.items.map((i: any) => i.content);
+    assert.notDeepEqual(before, after);
+    // 交换相邻两项，长度不变
+    assert.equal(after.length, before.length);
+    assert.equal(after[1], before[2]);
+    assert.equal(after[2], before[1]);
+
+    // 移到最上面后再上移，不应该越界
+    const top = res.body.items[0];
+    const stay = await req('POST', `/api/reports/${id}/items/move`, {
+      token,
+      body: { itemId: top.id, dir: 'up' },
+    });
+    assert.equal(stay.body.moved, false);
+  });
+
+  test('删除一行明细', async () => {
+    const id = report.id;
+    const list = (await req('GET', `/api/reports/${id}`, { token })).body.items;
+    const target = list[0];
+
+    const del = await req('DELETE', `/api/reports/${id}/items/${target.id}`, { token });
+    assert.equal(del.status, 200);
+    assert.equal(del.body.deleted, 1);
+
+    const again = await req('GET', `/api/reports/${id}`, { token });
+    assert.equal(again.body.items.length, list.length - 1);
+    assert.ok(!again.body.items.some((i: any) => i.id === target.id));
+  });
+
+  test('删别人的明细返回 404', async () => {
+    const id = report.id;
+    const list = (await req('GET', `/api/reports/${id}`, { token })).body.items;
+    if (!list.length) return;
+    assert.equal(
+      (await req('DELETE', `/api/reports/${id}/items/${list[0].id}`, { token: otherToken })).status,
+      404
+    );
+  });
+});
+
+describe('阶测安排自动生成', () => {
+  test('规划里还没有上课时间时拒绝', async () => {
+    const fresh = await makeReport({ yearMonth: '2027-01', term: '寒假' });
+    const res = await req('POST', `/api/reports/${fresh.id}/exams`, { token, body: {} });
+    assert.equal(res.status, 422);
+    assert.match(res.body.error, /计划上课时间/);
+  });
+
+  test('按排课跨度自动推算，可以直接落库', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-10', term: '秋季' });
+
+    // 10 月 7 次课的排期，跨度 09-30 → 11-16
+    const plan = [
+      { seq: 1, content: '凸透镜成像的规律应用', scheduledAt: '2026-09-30' },
+      { seq: 2, content: '眼睛与眼镜', scheduledAt: '2026-10-01' },
+      { seq: 3, content: '第5章总复习', scheduledAt: '2026-10-02' },
+      { seq: 4, content: '质量和体积的测量', scheduledAt: '2026-10-17' },
+      { seq: 5, content: '测量固体、液体的密度', scheduledAt: '2026-10-24' },
+      { seq: 6, content: '密度与生活', scheduledAt: '2026-10-31' },
+      { seq: 7, content: '第六章章节复习', scheduledAt: '2026-11-16' },
+    ];
+    for (const row of plan) {
+      await req('POST', `/api/reports/${fresh.id}/items`, {
+        token,
+        body: { kind: 'plan', ...row },
+      });
+    }
+
+    const res = await req('POST', `/api/reports/${fresh.id}/exams`, { token, body: { insert: true } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.startDate, '2026-09-30');
+    assert.equal(res.body.endDate, '2026-11-16');
+    assert.ok(res.body.suggestions.length >= 2);
+    assert.equal(res.body.inserted, res.body.suggestions.length);
+    assert.match(res.body.suggestions[0].content, /^秋季度第一次阶测安排：时间\d+月\d+日：$/);
+
+    const items = (await req('GET', `/api/reports/${fresh.id}`, { token })).body.items;
+    const exams = items.filter((i: any) => i.kind === 'exam');
+    assert.equal(exams.length, res.body.suggestions.length);
+    for (const e of exams) {
+      assert.ok(/阶测安排/.test(e.content));
+      assert.match(e.scheduled_at, /^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  test('可以手动指定跨度，不传 insert 就不落库', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-07', term: '暑假' });
+    const res = await req('POST', `/api/reports/${fresh.id}/exams`, {
+      token,
+      body: { startDate: '2026-07-06', endDate: '2026-08-31' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.suggestions.length, 4);
+    assert.equal(res.body.inserted, 0);
+    assert.equal(res.body.suggestions[0].content, '暑假第一次阶测安排：时间7月20日：');
+
+    const items = (await req('GET', `/api/reports/${fresh.id}`, { token })).body.items;
+    assert.equal(items.length, 0, '不传 insert 不应落库');
+  });
+
+  test('跨度太短排不下一次阶测', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-11', term: '春季' });
+    const res = await req('POST', `/api/reports/${fresh.id}/exams`, {
+      token,
+      body: { startDate: '2026-11-01', endDate: '2026-11-20' },
+    });
+    assert.equal(res.status, 422);
+    assert.match(res.body.error, /跨度不够/);
+  });
+});
+
+describe('删除整块报告', () => {
+  test('连带删掉它的明细', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-06', term: '春季' });
+    await req('POST', `/api/reports/${fresh.id}/items`, { token, body: { kind: 'plan', content: '课程A' } });
+    await req('POST', `/api/reports/${fresh.id}/items`, { token, body: { kind: 'exam', content: '阶段测试' } });
+
+    const del = await req('DELETE', `/api/reports/${fresh.id}`, { token });
+    assert.equal(del.status, 200);
+    assert.equal(del.body.deleted, 1);
+    assert.equal(del.body.itemsDeleted, 2);
+
+    assert.equal((await req('GET', `/api/reports/${fresh.id}`, { token })).status, 404);
+    const list = await req('GET', '/api/reports?studentId=' + student.id, { token });
+    assert.ok(!list.body.reports.some((r: any) => r.id === fresh.id));
+  });
+
+  test('删别人的报告无效果', async () => {
+    const fresh = await makeReport({ yearMonth: '2027-02', term: '春季' });
+    const del = await req('DELETE', `/api/reports/${fresh.id}`, { token: otherToken });
+    assert.equal(del.body.deleted, 0);
+    assert.equal((await req('GET', `/api/reports/${fresh.id}`, { token })).status, 200);
+  });
+});
