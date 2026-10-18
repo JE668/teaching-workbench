@@ -144,7 +144,12 @@ const DEFAULT_PREFERENCES = {
   phraseMode: 'mixed' as 'mixed' | 'history_only',
   /** 工作台「待回访」的默认天数 */
   pendingDays: 7,
+  /** 听评课 Word 里的评课人签名（未填时回落到登录用户名） */
+  signature: '' as string,
 };
+
+/** 签名最多 20 字：这是要落进正式报送表的，长文本没有意义 */
+const SIGNATURE_MAX = 20;
 
 function readPreferences(userId: number): typeof DEFAULT_PREFERENCES {
   const row = db.prepare('SELECT preferences FROM users WHERE id = ?').get(userId) as any;
@@ -158,8 +163,11 @@ function readPreferences(userId: number): typeof DEFAULT_PREFERENCES {
   return {
     phraseMode: saved.phraseMode === 'history_only' ? 'history_only' : 'mixed',
     pendingDays: Math.min(365, Math.max(1, parseInt(saved.pendingDays, 10) || 7)),
+    signature: typeof saved.signature === 'string' ? saved.signature.slice(0, SIGNATURE_MAX) : '',
   };
 }
+
+export { readPreferences };
 
 router.get('/preferences', authMiddleware, (req: any, res) => {
   try {
@@ -190,6 +198,10 @@ router.put('/preferences', authMiddleware, (req: any, res) => {
         if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PREFERENCES.pendingDays;
         return Math.min(365, parsed);
       })(),
+      // 空字符串合法（表示"先不填，用登录名"）
+      signature: typeof incoming.signature === 'string'
+        ? incoming.signature.trim().slice(0, SIGNATURE_MAX)
+        : current.signature,
     };
 
     db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(JSON.stringify(next), userId);
