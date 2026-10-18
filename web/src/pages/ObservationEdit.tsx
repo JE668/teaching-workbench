@@ -367,8 +367,8 @@ export default function ObservationEdit() {
           {/* ===== 听课记录（AI 评课依据，可语音）===== */}
           <Card>
             <CardHeader
-              title="听课记录 / 课堂实录"
-              description="你旁听时记下的老师上课过程，是 AI 评课的主要依据"
+              title="课堂情况记录"
+              description="这节课的课堂情况（你旁听记下的实录、或老师提供的课后回访都可以），是 AI 评课的主要依据"
             />
             <div className="p-5">
               <Textarea
