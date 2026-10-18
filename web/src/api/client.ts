@@ -285,6 +285,87 @@ class ApiClient {
     }
   }
 
+  /**
+   * POST 并以 SSE 接收任意事件（长耗时批量任务用）。
+   *
+   * 与 streamPost 的区别：不认死事件名，原样回调 (event, data)，
+   * 事件词汇表由服务端决定（如批量定档的 start / progress / done / error）。
+   */
+  async streamPostRaw(
+    path: string,
+    body: unknown,
+    handlers: { onEvent?: (event: string, data: any) => void; onOpen?: () => void },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    };
+    if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+
+    const res = await fetch(BASE_URL + path, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any));
+      if (res.status === 401) {
+        this.handleUnauthorized(path, !!this.token);
+      }
+      throw new Error(err.error || '请求失败');
+    }
+    if (!res.body) {
+      throw new Error('当前环境不支持流式响应');
+    }
+
+    handlers.onOpen?.();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const dispatch = (frame: string) => {
+      let event = 'message';
+      const dataLines: string[] = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      if (dataLines.length === 0) return;
+      let data: any = null;
+      try {
+        data = JSON.parse(dataLines.join('\n'));
+      } catch {
+        return;
+      }
+      handlers.onEvent?.(event, data);
+    };
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          if (frame.trim()) dispatch(frame);
+        }
+      }
+      if (buffer.trim()) dispatch(buffer);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   /** 下载文件（返回 Blob，供前端另存） */
   async download(path: string): Promise<Blob> {
     return (await this.downloadFile(path)).blob;

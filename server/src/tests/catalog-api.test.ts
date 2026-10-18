@@ -1,8 +1,9 @@
 import './setup.js';
-import { test, before, after, describe } from 'node:test';
+import { test, before, after, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
-import { startServer, stopServer, req, createUser } from './helpers.js';
+import { startServer, stopServer, req, createUser, url } from './helpers.js';
+import { setStarGenerator, resetStarGenerator } from '../services/catalogStar.js';
 
 let token = '';
 let otherToken = '';
@@ -16,6 +17,59 @@ before(async () => {
 after(async () => {
   await stopServer();
 });
+beforeEach(() => {
+  resetStarGenerator();
+});
+
+/** 收一条 SSE 流：返回状态码与解析后的事件序列 */
+async function collectSse(
+  path: string,
+  body: unknown = {},
+  authToken?: string
+): Promise<{ status: number; contentType: string | null; events: { event: string; data: any }[]; raw: string }> {
+  const res = await fetch(url(path), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: 'Bearer ' + authToken } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  const contentType = res.headers.get('content-type');
+  const raw = await res.text();
+  if (!contentType || !contentType.includes('text/event-stream')) {
+    return { status: res.status, contentType, events: [], raw };
+  }
+  const events = raw
+    .split('\n\n')
+    .map((f) => f.trim())
+    .filter(Boolean)
+    .map((frame) => {
+      const ev = /^event:\s*(.+)$/m.exec(frame);
+      const data = /^data:\s*(.+)$/m.exec(frame);
+      let parsed: any = null;
+      try {
+        parsed = data ? JSON.parse(data[1]) : null;
+      } catch {
+        parsed = data ? data[1] : null;
+      }
+      return { event: ev ? ev[1] : 'message', data: parsed };
+    });
+  return { status: res.status, contentType, events, raw };
+}
+
+/** 把目录下所有课程的星级清空，保证「未定档」场景可控 */
+async function clearStars(): Promise<number[]> {
+  const list = await req('GET', '/api/catalog/courses', { token });
+  const ids: number[] = [];
+  for (const c of list.body.courses) {
+    if (c.mastery_star !== null) {
+      await req('PATCH', '/api/catalog/courses/' + c.id, { token, body: { mastery_star: null } });
+    }
+    ids.push(c.id);
+  }
+  return ids;
+}
 
 // ============ 造一份最小可用的课程目录 ============
 
@@ -221,6 +275,129 @@ describe('掌握星级手改', () => {
   test('空 body 返回 400', async () => {
     const res = await req('PATCH', '/api/catalog/courses/1', { token, body: {} });
     assert.equal(res.status, 400);
+  });
+});
+
+describe('掌握星级 AI 初评', () => {
+  test('未登录不能定档', async () => {
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', {});
+    assert.equal(sse.status, 401);
+    assert.ok(!String(sse.contentType || '').includes('text/event-stream'), '未登录不应返回 SSE');
+  });
+
+  test('SSE 下发 start / progress / done，并把星级落库', async () => {
+    await clearStars();
+    const list = await req('GET', '/api/catalog/courses', { token });
+    const ids: number[] = list.body.courses.map((c: any) => c.id);
+    setStarGenerator(async () =>
+      JSON.stringify({ results: ids.map((id, i) => ({ id, star: 3 + (i % 2) })) })
+    );
+
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, token);
+    assert.equal(sse.status, 200);
+    assert.ok(String(sse.contentType).includes('text/event-stream'));
+
+    const names = sse.events.map((e) => e.event);
+    assert.deepEqual(names, ['start', 'progress', 'done']);
+    assert.equal(sse.events[0].data.total, 2);
+    assert.equal(sse.events[1].data.batch, 1);
+    assert.equal(sse.events[1].data.totalBatches, 1);
+    assert.equal(sse.events[2].data.updated, 2);
+
+    const after = await req('GET', '/api/catalog/courses', { token });
+    assert.ok(after.body.courses.every((c: any) => c.mastery_star === 3 || c.mastery_star === 4));
+  });
+
+  test('默认只补未定档的，手改过的不会被 AI 覆盖', async () => {
+    const ids = await clearStars();
+    const [a, b] = ids;
+    await req('PATCH', '/api/catalog/courses/' + a, { token, body: { mastery_star: 4 } });
+
+    setStarGenerator(async () =>
+      JSON.stringify({ results: [{ id: a, star: 1 }, { id: b, star: 2 }] })
+    );
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, token);
+    assert.equal(sse.events[0].data.total, 1, '应只处理未定档的那门');
+    assert.equal(sse.events[2].data.updated, 1);
+
+    const after = await req('GET', '/api/catalog/courses', { token });
+    const byId = Object.fromEntries(after.body.courses.map((c: any) => [c.id, c.mastery_star]));
+    assert.equal(byId[a], 4, '手改的 4 星不应被 AI 改成 1 星');
+    assert.equal(byId[b], 2);
+  });
+
+  test('onlyEmpty=false 会覆盖已有星级', async () => {
+    const ids = await clearStars();
+    const [a, b] = ids;
+    await req('PATCH', '/api/catalog/courses/' + a, { token, body: { mastery_star: 4 } });
+
+    setStarGenerator(async () => JSON.stringify({ results: [{ id: a, star: 2 }, { id: b, star: 3 }] }));
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', { onlyEmpty: false }, token);
+    assert.equal(sse.events[0].data.onlyEmpty, false);
+    assert.equal(sse.events[0].data.total, 2);
+
+    const after = await req('GET', '/api/catalog/courses', { token });
+    const byId = Object.fromEntries(after.body.courses.map((c: any) => [c.id, c.mastery_star]));
+    assert.equal(byId[a], 2);
+    assert.equal(byId[b], 3);
+  });
+
+  test('没有未定档的课程时不下发 progress', async () => {
+    const ids = await clearStars();
+    for (const id of ids) {
+      await req('PATCH', '/api/catalog/courses/' + id, { token, body: { mastery_star: 3 } });
+    }
+    let called = 0;
+    setStarGenerator(async () => {
+      called++;
+      return '{"results":[]}';
+    });
+
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, token);
+    assert.deepEqual(
+      sse.events.map((e) => e.event),
+      ['start', 'done']
+    );
+    assert.equal(sse.events[0].data.total, 0);
+    assert.equal(sse.events[1].data.updated, 0);
+    assert.equal(called, 0, '不该请求模型');
+  });
+
+  test('按筛选范围取数，并受 limit 限制', async () => {
+    await clearStars();
+    setStarGenerator(async () => '{"results":[]}');
+
+    const math = await collectSse('/api/catalog/courses/suggest-stars', { subject: '数学' }, token);
+    assert.equal(math.events[0].data.total, 0, '没有数学课');
+
+    const limited = await collectSse('/api/catalog/courses/suggest-stars', { limit: 1 }, token);
+    assert.equal(limited.events[0].data.total, 1, 'limit=1 只取一门');
+    assert.equal(limited.events[0].data.limit, 1);
+  });
+
+  test('别人的账号看不到别人的课程', async () => {
+    await clearStars();
+    setStarGenerator(async () => '{"results":[]}');
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, otherToken);
+    assert.equal(sse.status, 200);
+    assert.equal(sse.events[0].data.total, 0);
+    assert.equal(sse.events[1].data.updated, 0);
+  });
+
+  test('模型失败时下发 error 事件，不写库', async () => {
+    await clearStars();
+    setStarGenerator(async () => {
+      const err = new Error('request timed out');
+      Object.assign(err, { name: 'APIConnectionTimeoutError' });
+      throw err;
+    });
+
+    const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, token);
+    assert.deepEqual(sse.events.map((e) => e.event), ['start', 'error']);
+    assert.match(sse.events[1].data.error, /超时/);
+
+    const after = await req('GET', '/api/catalog/courses', { token });
+    assert.ok(after.body.courses.every((c: any) => c.mastery_star === null), '失败批次不应落库');
   });
 });
 

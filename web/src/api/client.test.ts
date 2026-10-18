@@ -185,6 +185,106 @@ describe('streamPost 错误处理', () => {
   });
 });
 
+/** 收集一次 streamPostRaw 的全部回调 */
+async function collectRaw(chunks: string[], init?: Parameters<typeof sseResponse>[1]) {
+  const fetchMock = vi.fn().mockResolvedValue(sseResponse(chunks, init));
+  vi.stubGlobal('fetch', fetchMock);
+
+  const events: { event: string; data: any }[] = [];
+  let opened = 0;
+  let thrown: Error | null = null;
+  try {
+    await api.streamPostRaw('/catalog/courses/suggest-stars', { grade: '高一' }, {
+      onEvent: (event, data) => events.push({ event, data }),
+      onOpen: () => {
+        opened++;
+      },
+    });
+  } catch (e: any) {
+    thrown = e;
+  }
+  return { events, opened, thrown, fetchMock };
+}
+
+describe('streamPostRaw 请求与事件', () => {
+  it('带 Authorization / Content-Type / Accept，body 原样发出', async () => {
+    const { fetchMock } = await collectRaw([frame('start', { total: 1 })]);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/catalog/courses/suggest-stars');
+    expect(init.method).toBe('POST');
+    expect(init.headers['Authorization']).toBe('Bearer test-token');
+    expect(init.headers['Content-Type']).toBe('application/json');
+    expect(init.headers['Accept']).toBe('text/event-stream');
+    expect(JSON.parse(init.body)).toEqual({ grade: '高一' });
+  });
+
+  it('原样回传任意事件名与数据，不做语义解释', async () => {
+    const { events, opened } = await collectRaw([
+      frame('start', { total: 120, batches: 2 }),
+      frame('progress', { batch: 1, totalBatches: 2, updated: 100, total: 120 }),
+      frame('progress', { batch: 2, totalBatches: 2, updated: 120, total: 120 }),
+      frame('done', { total: 120, batches: 2, updated: 120 }),
+    ]);
+
+    expect(opened).toBe(1);
+    expect(events.map((e) => e.event)).toEqual(['start', 'progress', 'progress', 'done']);
+    expect(events[1].data.updated).toBe(100);
+    expect(events[3].data.batches).toBe(2);
+  });
+
+  it('事件被网络切成多片也能拼回完整帧', async () => {
+    const payload = JSON.stringify({ batch: 3, totalBatches: 5, updated: 27, total: 500 });
+    const full = 'event: progress\ndata: ' + payload + '\n\n';
+    const { events } = await collectRaw([full.slice(0, 17), full.slice(17)]);
+
+    expect(events).toEqual([{ event: 'progress', data: { batch: 3, totalBatches: 5, updated: 27, total: 500 } }]);
+  });
+
+  it('末尾残留的不完整帧也能吐出', async () => {
+    const { events } = await collectRaw(['event: done\ndata: {"updated":7}\n']);
+    expect(events).toEqual([{ event: 'done', data: { updated: 7 } }]);
+  });
+
+  it('data 不是 JSON 的帧被丢弃，不影响后续事件', async () => {
+    const { events } = await collectRaw(['event: x\ndata: not-json\n\n', frame('done', { updated: 1 })]);
+    expect(events).toEqual([{ event: 'done', data: { updated: 1 } }]);
+  });
+});
+
+describe('streamPostRaw 错误处理', () => {
+  it('HTTP 非 2xx 时抛出后端返回的错误信息', async () => {
+    const { thrown } = await collectRaw([], { ok: false, status: 401, json: { error: '登录状态已失效' } });
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown!.message).toBe('登录状态已失效');
+  });
+
+  it('响应无 body 时抛出可读错误', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, body: null, json: async () => ({}) } as any)
+    );
+    await expect(api.streamPostRaw('/x', {}, {})).rejects.toThrow(/不支持流式响应/);
+  });
+
+  it('AbortSignal 已取消时抛出 AbortError', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((_url: string, init: any) => {
+        if (init?.signal?.aborted) {
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          return Promise.reject(e);
+        }
+        return Promise.resolve(sseResponse([]));
+      })
+    );
+    await expect(api.streamPostRaw('/x', {}, {}, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
 /**
  * 登录态失效（401）的全局处理。
  *
