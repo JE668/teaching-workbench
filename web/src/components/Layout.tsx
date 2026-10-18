@@ -7,6 +7,7 @@ import {
   History,
   Eye,
   BookOpen,
+  CalendarRange,
   LogOut,
   GraduationCap,
   Sparkles,
@@ -25,6 +26,7 @@ const navItems = [
   { to: '/followups/history', label: '回访历史', icon: History },
   { to: '/observations', label: '听评课', icon: Eye },
   { to: '/catalog', label: '课程目录', icon: BookOpen },
+  { to: '/reports', label: '月度总结规划', icon: CalendarRange },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 

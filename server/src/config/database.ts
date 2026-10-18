@@ -302,6 +302,56 @@ export function initDatabase() {
     )
   `);
 
+  // 月度总结与课程规划。
+  // 一条 monthly_reports = 一个学生一个月的「总结 + 规划」两块内容；
+  // 明细行放 report_items，kind 区分：summary（已上的课，带出勤/笔记/错题/作业/考试）、
+  // plan（下月要上的课，只有课程属性 + 计划上课时间）、exam（阶测安排，插在规划中间）。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS monthly_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      student_id INTEGER NOT NULL,
+      year_month TEXT NOT NULL,
+      term TEXT NOT NULL DEFAULT '',
+      grade TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      summary_enabled INTEGER NOT NULL DEFAULT 1,
+      plan_enabled INTEGER NOT NULL DEFAULT 1,
+      summary_intro TEXT NOT NULL DEFAULT '',
+      plan_intro TEXT NOT NULL DEFAULT '',
+      farewell TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS report_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      report_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      seq INTEGER NOT NULL DEFAULT 0,
+      content TEXT NOT NULL DEFAULT '',
+      type TEXT NOT NULL DEFAULT '',
+      score TEXT NOT NULL DEFAULT '',
+      difficulty TEXT NOT NULL DEFAULT '',
+      scheduled_at TEXT NOT NULL DEFAULT '',
+      attendance TEXT NOT NULL DEFAULT '',
+      notes_done TEXT NOT NULL DEFAULT '',
+      mistakes_done TEXT NOT NULL DEFAULT '',
+      homework_done TEXT NOT NULL DEFAULT '',
+      exam TEXT NOT NULL DEFAULT '',
+      sort INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (report_id) REFERENCES monthly_reports(id) ON DELETE CASCADE
+    )
+  `);
+
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
   ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
@@ -329,4 +379,8 @@ export function initDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_user ON course_catalog(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_filter ON course_catalog(user_id, grade, subject, term)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_content ON course_catalog(user_id, band, grade, subject, track, term, seq)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_monthly_reports_user ON monthly_reports(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_monthly_reports_student ON monthly_reports(user_id, student_id, year_month DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id, sort)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_report_items_user ON report_items(user_id)');
 }
