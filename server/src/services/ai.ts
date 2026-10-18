@@ -472,3 +472,114 @@ export function runStreamGeneration(params: FollowUpGenerateParams): AsyncGenera
 export function retryGeneration(params: FollowUpGenerateParams, correction: string): Promise<string> {
   return onceImpl(params, correction);
 }
+
+// ============ 家长版精简 ============
+//
+// 完整回访 150-500 字，家长基本不看。这个能力把已有的完整回访压成
+// 一段能直接发微信的短反馈 —— 完整版照旧保存归档，精简版只用于发送。
+
+export const PARENT_MIN_WORDS = 80;
+export const PARENT_MAX_WORDS = 220;
+
+export interface CondenseParams {
+  /** 已有的完整回访内容 */
+  content: string;
+  /** 学生姓名（用于开头称呼） */
+  studentName?: string;
+  /** 课题：帮助判断哪些专业词需要给家长解释 */
+  topic?: string;
+}
+
+function buildCondensePrompt(params: CondenseParams): string {
+  const call = params.studentName?.trim() || '孩子';
+  const topicLine = params.topic?.trim() ? '\n今天的课题：' + params.topic.trim() : '';
+
+  return [
+    '请把下面这份完整的课后回访，压缩成一段可以直接发给家长的简短反馈。',
+    '',
+    '要求：',
+    '- 一段话，120 字左右（80-220 字之间）',
+    '- 开头用「' + call + '家长您好」这样的称呼，口吻自然亲切，像老师跟家长微信聊天',
+    '- 讲清三件事：今天大致学了什么、孩子表现怎么样（要具体，别只写"表现良好"）、回家需要做什么',
+    '- 老师用的专业词（比如通分、异分母）要用大白话带一句解释，家长看得懂最重要',
+    '- 只写真实掌握的内容，不要编造分数、排名或成绩',
+    '- 纯文字一段：不用 Markdown、不加表情符号、不要小标题和序号',
+    '- 不要出现"本报告""综上所述""总体来说""特此反馈"这类公文腔',
+    '',
+    '完整回访如下：',
+    '---',
+    params.content,
+    topicLine,
+  ].join('\n');
+}
+
+function buildCondenseRequest(params: CondenseParams): any {
+  const config = getAiConfig();
+  return {
+    model: config.model,
+    messages: [
+      {
+        role: 'system',
+        content:
+          '你是一位1对1教育咨询顾问，擅长把详实的课后回访压缩成家长一眼能读完的简短反馈。',
+      },
+      { role: 'user', content: buildCondensePrompt(params) },
+    ],
+    max_tokens: 800,
+    temperature: 0.5,
+    reasoning_effort: config.reasoningEffort,
+  };
+}
+
+export async function condenseForParent(params: CondenseParams): Promise<string> {
+  const ai = getClient(getAiConfig());
+  const response = await ai.chat.completions.create(buildCondenseRequest(params));
+  return (response.choices[0].message.content || '').trim();
+}
+
+export async function* streamCondenseForParent(params: CondenseParams): AsyncGenerator<string> {
+  // 注意：body 必须是独立的 any 变量。
+  // 直接传内联对象 + stream:true 会触发 OpenAI SDK 的重载不匹配。
+  const body: any = buildCondenseRequest(params);
+  body.stream = true;
+
+  const ai = getClient(getAiConfig());
+  const stream = (await ai.chat.completions.create(body)) as any;
+  for await (const chunk of stream) {
+    const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+      ? chunk.choices[0].delta.content
+      : null;
+    if (delta) yield delta as string;
+  }
+}
+
+// ============ 精简的测试注入点 ============
+
+type Condenser = (params: CondenseParams) => Promise<string>;
+type CondenserStreamer = (params: CondenseParams) => AsyncGenerator<string>;
+
+let condenseImpl: Condenser = condenseForParent;
+let condenseStreamImpl: CondenserStreamer = (params) => streamCondenseForParent(params);
+
+/** 替换精简实现（仅供测试） */
+export function setFollowUpCondenser(fn: Condenser): void {
+  condenseImpl = fn;
+  condenseStreamImpl = async function* (params: CondenseParams) {
+    yield await fn(params);
+  };
+}
+
+export function resetFollowUpCondenser(): void {
+  condenseImpl = condenseForParent;
+  condenseStreamImpl = (params) => streamCondenseForParent(params);
+}
+
+/** 路由统一入口：非流式 */
+export function runCondense(params: CondenseParams): Promise<string> {
+  return condenseImpl(params);
+}
+
+/** 路由统一入口：流式 */
+export function runStreamCondense(params: CondenseParams): AsyncGenerator<string> {
+  return condenseStreamImpl(params);
+}

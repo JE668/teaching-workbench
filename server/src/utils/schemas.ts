@@ -63,6 +63,13 @@ export const followUpGenerateSchema = z
   })
   .passthrough();
 
+/** 家长版精简：只需要已有内容，学生姓名与课题用于开头称呼和判断用词 */
+export const followUpCondenseSchema = z
+  .object({
+    content: reqd('还没有可精简的回访内容，先生成或填写内容'),
+  })
+  .passthrough();
+
 export const followUpCreateSchema = z
   .object({
     grade: reqd('年级、学科、课程主题、课堂表现、掌握程度、回访内容均为必填项'),
