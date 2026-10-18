@@ -48,7 +48,88 @@ describe('评课提示词', () => {
 
   test('空听课记录也给出兜底说明，不臆造', () => {
     const prompt = buildObservationPrompt({ ...p, classNotes: '' });
-    assert.ok(prompt.includes('听课记录为空'));
+    assert.ok(prompt.includes('课堂情况记录为空'));
+  });
+
+  test('不把学生姓名写进提示词，并要求统一称"学生"', () => {
+    const prompt = buildObservationPrompt(p);
+    assert.ok(!prompt.includes('李小明'), '提示词里不应出现具体学生姓名');
+    assert.ok(!prompt.includes('- 学生：'), '不应再以"学生：姓名"的形式给出学生');
+    assert.ok(prompt.includes('统一称"学生"'));
+    assert.ok(prompt.includes('不要出现任何具体学生姓名'));
+  });
+
+  test('禁止"记录中未体现"这类自我声明缺失的说法，改为按等级补充', () => {
+    const prompt = buildObservationPrompt(p);
+    // 这些词只允许出现在"禁止出现"的那一条条款里
+    assert.equal(prompt.split('记录中未体现').length - 1, 2, '"记录中未体现"与"但记录中未体现"各列一次');
+    assert.equal(prompt.split('未提及').length - 1, 1);
+    assert.equal(prompt.split('从记录无法判断').length - 1, 1);
+    assert.equal(prompt.split('信息不足').length - 1, 1);
+    assert.ok(prompt.includes('严禁出现'));
+    assert.ok(prompt.includes('合理补充'));
+    // 旧的"不要臆造未提及的细节"已删除 —— 它与"按等级自行补充"的要求直接冲突
+    assert.ok(!prompt.includes('不要臆造'));
+  });
+
+  test('输出假定在听评课现场书写，不出现回访/反馈口径', () => {
+    const prompt = buildObservationPrompt(p);
+    assert.ok(prompt.includes('坐在听课现场'));
+    assert.ok(prompt.includes('当场写下'));
+    for (const banned of ['不要出现"回访"', '不要引用老师提供的记录作为信息来源']) {
+      assert.ok(prompt.includes(banned), '缺少条款：' + banned);
+    }
+  });
+
+  test('措辞要求：不对学生施加心理压力、无指责性表述', () => {
+    const prompt = buildObservationPrompt(p);
+    assert.ok(prompt.includes('避免对学生施加心理压力'));
+    assert.ok(prompt.includes('实在不应该'));
+  });
+});
+
+describe('生成前选定总体评价等级', () => {
+  const p = {
+    teacherName: '王老师',
+    topic: '分数加减法',
+    lessonTypeLabel: '新授课',
+    classNotes: '老师用通分法讲解，学生反应良好。',
+  };
+
+  const CASES = [
+    { grade: 'excellent', label: '优秀', tone: '打磨层面的提升' },
+    { grade: 'good', label: '良好', tone: '大体平衡' },
+    { grade: 'pass', label: '合格', tone: '优点点到为止' },
+    { grade: 'needs_work', label: '有待提高', tone: '直指问题所在' },
+  ] as const;
+
+  for (const { grade, label, tone } of CASES) {
+    test(grade + ' → 提示词写明等级、内容与结论都锁定为「' + label + '」', () => {
+      const prompt = buildObservationPrompt({ ...p, overallGrade: grade });
+
+      // 独立成节的强约束
+      assert.ok(prompt.includes('# 总体评价等级（你已确定，不要改判）'));
+      assert.ok(prompt.includes('这节课的总体评价等级为「' + label + '」'));
+      assert.ok(prompt.includes(tone), '应给出该等级对应的内容口径：' + tone);
+      // 硬性要求里明确不许改判
+      assert.ok(prompt.includes('总体评价等级直接填「' + label + '」，不要改判'));
+      // 输出格式模板里直接预填，避免模型自己再选一次
+      assert.ok(prompt.includes('四、总体评价等级：' + label));
+      // 不该再出现"从中选一个"的自由选项
+      assert.ok(!prompt.includes('优秀 / 良好 / 合格 / 有待提高 中填一个'));
+    });
+  }
+
+  test('四个等级的内容口径互不相同', () => {
+    const tones = CASES.map((c) => buildObservationPrompt({ ...p, overallGrade: c.grade }));
+    assert.equal(new Set(tones).size, 4);
+  });
+
+  test('未选等级：不注入等级约束，保持让 AI 自行判断', () => {
+    const prompt = buildObservationPrompt(p);
+    assert.ok(!prompt.includes('你已确定，不要改判'));
+    assert.ok(prompt.includes('四、总体评价等级：（优秀 / 良好 / 合格 / 有待提高 中填一个）'));
+    assert.ok(!prompt.includes('总体评价等级直接填'));
   });
 });
 

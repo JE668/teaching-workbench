@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Plus,
   GraduationCap,
+  Star,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -47,6 +48,14 @@ const emptyForm = {
   overallGrade: '',
   status: 'draft',
   teacherReply: '',
+};
+
+/** 各等级对 AI 内容口径的影响 —— 让用户在生成前就知道选它的代价 */
+const GRADE_HINTS: Record<string, string> = {
+  excellent: '亮点为主，优化点 1 点',
+  good: '亮点与不足大体平衡',
+  pass: '优化点 2-3 点，建议要落地',
+  needs_work: '直指问题，建议具体充分',
 };
 
 export default function ObservationEdit() {
@@ -166,7 +175,8 @@ export default function ObservationEdit() {
     try {
       const tid = await save();
       setReport(''); // 清空旧报告，开始流式
-      await api.streamPost('/observations/' + tid + '/report/stream', {}, {
+      // 生成前选定的等级一并下发：AI 据此写整份评课，而不只是改一行结论
+      await api.streamPost('/observations/' + tid + '/report/stream', { overallGrade: form.overallGrade || undefined }, {
         onDelta: (text) => setReport((prev) => prev + text),
         onDone: (payload: any) => {
           if (payload?.report) setReport(payload.report);
@@ -367,8 +377,8 @@ export default function ObservationEdit() {
           {/* ===== 听课记录（AI 评课依据，可语音）===== */}
           <Card>
             <CardHeader
-              title="听课记录 / 课堂实录"
-              description="你旁听时记下的老师上课过程，是 AI 评课的主要依据"
+              title="课堂情况记录"
+              description="这节课的课堂情况（你旁听记下的实录、或老师提供的课后回访都可以），是 AI 评课的主要依据"
             />
             <div className="p-5">
               <Textarea
@@ -385,6 +395,41 @@ export default function ObservationEdit() {
             </div>
           </Card>
 
+          {/* ===== 总体评价等级（生成前选定，AI 据此写内容）===== */}
+          <Card>
+            <CardHeader
+              title="总体评价等级"
+              description="先生定这节课的等级，AI 会按这个等级写评课内容和优化建议"
+              icon=<Star className="h-4 w-4" />
+            />
+            <div className="p-5">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {OVERALL_GRADES.map((g) => {
+                  const on = form.overallGrade === g.value;
+                  return (
+                    <button
+                      key={g.value}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => set('overallGrade', on ? '' : g.value)}
+                      className={
+                        'rounded-xl px-3 py-2.5 text-left ring-1 transition-colors ' +
+                        (on ? 'bg-brand-50 ring-brand-300' : 'bg-white ring-slate-200 hover:bg-slate-50')
+                      }
+                    >
+                      <span className={'block text-sm font-semibold ' + (on ? 'text-brand-700' : 'text-slate-700')}>
+                        {g.label}
+                      </span>
+                      <span className={'block text-xs leading-tight ' + (on ? 'text-brand-600' : 'text-slate-400')}>
+                        {GRADE_HINTS[g.value]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </Card>
+
           {/* ===== 评课报告 ===== */}
           <Card>
             <CardHeader
@@ -392,7 +437,7 @@ export default function ObservationEdit() {
               description={
                 report
                   ? '已生成 · 复制进 Word 表即可。可随时重新生成'
-                  : '尚未生成 · 填写听课记录后点「AI 生成评课」'
+                  : '尚未生成 · 选好总体评价等级后点「AI 生成评课」'
               }
               icon={<FileText className="h-4 w-4" />}
               action={
@@ -460,37 +505,14 @@ export default function ObservationEdit() {
                   ) : null}
                 </div>
 
-                {/* 总体评价等级 */}
-                <div>
-                  <p className="mb-2 text-sm font-medium text-slate-700">总体评价等级</p>
-                  <div className="flex flex-wrap gap-2">
-                    {OVERALL_GRADES.map((g) => {
-                      const on = form.overallGrade === g.value;
-                      return (
-                        <button
-                          key={g.value}
-                          type="button"
-                          onClick={() => set('overallGrade', on ? '' : g.value)}
-                          className={
-                            'rounded-full px-3.5 py-1.5 text-sm font-medium ring-1 transition-colors ' +
-                            (on
-                              ? 'bg-brand-50 text-brand-700 ring-brand-300'
-                              : 'bg-white text-slate-500 ring-slate-200 hover:bg-slate-50')
-                          }
-                        >
-                          {g.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {reportAt ? (
-                    <p className="mt-2 text-xs text-slate-400">报告生成于 {relativeTime(reportAt)}</p>
-                  ) : null}
-                </div>
+                {/* 生成时间（等级在上方「总体评价等级」区改） */}
+                {reportAt ? (
+                  <p className="text-xs text-slate-400">报告生成于 {relativeTime(reportAt)}</p>
+                ) : null}
               </div>
             ) : (
               <div className="p-5 text-sm text-slate-400">
-                还没有评课报告。填写上方的听课记录（或点语音口述），再点「AI 生成评课」。
+                还没有评课报告。填写课堂情况记录（或点语音口述）、选定总体评价等级，再点「AI 生成评课」。
               </div>
             )}
           </Card>
@@ -524,12 +546,6 @@ export default function ObservationEdit() {
               {isNew ? '保存记录' : '保存修改'}
             </Button>
           </div>
-
-          {form.overallGrade ? (
-            <p className="pb-2 text-right text-xs text-slate-400">
-              当前等级：{overallGradeLabel(form.overallGrade)}
-            </p>
-          ) : null}
         </>
       )}
     </div>

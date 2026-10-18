@@ -329,6 +329,8 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
     const row = fetchWithTeacher(userId, id);
     if (!row) return res.status(404).json({ error: '听评课记录不存在' });
 
+    // 生成前用户已选定的等级优先；其次保留库里已有值；都没有才用 AI 建议预填。
+    const chosenGrade = normalizeOverallGrade(req.body?.overallGrade);
     const report = await runObservationGeneration({
       teacherName: row.teacher_name || (row.teacher_id ? '老师' : '被听课老师'),
       topic: row.topic,
@@ -339,11 +341,11 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
       level: row.level,
       studentName: row.student_name,
       classNotes: row.class_notes,
+      overallGrade: chosenGrade ?? row.overall_grade ?? null,
     });
 
-    // 用户已手选等级则保留，否则用 AI 建议预填（COALESCE 优先取库里已有值）
     const suggested = parseSuggestedGrade(report);
-    const gradeToStore = row.overall_grade ?? suggested;
+    const gradeToStore = chosenGrade ?? row.overall_grade ?? suggested;
 
     db.prepare(
       `UPDATE observations SET report = ?, report_at = datetime('now','localtime'),
@@ -387,6 +389,8 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
   };
 
   try {
+    // 生成前用户已选定的等级优先（AI 据此调整整份评课的内容口径）。
+    const chosenGrade = normalizeOverallGrade(req.body?.overallGrade);
     const params = {
       teacherName: row.teacher_name || (row.teacher_id ? '老师' : '被听课老师'),
       topic: row.topic,
@@ -397,6 +401,7 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
       level: row.level,
       studentName: row.student_name,
       classNotes: row.class_notes,
+      overallGrade: chosenGrade ?? row.overall_grade ?? null,
     };
 
     let full = '';
@@ -408,6 +413,7 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
 
     const report = full.trim();
     const suggested = parseSuggestedGrade(report);
+    const gradeToStore = chosenGrade ?? row.overall_grade ?? suggested;
     db.prepare(
       `UPDATE observations SET report = ?, report_at = datetime('now','localtime'),
         overall_grade = COALESCE(overall_grade, ?),
@@ -415,7 +421,7 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
        WHERE id = ? AND user_id = ?`
     ).run(report, suggested, id, userId);
 
-    send('done', { report, suggestedGrade: suggested, overallGrade: row.overall_grade ?? suggested });
+    send('done', { report, suggestedGrade: suggested, overallGrade: gradeToStore });
   } catch (error: any) {
     const { message } = describeAiError(error);
     log.error({ error: message }, '评课流式生成失败');
