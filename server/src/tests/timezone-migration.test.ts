@@ -129,14 +129,13 @@ describe('新增时间戳的时区正确性', () => {
     const uid = seedUser('tz-insert');
     const stored = (db.prepare('SELECT created_at FROM users WHERE id = ?').get(uid) as any).created_at as string;
 
-    // 与当前北京时间比较，而不是与 UTC 比较
-    const storedAsLocalMs = Date.parse(stored.replace(' ', 'T'));
-    const diff = Math.abs(Date.now() - storedAsLocalMs);
-    assert.ok(diff < 60 * 1000, '存的时间应与北京时间一致，偏差 ' + Math.round(diff / 1000) + ' 秒');
-
-    // 反向校验：把北京时间当 UTC 解析，应超前 8 小时
-    const asUtcMs = toMs(stored);
-    assert.ok(Math.abs(asUtcMs - Date.now() - 8 * HOUR) < 60 * 1000, '按 UTC 解析应超前 8 小时');
+    // 存的是「北京时间」这个不带时区的字符串。
+    // 拿它当 UTC 解析，应正好比当前时刻超前 8 小时。
+    // 用「当 UTC 解析」而不是「按本地解析」，因为后者结果随 runner 时区变化
+    // —— CI 跑在 UTC 上，本地跑在东八区，只有前者在两边都成立。
+    const drift = toMs(stored) - Date.now();
+    assert.ok(Math.abs(drift - 8 * HOUR) < 60 * 1000,
+      '按 UTC 解析应超前 8 小时（即北京时间），实际超前 ' + Math.round(drift / HOUR) + ' 小时');
   });
 
   test('datetime 多修饰符写法仍然可用（待回访的天数窗口）', () => {
