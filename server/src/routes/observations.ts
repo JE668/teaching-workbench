@@ -288,17 +288,22 @@ router.get('/coverage', (req: AuthenticatedRequest, res: Response) => {
       )
       .all(from, to, userId, userId) as any[];
 
-    const today = Date.now();
+    // 「几天没听过课」按北京日历日算，不能拿 UTC 毫秒做差：
+    // observed_at 是用户填的日期串，Date.now() 是 UTC 时刻，两者直接相减
+    // 在 UTC 环境（CI）和东八区（本机）会差出整整 1 天。
+    // 把今天也换算成北京时间再取日期，两边都是 UTC 零点，差值就是整天数。
+    const today = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
     const all = rows.map((r) => {
       const windowCount = Number(r.window_count || 0);
       const last = r.last_observed || null;
+      const lastDay = last ? String(last).slice(0, 10) : null;
       return {
         teacherId: r.teacher_id,
         teacherName: r.teacher_name,
         subject: r.subject ?? null,
         windowCount,
         lastObservedAt: last,
-        daysSince: last ? Math.max(0, Math.round((today - new Date(last).getTime()) / 86_400_000)) : null,
+        daysSince: lastDay ? Math.max(0, Math.round((Date.parse(today) - Date.parse(lastDay)) / 86_400_000)) : null,
       };
     });
 
