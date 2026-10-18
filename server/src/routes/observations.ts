@@ -44,10 +44,17 @@ function ownedTeacherId(userId: number, raw: any): number | null {
   return row ? id : null;
 }
 
-/** 本地日期 → 'YYYY-MM-DD'（与库里 datetime('now','+8 hours') 存的一致） */
+/**
+ * 北京日历日 → 'YYYY-MM-DD'。
+ *
+ * 库里存的是 datetime('now','+8 hours')，所以取「今天」也必须落在东八区。
+ * 容器和 CI 的时区是 UTC，直接读本地日期会在北京 00:00–08:00 取到前一天，
+ * 覆盖率时间窗就整体错开一天。先挪到东八区，再用 UTC 取值读，避免本地时区干扰。
+ */
 function toDateStr(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  const b = new Date(d.getTime() + 8 * 3_600_000);
+  return b.getUTCFullYear() + '-' + p(b.getUTCMonth() + 1) + '-' + p(b.getUTCDate());
 }
 
 /** 覆盖率时间窗天数：默认 90 天，上限 10 年，非法值回退默认 */

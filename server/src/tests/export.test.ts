@@ -102,9 +102,11 @@ describe('导出接口', () => {
     const s = await createStudent(token, { name: '区间测试' });
     await createFollowUp(token, { studentId: s.id, studentName: '区间测试', topic: '区间内' });
 
-    const today = new Date();
+    // created_at 是 datetime('now','+8 hours')，所以区间端点也得按北京日历日取，
+    // 否则 CI（UTC）在北京 00:00–08:00 会算到前一天，把今天的记录挤到窗外。
+    const beijingNow = new Date(Date.now() + 8 * 3_600_000);
     const p = (n: number) => String(n).padStart(2, '0');
-    const iso = today.getFullYear() + '-' + p(today.getMonth() + 1) + '-' + p(today.getDate());
+    const iso = beijingNow.getUTCFullYear() + '-' + p(beijingNow.getUTCMonth() + 1) + '-' + p(beijingNow.getUTCDate());
 
     const inside = await fetchExport('/api/students/' + s.id + '/export?from=' + iso + '&to=' + iso);
     assert.match(inside.text, /区间内/);
