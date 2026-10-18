@@ -1,5 +1,6 @@
 import { getSharedClient, describeAiError } from './ai.js';
 import { getAiConfig } from '../config/settings.js';
+import { OVERALL_GRADE_LABELS } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 
 /**
@@ -13,6 +14,9 @@ import { log } from '../utils/logger.js';
  *   - 综合评价与建议（亮点 / 待优化 / 建议 / 总体等级）
  * 这样整段复制进 Word 即对齐，不用二次排版。
  */
+
+/** 总体评价等级（与 web 端 OverallGrade 保持一致） */
+export type Grade = 'excellent' | 'good' | 'pass' | 'needs_work';
 
 export interface ObservationReportParams {
   /** 被听课老师姓名 */
@@ -31,7 +35,17 @@ export interface ObservationReportParams {
   studentName?: string | null;
   /** 老师提供的课后课堂情况记录（评课的核心依据；可含课堂实录，也常是老师课后回访的内容） */
   classNotes: string;
+  /** 生成前用户已选定的总体评价等级；AI 据此调整内容口径，不再自行判断 */
+  overallGrade?: Grade | null;
 }
+
+/** 各等级对应的内容口径 —— 选等级不只是改一行结论，整份评课的详略都要跟它走 */
+const GRADE_TONE: Record<Grade, string> = {
+  excellent: '优秀：8 个维度以具体亮点为主，"有待优化的部分"只写 1 点，且属于打磨层面的提升、措辞轻微。',
+  good: '良好：亮点与不足大体平衡，"有待优化的部分"写 1-2 点，教学建议与之对应。',
+  pass: '合格：优点点到为止，"有待优化的部分"写 2-3 点并具体到做法，教学建议要可落地。',
+  needs_work: '有待提高：优点只用一句话带过，"有待优化的部分"写 2-3 点、直指问题所在，教学建议要具体、充分、可逐步执行。',
+};
 
 // 8 个评课维度（与 Word 表"项目"列一一对应）
 export const OBSERVATION_DIMENSIONS = [
@@ -68,6 +82,18 @@ export function buildObservationPrompt(p: ObservationReportParams): string {
 
   const notes = p.classNotes || '（课堂情况记录为空：请依据课题、课型与学生水平，给出与该课型常规情形相符的评价，不要声明信息缺失）';
 
+  // 用户已在生成前选定总体评价等级时，整份评课的内容口径都要跟它走，
+  // 而不是照常让 AI 自行判断、最后只改一行结论。
+  const gradeLabel = p.overallGrade ? OVERALL_GRADE_LABELS[p.overallGrade] : null;
+  const gradeBlock: string[] = gradeLabel
+    ? [
+        '# 总体评价等级（你已确定，不要改判）',
+        '这节课的总体评价等级为「' + gradeLabel + '」。',
+        GRADE_TONE[p.overallGrade!],
+        '',
+      ]
+    : [];
+
   return [
     '# 角色',
     '你是一位经验丰富的教研员，擅长旁听 1对1 课堂并现场书写专业、具体、可落地的评课意见。',
@@ -83,6 +109,7 @@ export function buildObservationPrompt(p: ObservationReportParams): string {
     '# 老师提供的课堂情况记录（评课的主要依据）',
     notes,
     '',
+    ...gradeBlock,
     '# 评课维度（对应 Word 表，需逐项点评）',
     '1、教学目标：是否目标明确、符合课程标准及学生实际；是否体现知识、能力、情感态度与价值观的有机统一。',
     '2、教学内容：是否科学准确、重难点突出；是否联系实际、注重拓展；容量是否适中、安排是否合理。',
@@ -104,7 +131,10 @@ export function buildObservationPrompt(p: ObservationReportParams): string {
       '避免带有指责或情绪化色彩的措辞（如"实在不应该""不应该出现"）。',
     '6. 只输出纯文本：**禁止**任何 Markdown 标记（#、*、-、>、`）、代码块、表情符号。',
     '7. 前 8 个维度每项只写**一句话**，句首带维度名与全角冒号（如"教学目标：……"）。',
-    '8. 综合评价与建议分四小点：本节课亮点（分点）、有待优化的部分（分点）、教学建议（1-2 点、可落地）、总体评价等级（从 优秀 / 良好 / 合格 / 有待提高 中选一个）。',
+    '8. 综合评价与建议分四小点：本节课亮点（分点）、有待优化的部分（分点）、教学建议（1-2 点、可落地）、总体评价等级。' +
+      (gradeLabel
+        ? '总体评价等级直接填「' + gradeLabel + '」，不要改判，也不要另行判断。'
+        : '总体评价等级从 优秀 / 良好 / 合格 / 有待提高 中选一个。'),
     '9. 直接输出正文，不要任何前言、结语或额外说明，全程中文。',
     '',
     '# 输出格式（务必按此排版）',
@@ -118,7 +148,7 @@ export function buildObservationPrompt(p: ObservationReportParams): string {
     '1. ……',
     '三、教学建议：',
     '1. ……',
-    '四、总体评价等级：（优秀 / 良好 / 合格 / 有待提高 中填一个）',
+    '四、总体评价等级：' + (gradeLabel ? gradeLabel : '（优秀 / 良好 / 合格 / 有待提高 中填一个）'),
   ].join('\n');
 }
 

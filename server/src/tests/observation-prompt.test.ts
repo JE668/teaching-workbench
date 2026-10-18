@@ -88,6 +88,51 @@ describe('评课提示词', () => {
   });
 });
 
+describe('生成前选定总体评价等级', () => {
+  const p = {
+    teacherName: '王老师',
+    topic: '分数加减法',
+    lessonTypeLabel: '新授课',
+    classNotes: '老师用通分法讲解，学生反应良好。',
+  };
+
+  const CASES = [
+    { grade: 'excellent', label: '优秀', tone: '打磨层面的提升' },
+    { grade: 'good', label: '良好', tone: '大体平衡' },
+    { grade: 'pass', label: '合格', tone: '优点点到为止' },
+    { grade: 'needs_work', label: '有待提高', tone: '直指问题所在' },
+  ] as const;
+
+  for (const { grade, label, tone } of CASES) {
+    test(grade + ' → 提示词写明等级、内容与结论都锁定为「' + label + '」', () => {
+      const prompt = buildObservationPrompt({ ...p, overallGrade: grade });
+
+      // 独立成节的强约束
+      assert.ok(prompt.includes('# 总体评价等级（你已确定，不要改判）'));
+      assert.ok(prompt.includes('这节课的总体评价等级为「' + label + '」'));
+      assert.ok(prompt.includes(tone), '应给出该等级对应的内容口径：' + tone);
+      // 硬性要求里明确不许改判
+      assert.ok(prompt.includes('总体评价等级直接填「' + label + '」，不要改判'));
+      // 输出格式模板里直接预填，避免模型自己再选一次
+      assert.ok(prompt.includes('四、总体评价等级：' + label));
+      // 不该再出现"从中选一个"的自由选项
+      assert.ok(!prompt.includes('优秀 / 良好 / 合格 / 有待提高 中填一个'));
+    });
+  }
+
+  test('四个等级的内容口径互不相同', () => {
+    const tones = CASES.map((c) => buildObservationPrompt({ ...p, overallGrade: c.grade }));
+    assert.equal(new Set(tones).size, 4);
+  });
+
+  test('未选等级：不注入等级约束，保持让 AI 自行判断', () => {
+    const prompt = buildObservationPrompt(p);
+    assert.ok(!prompt.includes('你已确定，不要改判'));
+    assert.ok(prompt.includes('四、总体评价等级：（优秀 / 良好 / 合格 / 有待提高 中填一个）'));
+    assert.ok(!prompt.includes('总体评价等级直接填'));
+  });
+});
+
 describe('建议等级解析', () => {
   test('识别中文等级并映射为代码', () => {
     assert.equal(parseSuggestedGrade('四、总体评价等级：良好'), 'good');
