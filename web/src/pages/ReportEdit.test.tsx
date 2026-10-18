@@ -1,19 +1,27 @@
-import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ReportEdit from './ReportEdit';
 import { renderWithProviders } from '../test/test-utils';
 import { api } from '../api/client';
+import { downloadReportCard } from '../lib/reportCard';
 
 vi.mock('../api/client', () => ({
   api: {
     request: vi.fn(),
     upload: vi.fn(),
+    downloadFile: vi.fn(),
     getToken: vi.fn(() => 'test-token'),
   },
 }));
 
+vi.mock('../lib/reportCard', () => ({
+  downloadReportCard: vi.fn(),
+}));
+
 const request = api.request as Mock;
+const downloadFile = api.downloadFile as Mock;
+const downloadReportCardMock = downloadReportCard as Mock;
 
 const REPORT_ID = 7;
 
@@ -487,5 +495,111 @@ describe('月度报告编辑器', () => {
       const del = request.mock.calls.find(([p, init]) => p === `/reports/${REPORT_ID}` && init?.method === 'DELETE');
       expect(del).toBeDefined();
     });
+  });
+});
+
+describe('月度报告 · 导出', () => {
+  let clickSpy: ReturnType<typeof vi.spyOn>;
+  let anchors: any[];
+
+  beforeEach(() => {
+    // jsdom 没有 objectURL 与真实下载，打桩避免报错
+    (URL as any).createObjectURL = vi.fn(() => 'blob:mock');
+    (URL as any).revokeObjectURL = vi.fn();
+    anchors = [];
+    clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: any) {
+      anchors.push(this);
+    });
+  });
+
+  afterEach(() => {
+    clickSpy.mockRestore();
+    downloadFile.mockReset();
+    downloadReportCardMock.mockReset();
+  });
+
+  const lastAnchor = () => anchors[anchors.length - 1];
+
+  it('导出 Excel 走服务端接口，并用服务端给的文件名保存', async () => {
+    mockStore({ items: [makeItem({ kind: 'summary', content: '凸透镜成像', scheduled_at: '2026-09-06' })] });
+    downloadFile.mockResolvedValue({
+      blob: new Blob(['x']),
+      filename: '李小明 秋季初二物理 9月总结与10月规划.xlsx',
+    });
+    const user = userEvent.setup();
+    render();
+    await screen.findByText('李小明');
+
+    await user.click(screen.getByRole('button', { name: /导出 Excel/ }));
+
+    await waitFor(() => expect(downloadFile).toHaveBeenCalledWith(`/reports/${REPORT_ID}/xlsx`));
+    expect(lastAnchor().download).toBe('李小明 秋季初二物理 9月总结与10月规划.xlsx');
+    expect(await screen.findByText('已导出 Excel')).toBeInTheDocument();
+  });
+
+  it('导出 Excel 失败给出错误提示', async () => {
+    mockStore({ items: [makeItem({ kind: 'summary', content: '凸透镜成像' })] });
+    downloadFile.mockRejectedValue(new Error('导出 Excel 失败'));
+    const user = userEvent.setup();
+    render();
+    await screen.findByText('李小明');
+
+    await user.click(screen.getByRole('button', { name: /导出 Excel/ }));
+    expect(await screen.findByText(/导出 Excel 失败/)).toBeInTheDocument();
+  });
+
+  it('没有任何内容也没有寄语时，导出 Excel 按钮禁用', async () => {
+    mockStore();
+    render();
+    await screen.findByText('李小明');
+    expect(screen.getByRole('button', { name: /导出 Excel/ })).toBeDisabled();
+  });
+
+  it('导出图片按开关只渲染打开的区块，总结行保持表格顺序', async () => {
+    mockStore({
+      report: { plan_enabled: false },
+      items: [
+        makeItem({ kind: 'summary', content: '凸透镜成像', scheduled_at: '2026-09-13' }),
+        makeItem({ kind: 'summary', content: '平面镜成像', scheduled_at: '2026-09-06' }),
+        makeItem({ kind: 'plan', content: '规划块不该出现', scheduled_at: '2026-10-06' }),
+      ],
+    });
+    const user = userEvent.setup();
+    render();
+    await screen.findByText('李小明');
+
+    await user.click(screen.getByRole('button', { name: /导出图片/ }));
+
+    expect(downloadReportCardMock).toHaveBeenCalledTimes(1);
+    const input = downloadReportCardMock.mock.calls[0][0];
+    expect(input.title).toBe('李小明');
+    expect(input.meta).toBe('秋季初二物理 · 2026年10月');
+    expect(input.blocks).toHaveLength(1);
+    expect(input.blocks[0].heading).toBe('9月总结');
+    expect(input.blocks[0].entries.map((e: any) => e.text)).toEqual(['凸透镜成像', '平面镜成像']);
+    expect(downloadReportCardMock.mock.calls[0][1]).toBe('李小明 10月月度报告.png');
+  });
+
+  it('规划块保留时，课程和阶测按日期排在一起', async () => {
+    mockStore({
+      items: [
+        makeItem({ kind: 'summary', content: '凸透镜成像', scheduled_at: '2026-09-06' }),
+        makeItem({ kind: 'plan', content: '密度的测量', scheduled_at: '2026-10-18' }),
+        makeItem({ kind: 'plan', content: '质量和体积', scheduled_at: '2026-10-01' }),
+        makeItem({ kind: 'exam', content: '秋季度第一次阶测安排：时间10月7日', scheduled_at: '2026-10-07' }),
+      ],
+    });
+    const user = userEvent.setup();
+    render();
+    await screen.findByText('李小明');
+
+    await user.click(screen.getByRole('button', { name: /导出图片/ }));
+
+    const input = downloadReportCardMock.mock.calls[0][0];
+    expect(input.blocks).toHaveLength(2);
+    const plan = input.blocks[1];
+    expect(plan.heading).toBe('10月规划');
+    expect(plan.entries.map((e: any) => e.text)).toEqual(['质量和体积', '秋季度第一次阶测安排：时间10月7日', '密度的测量']);
+    expect(plan.entries.map((e: any) => !!e.highlight)).toEqual([false, true, false]);
   });
 });

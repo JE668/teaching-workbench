@@ -7,7 +7,9 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  FileImage,
   FilePlus2,
+  FileSpreadsheet,
   ListPlus,
   PencilLine,
   Plus,
@@ -22,7 +24,8 @@ import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
-import { cn } from '../lib/utils';
+import { cn, saveBlob } from '../lib/utils';
+import { downloadReportCard, type ReportCardBlock, type ReportCardInput } from '../lib/reportCard';
 import {
   ATTENDANCE_OPTIONS,
   CatalogCourseOption,
@@ -74,6 +77,36 @@ const PLAN_COLS: { key: CellKey; label: string; width: string; list?: string[] }
 const cellInputCls =
   'h-8 w-full rounded-lg border border-transparent bg-transparent px-2 text-xs text-slate-700 ' +
   'hover:border-slate-200 focus:border-brand-400 focus:bg-white focus:ring-1 focus:ring-brand-100 outline-none transition';
+
+/** '2026-09' → '9月' */
+function monthLabel(yearMonth: string): string {
+  const m = /^(\d{4})-(\d{1,2})/.exec(String(yearMonth || ''));
+  return m ? `${Number(m[2])}月` : '';
+}
+
+/** '2026-09' → '2026-10' */
+function nextYearMonth(yearMonth: string): string {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(yearMonth || ''));
+  if (!m) return String(yearMonth || '');
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
+}
+
+/** 区块的月份标题：优先用明细里真实的上课日期，取不到用兜底年月 */
+function monthOfItems(dates: string[], fallbackYearMonth: string): string {
+  for (const d of dates) {
+    const m = /^(\d{4})-(\d{1,2})/.exec(String(d || ''));
+    if (m) return `${Number(m[2])}月`;
+  }
+  return monthLabel(fallbackYearMonth);
+}
+
+/** '2026-09' → '2026年9月' */
+function yearMonthText(yearMonth: string): string {
+  const m = /^(\d{4})-(\d{1,2})/.exec(String(yearMonth || ''));
+  return m ? `${m[1]}年${Number(m[2])}月` : String(yearMonth || '');
+}
 
 /** 就地编辑的单元格：失焦时如果值变了才提交 */
 function CellInput({
@@ -152,6 +185,7 @@ export default function ReportEdit() {
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const reload = useCallback(
     async (silent = true) => {
@@ -178,6 +212,69 @@ export default function ReportEdit() {
   const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
   const examItems = useMemo(() => items.filter((i) => i.kind === 'exam'), [items]);
+
+  /** 两个区块的月份标题，跟服务端导出 Excel 的算法保持一致 */
+  const summaryMonth = useMemo(
+    () => monthOfItems(summaryItems.map((i) => i.scheduled_at), report?.year_month ?? ''),
+    [summaryItems, report?.year_month]
+  );
+  const planMonth = useMemo(
+    () => monthOfItems(planItems.map((i) => i.scheduled_at), nextYearMonth(report?.year_month ?? '')),
+    [planItems, report?.year_month]
+  );
+
+  /** 图片卡片输入：关掉哪个开关就不出哪一块 */
+  const cardInput = useMemo<ReportCardInput>(() => {
+    if (!report) return { blocks: [] };
+    const byDate = (d?: string) => d || '9999-12-31';
+    const courseEntry = (i: ReportItem) => ({ date: i.scheduled_at, text: i.content });
+    const blocks: ReportCardBlock[] = [];
+    if (report.summary_enabled) {
+      blocks.push({
+        heading: summaryMonth + '总结',
+        intro: report.summary_intro,
+        entries: summaryItems.map(courseEntry),
+      });
+    }
+    if (report.plan_enabled) {
+      blocks.push({
+        heading: planMonth + '规划',
+        intro: report.plan_intro,
+        entries: [...planItems.map(courseEntry), ...examItems.map((i) => ({ ...courseEntry(i), highlight: true }))].sort(
+          (a, b) => byDate(a.date).localeCompare(byDate(b.date))
+        ),
+      });
+    }
+    const core = [report.term ?? '', report.grade ?? '', report.subject ?? ''].filter(Boolean).join('');
+    return {
+      title: report.student_name,
+      meta: [core, yearMonthText(report.year_month)].filter(Boolean).join(' · '),
+      blocks,
+      farewell: report.farewell,
+      watermark: '星火个性化教学 · 月度总结与课程规划',
+    };
+  }, [report, summaryItems, planItems, examItems, summaryMonth, planMonth]);
+
+  async function downloadExcel() {
+    if (!report) return;
+    setExporting(true);
+    try {
+      const { blob, filename } = await api.downloadFile(`/reports/${report.id}/xlsx`);
+      saveBlob(blob, filename);
+      toast.success('已导出 Excel');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导出 Excel 失败');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function downloadCard() {
+    if (!report) return;
+    const filename = `${report.student_name} ${monthLabel(report.year_month)}月度报告.png`;
+    downloadReportCard(cardInput, filename);
+    toast.success('已导出图片');
+  }
 
   async function patchReport(fields: Record<string, unknown>) {
     if (!report) return;
@@ -332,6 +429,24 @@ export default function ReportEdit() {
             className="h-10 w-32"
             aria-label="学期"
           />
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<FileSpreadsheet className="h-4 w-4" />}
+            loading={exporting}
+            disabled={items.length === 0 && !report.farewell}
+            onClick={() => void downloadExcel()}
+          >
+            导出 Excel
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<FileImage className="h-4 w-4" />}
+            onClick={downloadCard}
+          >
+            导出图片
+          </Button>
           <Button variant="outline" size="sm" icon={<Trash2 className="h-4 w-4 text-red-500" />} onClick={() => setConfirmDelete(true)}>
             删除报告
           </Button>
