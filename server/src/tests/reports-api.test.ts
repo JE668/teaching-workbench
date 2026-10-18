@@ -1,7 +1,8 @@
 import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, req, createUser, createStudent } from './helpers.js';
+import ExcelJS from 'exceljs';
+import { startServer, stopServer, req, url, createUser, createStudent } from './helpers.js';
 
 let token = '';
 let otherToken = '';
@@ -369,5 +370,69 @@ describe('删除整块报告', () => {
     const del = await req('DELETE', `/api/reports/${fresh.id}`, { token: otherToken });
     assert.equal(del.body.deleted, 0);
     assert.equal((await req('GET', `/api/reports/${fresh.id}`, { token })).status, 200);
+  });
+});
+
+describe('导出 Excel', () => {
+  async function downloadXlsx(id: number, auth: string) {
+    const res = await fetch(url(`/api/reports/${id}/xlsx`), {
+      headers: auth ? { Authorization: 'Bearer ' + auth } : undefined,
+    });
+    return { status: res.status, headers: res.headers, buf: Buffer.from(await res.arrayBuffer()) };
+  }
+
+  test('返回 xlsx 二进制与下载头', async () => {
+    const res = await downloadXlsx(report.id, token);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const disp = res.headers.get('content-disposition') || '';
+    assert.match(disp, /filename\*=UTF-8/);
+    assert.ok(decodeURIComponent(disp.split("''")[1]).endsWith('.xlsx'));
+    // xlsx 是 zip，magic 是 PK
+    assert.equal(res.buf.subarray(0, 2).toString(), 'PK');
+    assert.ok(res.buf.length > 2000);
+  });
+
+  test('文件名带学生名与学期年级学科', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-03', term: '春季' });
+    const res = await downloadXlsx(fresh.id, token);
+    const name = decodeURIComponent((res.headers.get('content-disposition') || '').split("''")[1]);
+    assert.equal(name, '一可 春季初二物理 3月总结与4月规划.xlsx');
+  });
+
+  test('未登录 401、非法 id 400、不存在 404', async () => {
+    assert.equal((await downloadXlsx(report.id, '')).status, 401);
+    assert.equal((await req('GET', '/api/reports/abc/xlsx', { token })).status, 400);
+    assert.equal((await req('GET', '/api/reports/999999/xlsx', { token })).status, 404);
+  });
+
+  test('别人建不了的报告导不出', async () => {
+    const res = await downloadXlsx(report.id, otherToken);
+    assert.equal(res.status, 404);
+  });
+
+  test('关掉规划开关时导出的文件里没有规划区块', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-12', term: '秋季' });
+    await req('PATCH', `/api/reports/${fresh.id}`, { token, body: { planEnabled: false } });
+    await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'summary', content: '光的反射', scheduledAt: '2026-12-05', type: '同步' },
+    });
+    await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'plan', content: '不该出现', scheduledAt: '2027-01-02' },
+    });
+
+    const res = await downloadXlsx(fresh.id, token);
+    assert.equal(res.status, 200);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.buf as unknown as ArrayBuffer);
+    const ws = wb.getWorksheet(1)!;
+    assert.equal(ws.getCell(1, 1).text, '一可 秋季初二物理 12月总结');
+    assert.equal(ws.getCell(3, 1).text, '序号');
+    assert.equal(ws.getCell(4, 2).text, '光的反射');
+    assert.equal(ws.getCell(4, 6).text, '12月5日');
+    // 只剩总结块 4 行
+    assert.equal(ws.rowCount, 4);
   });
 });

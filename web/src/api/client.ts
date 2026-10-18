@@ -287,6 +287,11 @@ class ApiClient {
 
   /** 下载文件（返回 Blob，供前端另存） */
   async download(path: string): Promise<Blob> {
+    return (await this.downloadFile(path)).blob;
+  }
+
+  /** 下载文件并带回服务器给的文件名 */
+  async downloadFile(path: string): Promise<{ blob: Blob; filename: string }> {
     const headers: Record<string, string> = {};
     if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
 
@@ -298,7 +303,7 @@ class ApiClient {
       }
       throw new Error(err.error || '下载失败');
     }
-    return res.blob();
+    return { blob: await res.blob(), filename: filenameFromHeaders(res.headers) || '下载文件' };
   }
 
   get(path: string) {
@@ -320,6 +325,21 @@ class ApiClient {
   delete(path: string) {
     return this.request(path, { method: 'DELETE' });
   }
+}
+
+/** 从 Content-Disposition 里取文件名，优先 RFC 5987 的 UTF-8 编码形式 */
+function filenameFromHeaders(headers: Headers): string | null {
+  const raw = headers.get('content-disposition') || '';
+  const encoded = /filename\*\s*=\s*([^';]+)/i.exec(raw)?.[1];
+  if (encoded) {
+    const name = encoded.replace(/^UTF-8''|^utf-8''/i, '');
+    try {
+      return decodeURIComponent(name);
+    } catch {
+      return null;
+    }
+  }
+  return /filename\s*=\s*"?([^";]+)"?/i.exec(raw)?.[1] || null;
 }
 
 export const api = new ApiClient();

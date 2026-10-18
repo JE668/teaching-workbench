@@ -2,6 +2,12 @@ import { Router } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { generateExamSchedule, dateSpan } from '../utils/examSchedule.js';
+import {
+  buildReportXlsx,
+  buildReportFilename,
+  type ReportExcelItem,
+  type ReportExcelInput,
+} from '../utils/reportExcel.js';
 
 /**
  * 月度总结与课程规划。
@@ -200,6 +206,53 @@ router.get('/:id', (req: AuthenticatedRequest, res) => {
     res.json({ report: mapReport(row), items: items.map(mapItem) });
   } catch (error: any) {
     res.status(500).json({ error: '获取月度报告失败', message: error.message });
+  }
+});
+
+/** 导出 Excel：一个学生一份文件，版式对齐老师手维护的模板 */
+router.get('/:id/xlsx', async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
+
+    const report = loadReport(id, userId);
+    if (!report) return res.status(404).json({ error: '月度报告不存在' });
+
+    const items = db
+      .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ? ORDER BY sort, id')
+      .all(id, userId) as any[];
+    const pick = (kind: string) => items.filter((i) => i.kind === kind).map(toExcelItem);
+
+    const input: ReportExcelInput = {
+      studentName: report.student_name,
+      term: report.term,
+      grade: report.grade,
+      subject: report.subject,
+      yearMonth: report.year_month,
+      // 月份标题优先取明细里真实的上课日期，这样「9月总结 + 10月规划」能自然对上
+      summaryMonth: monthOf(pick('summary'), report.year_month),
+      planMonth: monthOf(pick('plan'), nextYearMonth(report.year_month)),
+      summaryEnabled: !!report.summary_enabled,
+      planEnabled: !!report.plan_enabled,
+      summaryIntro: report.summary_intro,
+      planIntro: report.plan_intro,
+      farewell: report.farewell,
+      summaryItems: pick('summary'),
+      planItems: pick('plan'),
+      examItems: pick('exam'),
+    };
+
+    const buf = await buildReportXlsx(input);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(buildReportFilename(input))}`
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (error: any) {
+    res.status(500).json({ error: '导出 Excel 失败', message: error.message });
   }
 });
 
@@ -480,6 +533,46 @@ function loadReport(id: number, userId: number): any | null {
       )
       .get(id, userId) ?? null
   );
+}
+
+/** 明细行 → Excel 输入（列名转 camelCase） */
+function toExcelItem(row: any): ReportExcelItem {
+  return {
+    content: str(row.content),
+    type: str(row.type),
+    score: str(row.score),
+    difficulty: str(row.difficulty),
+    scheduledAt: str(row.scheduled_at),
+    attendance: str(row.attendance),
+    notesDone: str(row.notes_done),
+    mistakesDone: str(row.mistakes_done),
+    homeworkDone: str(row.homework_done),
+    exam: str(row.exam),
+  };
+}
+
+/** 区块的月份标题：优先取第一条明细里真实的上课日期，取不到用兜底年月 */
+function monthOf(items: ReportExcelItem[], fallbackYearMonth: string): string {
+  for (const item of items) {
+    const m = String(item.scheduledAt || '').match(/^(\d{4})-(\d{1,2})/);
+    if (m) return `${Number(m[2])}月`;
+  }
+  return monthLabel(fallbackYearMonth);
+}
+
+/** '2026-09' → '9月' */
+function monthLabel(yearMonth: string): string {
+  const m = /^(\d{4})-(\d{1,2})/.exec(String(yearMonth || ''));
+  return m ? `${Number(m[2])}月` : '';
+}
+
+/** '2026-09' → '2026-10'（总结是本月、规划是下个月的场景） */
+function nextYearMonth(yearMonth: string): string {
+  const m = /^(\d{4})-(\d{1,2})$/.exec(String(yearMonth || ''));
+  if (!m) return String(yearMonth || '');
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
 }
 
 function str(v: unknown): string {
