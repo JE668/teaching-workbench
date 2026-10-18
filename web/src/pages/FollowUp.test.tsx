@@ -687,3 +687,129 @@ describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => 
     });
   });
 });
+
+// ============================================================
+// 家长版精简：完整版生成完之后，再压一版发给家长的短反馈。
+// 关键约束：精简结果只用于发送，绝不能回写完整回访内容。
+// ============================================================
+
+const PARENT_TEXT = '小明家长您好，今天带孩子学了分母不同的分数加减，重点是把分数变成相同分母再相加。孩子能独立算对大多数题，回家做三道巩固题就好。';
+
+/** streamPost 按路径分发：生成接口回完整版，精简接口回家长版 */
+function stubBothStreams() {
+  streamPost.mockImplementation(async (path: string, _body: any, handlers: any) => {
+    if (String(path).includes('/condense/')) {
+      handlers.onDelta?.(PARENT_TEXT);
+      handlers.onDone?.({ content: PARENT_TEXT, wordCount: 60, regenerated: false });
+      return;
+    }
+    handlers.onDelta?.(GENERATED);
+    handlers.onDone?.({ content: GENERATED, wordCount: 175, regenerated: false });
+  });
+}
+
+async function generateOnce(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText(/学生姓名/), '李小明');
+  await user.type(screen.getByLabelText(/课程主题/), '分数加减法运算');
+  await user.type(screen.getByLabelText(/课堂表现/), '专注度较高');
+  await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+  await screen.findByTestId('generated-content');
+}
+
+describe('课后回访 · 家长版精简', () => {
+  it('生成前不显示精简按钮，完整版出来后才出现', async () => {
+    const user = userEvent.setup();
+    stubBothStreams();
+    renderWithProviders(<FollowUp />);
+
+    await fillMinimalForm(user);
+    expect(screen.queryByRole('button', { name: /精简给家长/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+    expect(await screen.findByRole('button', { name: '精简给家长' })).toBeInTheDocument();
+  });
+
+  it('点击精简：请求完整版原文与学生信息，并渲染家长版面板', async () => {
+    const user = userEvent.setup();
+    stubBothStreams();
+    renderWithProviders(<FollowUp />);
+    await generateOnce(user);
+
+    await user.click(screen.getByRole('button', { name: '精简给家长' }));
+
+    await waitFor(() => expect(streamPost).toHaveBeenCalledTimes(2));
+    const call = streamPost.mock.calls[1];
+    expect(String(call[0])).toContain('/condense/stream');
+    expect(call[1].content).toBe(GENERATED.trim());
+    expect(call[1].studentName).toBe('李小明');
+    expect(call[1].topic).toBe('分数加减法运算');
+    // 精简只需要已有内容，不带课次这类生成参数
+    expect(call[1].sessionCount).toBeUndefined();
+
+    expect(await screen.findByText('家长版短反馈')).toBeInTheDocument();
+    expect(screen.getByText(PARENT_TEXT)).toBeInTheDocument();
+    // 明确提示保存的是完整版，避免误以为发了短版就少了记录
+    expect(screen.getByText(/保存与归档的是上方的完整版/)).toBeInTheDocument();
+  });
+
+  it('精简失败：显示可读错误，并可重试', async () => {
+    const user = userEvent.setup();
+    streamPost.mockImplementation(async (path: string, _body: any, handlers: any) => {
+      if (String(path).includes('/condense/')) {
+        handlers.onError?.('上游模型暂不可用');
+        return;
+      }
+      handlers.onDelta?.(GENERATED);
+      handlers.onDone?.({ content: GENERATED, wordCount: 175, regenerated: false });
+    });
+    renderWithProviders(<FollowUp />);
+    await generateOnce(user);
+
+    await user.click(screen.getByRole('button', { name: '精简给家长' }));
+    // 错误同时出现在面板与提示条里，各算一次
+    const errs = await screen.findAllByText('上游模型暂不可用');
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+
+    // 面板里可以原地重试
+    await screen.findByText('家长版短反馈');
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(streamPost).toHaveBeenCalledTimes(3));
+  });
+
+  it('精简后手动改了完整版内容，会提示家长版已过时', async () => {
+    const user = userEvent.setup();
+    stubBothStreams();
+    renderWithProviders(<FollowUp />);
+    await generateOnce(user);
+
+    await user.click(screen.getByRole('button', { name: '精简给家长' }));
+    await screen.findByText(PARENT_TEXT);
+    expect(screen.queryByText(/内容已改/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '编辑' }));
+    await user.type(await screen.findByLabelText('课后回访内容'), '改了几个字');
+    await user.click(screen.getByRole('button', { name: '完成' }));
+
+    expect(await screen.findByText(/内容已改/)).toBeInTheDocument();
+  });
+
+  it('精简版不回写内容：保存提交与复制用的仍是完整版', async () => {
+    const user = userEvent.setup();
+    stubBothStreams();
+    post.mockResolvedValue({ followup: { id: 1, studentId: 1 } });
+    renderWithProviders(<FollowUp />);
+    await generateOnce(user);
+
+    await user.click(screen.getByRole('button', { name: '精简给家长' }));
+    await screen.findByText(PARENT_TEXT);
+
+    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+
+    const body = post.mock.calls[0][1];
+    expect(body.content).toBe(GENERATED.trim());
+    // 精简版绝不能混进保存载荷
+    expect(body.content).not.toContain('家长您好');
+  });
+});

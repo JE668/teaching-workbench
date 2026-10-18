@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../types/index.js';
 import {
   runFollowUpGeneration,
   runStreamGeneration,
+  runStreamCondense,
   retryGeneration,
   describeAiError,
   isWordCountOk,
@@ -13,12 +14,13 @@ import {
 import { normalizeCourseType, normalizeSessionCount } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
-import { followUpGenerateSchema } from '../utils/schemas.js';
+import { followUpGenerateSchema, followUpCondenseSchema } from '../utils/schemas.js';
 
 /**
  * AI 生成路由（不落库，由前端确认后再保存）：
- *  - POST /generate        非流式
- *  - POST /generate/stream SSE 流式
+ *  - POST /generate            非流式
+ *  - POST /generate/stream     SSE 流式
+ *  - POST /condense/stream     SSE 流式：把已有回访压成家长版短反馈
  */
 const router = Router();
 
@@ -27,6 +29,44 @@ function wordsDistance(n: number): number {
   if (n < MIN_WORDS) return MIN_WORDS - n;
   if (n > MAX_WORDS) return n - MAX_WORDS;
   return 0;
+}
+
+/**
+ * 打开一条 SSE 响应并返回写接口。
+ *
+ * 客户端提前断开检测的坑：不能用 req.on('close') —— 请求体读完后它就触发，
+ * 会误判为断连。res 的 'close' 在响应结束或连接断开时触发，
+ * 配合 writableEnded 才能区分"正常结束"和"中途掉线"。
+ */
+function openSse(res: Response) {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  // 关键：禁用 nginx 缓冲，否则流式会被攒成一坨再下发
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  let clientGone = false;
+  res.on('close', () => {
+    if (!res.writableEnded) clientGone = true;
+  });
+
+  const send = (event: string, data: any) => {
+    if (clientGone || res.writableEnded) return;
+    try {
+      res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+    } catch {
+      clientGone = true;
+    }
+  };
+
+  return {
+    send,
+    isGone: () => clientGone,
+    end: () => {
+      if (!res.writableEnded) res.end();
+    },
+  };
 }
 
 /** 校验 AI 生成入参（年级/学科/主题/表现/掌握程度必填，小组课可免姓名） */
@@ -81,29 +121,8 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
   const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
   const courseType = normalizeCourseType(req.body.courseType);
 
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  // 关键：禁用 nginx 缓冲，否则流式会被攒成一坨再下发
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders?.();
-
-  // 客户端提前断开检测。
-  // 注意：不能用 req.on('close') —— 请求体读完后它就会触发，会误判为断连。
-  // res 的 'close' 在响应结束或连接断开时触发，配合 writableEnded 即可区分。
-  let clientGone = false;
-  res.on('close', () => {
-    if (!res.writableEnded) clientGone = true;
-  });
-
-  const send = (event: string, data: any) => {
-    if (clientGone || res.writableEnded) return;
-    try {
-      res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
-    } catch {
-      clientGone = true;
-    }
-  };
+  const sse = openSse(res);
+  const { send } = sse;
 
   const params = {
     studentName: studentName || '',
@@ -121,7 +140,7 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
   try {
     let full = '';
     for await (const delta of runStreamGeneration(params)) {
-      if (clientGone) break; // 客户端已断开，停止消耗
+      if (sse.isGone()) break; // 客户端已断开，停止消耗
       full += delta;
       send('delta', { text: delta });
     }
@@ -152,7 +171,46 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     log.error({ error: message }, 'AI 流式生成失败');
     send('error', { error: message });
   } finally {
-    if (!res.writableEnded) res.end();
+    sse.end();
+  }
+});
+
+/**
+ * 家长版精简（SSE 流式）。
+ *
+ * 输入是"已经生成的完整回访"，输出压成 80-220 字的一段。
+ * 只用于发送，不回写数据库 —— 完整版照旧保存归档。
+ * 事件：delta -> done | error
+ */
+router.post('/condense/stream', validateBody(followUpCondenseSchema), async (req: AuthenticatedRequest, res: Response) => {
+  const content = String(req.body.content || '').trim();
+  if (!content) {
+    return res.status(400).json({ error: '还没有可精简的回访内容，先生成或填写内容' });
+  }
+
+  const sse = openSse(res);
+  const { send } = sse;
+
+  try {
+    let full = '';
+    for await (const delta of runStreamCondense({
+      content,
+      studentName: req.body.studentName,
+      topic: req.body.topic,
+    })) {
+      if (sse.isGone()) break;
+      full += delta;
+      send('delta', { text: delta });
+    }
+
+    const text = full.trim();
+    send('done', { content: text, wordCount: countWords(text) });
+  } catch (error: any) {
+    const { message } = describeAiError(error);
+    log.error({ error: message }, '家长版精简失败');
+    send('error', { error: message });
+  } finally {
+    sse.end();
   }
 });
 

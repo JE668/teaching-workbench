@@ -19,6 +19,8 @@ import {
   Camera,
   Wifi,
   WifiOff,
+  Feather,
+  RotateCcw,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -132,6 +134,15 @@ export default function FollowUp() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => restored?.draft || '');
   const [saving, setSaving] = useState(false);
+
+  // 家长版精简：独立于完整回访，只用于发送，不回写数据库
+  const [parentVersion, setParentVersion] = useState('');
+  const [parentSource, setParentSource] = useState('');
+  const [condensing, setCondensing] = useState(false);
+  const [parentError, setParentError] = useState<string | null>(null);
+  const condenseAbortRef = useRef<AbortController | null>(null);
+  // 精简是基于"精简那一刻的内容"做的，之后内容被改动就提示过时
+  const parentStale = parentVersion.trim().length > 0 && parentSource !== content.trim();
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
@@ -340,6 +351,76 @@ export default function FollowUp() {
     abortRef.current?.abort();
   };
 
+  const cancelCondense = () => {
+    condenseAbortRef.current?.abort();
+  };
+
+  useEffect(() => () => condenseAbortRef.current?.abort(), []);
+
+  // 完整回访被清空时，家长版也没意义了，一并清掉
+  useEffect(() => {
+    if (!content.trim() && (parentVersion || parentError)) {
+      setParentVersion('');
+      setParentSource('');
+      setParentError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content]);
+
+  /**
+   * 把已生成的完整回访压成家长版短反馈（流式）。
+   *
+   * 完整版照旧保存归档，这里只产出一个用于复制/发给家长的短文本。
+   */
+  const condenseForParent = useCallback(async () => {
+    const source = content.trim();
+    if (!source) {
+      toast.error('还没有可精简的回访内容，先生成或填写内容');
+      return;
+    }
+
+    condenseAbortRef.current?.abort();
+    const ac = new AbortController();
+    condenseAbortRef.current = ac;
+    setCondensing(true);
+    setParentError(null);
+    setParentVersion('');
+    setParentSource(source);
+
+    try {
+      await api.streamPost(
+        '/followups/condense/stream',
+        {
+          content: source,
+          studentName: form.studentName.trim() || undefined,
+          topic: form.topic.trim() || undefined,
+        },
+        {
+          onDelta: (text: string) => {
+            setParentVersion((prev) => prev + text);
+          },
+          onDone: () => {
+            toast.success('家长版已生成');
+          },
+          onError: (message: string) => {
+            setParentError(message);
+            toast.error(message);
+          },
+        },
+        ac.signal
+      );
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        const message = err?.message || '精简失败';
+        setParentError(message);
+        toast.error(message);
+      }
+    } finally {
+      setCondensing(false);
+      condenseAbortRef.current = null;
+    }
+  }, [content, form.studentName, form.topic]);
+
   const save = async () => {
     const final = editing ? draft : content;
     if (!final.trim()) return;
@@ -421,11 +502,12 @@ export default function FollowUp() {
   /** 手机上直接拉起系统分享面板 → 微信，省掉"复制→切微信→找会话" */
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
-  const handleShare = async () => {
-    const text = editing ? draft : content;
-    if (!text.trim()) return;
+  /** 分享任意一段文本；不传就分享当前完整回访 */
+  const handleShare = async (text?: string) => {
+    const body = (text !== undefined ? text : editing ? draft : content).trim();
+    if (!body) return;
     try {
-      await navigator.share({ title: '课后回访', text });
+      await navigator.share({ title: '课后回访', text: body });
     } catch (err: any) {
       // 用户取消（AbortError）不算失败，不打扰
       if (err?.name !== 'AbortError') {
@@ -1131,6 +1213,86 @@ export default function FollowUp() {
                   首轮字数不达标，正在重新生成…
                 </p>
               )}
+
+              {/* 完整版出来之后，再压一版发给家长的短反馈 */}
+              {content && !generating && (
+                <Button
+                  variant="secondary"
+                  className="mt-3 w-full"
+                  loading={condensing}
+                  onClick={condenseForParent}
+                  icon={!condensing ? <Feather className="h-4 w-4" /> : undefined}
+                >
+                  {condensing
+                    ? '正在精简…'
+                    : parentVersion.trim()
+                    ? '重新精简给家长'
+                    : '精简给家长'}
+                </Button>
+              )}
+
+              {(parentVersion.trim() || parentError) && (
+                <div className="mt-4 rounded-xl bg-white p-4 ring-1 ring-brand-200">
+                  <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-brand-600">
+                      <Feather className="h-3.5 w-3.5" />
+                      家长版短反馈
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {parentStale && (
+                        <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                          内容已改，建议重新精简
+                        </span>
+                      )}
+                      {parentVersion.trim() ? (
+                        <>
+                          <button
+                            onClick={() => copyText(parentVersion.trim())}
+                            className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-200"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                            复制
+                          </button>
+                          {canShare && (
+                            <button
+                              onClick={() => handleShare(parentVersion.trim())}
+                              className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100"
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                              发给家长
+                            </button>
+                          )}
+                        </>
+                      ) : parentError && !condensing ? (
+                        <button
+                          onClick={condenseForParent}
+                          className="flex items-center gap-1 rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-600 ring-1 ring-rose-200 transition-colors hover:bg-rose-100"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          重试
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {parentError && !parentVersion.trim() ? (
+                    <p className="flex items-start gap-1.5 text-xs text-rose-500">
+                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {parentError}
+                    </p>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-sm leading-[1.9] text-slate-700">
+                      {parentVersion}
+                    </p>
+                  )}
+
+                  {parentVersion.trim() && !parentStale && (
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      {parentVersion.trim().length} 字 · 保存与归档的是上方的完整版
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </Card>
 
@@ -1166,7 +1328,7 @@ export default function FollowUp() {
                     {/* 手机：直接拉起系统分享 → 微信，省掉找会话的步骤与贴错人的风险 */}
                     {canShare && (
                       <button
-                        onClick={handleShare}
+                        onClick={() => handleShare()}
                         title="分享到微信等应用"
                         className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100"
                       >
@@ -1175,7 +1337,16 @@ export default function FollowUp() {
                       </button>
                     )}
                     <button
-                      onClick={() => setEditing((v) => !v)}
+                      onClick={() => {
+                        if (editing) {
+                          // 点「完成」要把编辑结果合回 content，否则用户改了就白改了
+                          setContent(draft.trim());
+                        } else {
+                          // 进入编辑时以当前内容为起点，而不是空白文本框
+                          setDraft(content);
+                        }
+                        setEditing(!editing);
+                      }}
                       className="flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-200"
                     >
                       {editing ? <Check className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
@@ -1208,6 +1379,8 @@ export default function FollowUp() {
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     rows={16}
+                    aria-label="课后回访内容"
+                    placeholder="在这里直接修改回访内容"
                     className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm leading-relaxed outline-none transition-all focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
                   />
                 ) : (
