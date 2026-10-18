@@ -19,6 +19,7 @@ const ObservationEdit = lazy(() => import('./pages/ObservationEdit'));
 const ObservationStats = lazy(() => import('./pages/ObservationStats'));
 const ObservationReplyBoard = lazy(() => import('./pages/ObservationReplyBoard'));
 const Settings = lazy(() => import('./pages/Settings'));
+const Catalog = lazy(() => import('./pages/Catalog'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -74,6 +75,7 @@ function AppRoutes() {
           <Route path="observations/reply-board" element={<ObservationReplyBoard />} />
           <Route path="observations/:id" element={<ObservationEdit />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="catalog" element={<Catalog />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
