@@ -5,6 +5,8 @@ import JSZip from 'jszip';
 import { startServer, stopServer, req, createUser, url } from './helpers.js';
 import { setObservationGenerator, resetObservationGenerator } from '../services/observation.js';
 import { parseObservationReport } from '../utils/observationDocx.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const REPORT = [
   '【听课人评价】',
@@ -27,6 +29,66 @@ const REPORT = [
   '1. 分层布置练习。',
   '四、总体评价等级：良好',
 ].join('\n');
+
+/**
+ * 部署资产回归。
+ *
+ * 事故：Dockerfile 只 COPY 了 dist/，漏了 templates/ —— 本地和测试环境
+ * 模板文件都在，所以上面所有测试都通过，只有线上容器 ENOENT、Word 导出 500。
+ *
+ * 这两个用例把「模板必须能被找到」变成可验证的事：
+ *   1. 文件确实在仓库里，且不在 .dockerignore 的排除范围内
+ *   2. 缺文件时抛的是可定位的错误（而不是裸 ENOENT 混进 500 堆栈）
+ */
+describe('Word 导出模板资产（部署回归）', () => {
+  test('模板文件存在，且不会被 .dockerignore 排除', () => {
+    const tpl = path.resolve('templates', 'observation-template.docx');
+    assert.ok(fs.existsSync(tpl), '缺少 Word 模板文件：server/' + path.relative(process.cwd(), tpl));
+
+    const dir = path.dirname(tpl);
+    const ignore = path.resolve(process.cwd(), '.dockerignore');
+    if (!fs.existsSync(ignore)) return;
+
+    const patterns = fs
+      .readFileSync(ignore, 'utf8')
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'));
+
+    for (const p of patterns) {
+      // .dockerignore 是 glob：目录名、或该目录下的所有文件，都会被排除
+      const dirOnly = p.replace(/\/\*+$/, '');
+      if (dirOnly && tpl.startsWith(dir + path.sep + dirOnly) || tpl.endsWith(dirOnly)) {
+        assert.fail('.dockerignore 排除了模板所在目录：' + p + '（生产镜像将缺失模板，Word 导出 500）');
+      }
+    }
+  });
+
+  test('模板缺失时报错能直接定位原因', async () => {
+    const docx = await import('../utils/observationDocx.js');
+    const realExists = fs.existsSync;
+    let calledWith = null as unknown as string;
+
+    try {
+      fs.existsSync = ((p: any) => {
+        calledWith = String(p);
+        return calledWith.endsWith('observation-template.docx') ? false : (realExists as any)(p);
+      }) as any;
+
+      await assert.rejects(
+        () => docx.buildObservationDocx({
+          teacher: '王老师', time: '', topic: '', type: '',
+          evals: [], highlight: '', optimize: '', suggest: '', grade: '', signature: '',
+        }),
+        /Word 模板缺失/,
+      );
+    } finally {
+      fs.existsSync = realExists as any;
+    }
+
+    assert.ok(String(calledWith).endsWith('templates' + path.sep + 'observation-template.docx'));
+  });
+});
 
 describe('parseObservationReport（纯解析，容错）', () => {
   test('解析出 8 项 + 综合四块 + 等级', () => {

@@ -15,9 +15,26 @@ import { OBSERVATION_DIMENSIONS } from '../services/observation.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let cachedTemplate: Buffer | null = null;
 
+/**
+ * 编译产物落在 dist/utils/ 下，模板在 server/templates/。
+ * 这条相对路径依赖 Dockerfile 把 templates/ 一并 COPY 进生产镜像 ——
+ * 漏掉它时本地和测试环境都有文件、测试照样全绿，只有线上会 ENOENT，
+ * 所以这里给出能直接定位原因的报错，而不是一个裸的 ENOENT。
+ */
+function templatePath(): string {
+  return path.resolve(__dirname, '../../templates/observation-template.docx');
+}
+
 function loadTemplateBuffer(): Buffer {
   if (!cachedTemplate) {
-    const p = path.resolve(__dirname, '../../templates/observation-template.docx');
+    const p = templatePath();
+    if (!fs.existsSync(p)) {
+      throw new Error(
+        'Word 模板缺失：' + p +
+          '。请确认部署产物包含 server/templates/ 目录' +
+          '（Dockerfile 需要 COPY --from=build /app/templates ./templates 这一步）。'
+      );
+    }
     cachedTemplate = fs.readFileSync(p);
   }
   return cachedTemplate;
