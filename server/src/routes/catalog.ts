@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Response } from 'express';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import multer from 'multer';
@@ -6,6 +7,8 @@ import ExcelJS from 'exceljs';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { parseCatalogWorkbook, type Band } from '../utils/catalogParse.js';
+import { suggestMasteryStars } from '../services/catalogStar.js';
+import { STAR_SCOPE_LIMIT } from '../utils/catalogStar.js';
 
 /**
  * 全年课程体系目录。
@@ -198,6 +201,121 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
   } catch (error: any) {
     res.status(500).json({ error: '查询课程目录失败', message: error.message });
   }
+});
+
+/**
+ * AI 批量定掌握星级（SSE）。
+ *
+ * 老师手点几百门课定档不现实，让模型先给一档，回来照表改。
+ * 按当前筛选范围取未定档的课程，分批送模型，每批落库一次——
+ * 中途断了再点一次只补剩下的，不会重复定档。
+ *
+ * 事件：start → progress × N → done | error
+ */
+router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  let clientGone = false;
+  res.on('close', () => {
+    if (!res.writableEnded) clientGone = true;
+  });
+  const send = (event: string, data: unknown) => {
+    if (clientGone || res.writableEnded) return;
+    try {
+      res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+    } catch {
+      clientGone = true;
+    }
+  };
+
+  (async () => {
+    try {
+      const userId = req.userId!;
+      const body = req.body || {};
+      // 默认只补未定档的：老师手改过的不会被 AI 覆盖
+      const onlyEmpty = body.onlyEmpty !== false;
+      const limit = Math.min(
+        Math.max(Math.floor(Number(body.limit) || STAR_SCOPE_LIMIT), 1),
+        STAR_SCOPE_LIMIT
+      );
+
+      const where = ['user_id = ?'];
+      const params: unknown[] = [userId];
+      for (const key of ['grade', 'subject', 'term', 'track', 'type'] as const) {
+        const v = clean(body[key]).trim();
+        if (v) {
+          where.push(key + ' = ?');
+          params.push(v);
+        }
+      }
+      if (onlyEmpty) where.push('mastery_star IS NULL');
+
+      const rows = db
+        .prepare(
+          `SELECT id, content, type, score, difficulty, impact, section, grade, subject, term, track
+           FROM course_catalog
+           WHERE ${where.join(' AND ')}
+           ORDER BY grade, subject, term, track, seq, id
+           LIMIT ?`
+        )
+        .all(...params, limit) as any[];
+
+      send('start', { total: rows.length, limit, onlyEmpty });
+      if (!rows.length) {
+        send('done', { total: 0, batches: 0, updated: 0, model: '' });
+        return;
+      }
+
+      // onlyEmpty 时加 IS NULL 守卫：老师手改过的不被 AI 覆盖；
+      // 关了就重定全部，连已定档的一起换。
+      const updateStar = db.prepare(
+        `UPDATE course_catalog SET mastery_star = ?, updated_at = datetime('now', '+8 hours')
+         WHERE id = ? AND user_id = ?` +
+          (onlyEmpty ? ' AND mastery_star IS NULL' : '')
+      );
+
+      let updated = 0;
+      const result = await suggestMasteryStars(
+        rows.map((r) => ({
+          id: Number(r.id),
+          content: String(r.content || ''),
+          type: String(r.type || ''),
+          score: String(r.score || ''),
+          difficulty: String(r.difficulty || ''),
+          impact: String(r.impact || ''),
+          section: String(r.section || ''),
+        })),
+        (batch, totalBatches, decisions) => {
+          if (clientGone) throw new Error('客户端已断开');
+          const written = db.transaction(() => {
+            let n = 0;
+            for (const d of decisions) {
+              n += updateStar.run(d.star, d.id, userId).changes;
+            }
+            return n;
+          })();
+          updated += written;
+          send('progress', { batch, totalBatches, updated, total: rows.length });
+        },
+        {
+          grade: clean(body.grade).trim() || undefined,
+          subject: clean(body.subject).trim() || undefined,
+          term: clean(body.term).trim() || undefined,
+          track: clean(body.track).trim() || undefined,
+        }
+      );
+
+      send('done', result);
+    } catch (error: any) {
+      send('error', { error: String(error?.message || 'AI 定档失败'), batch: error?.batch || null });
+    } finally {
+      if (!res.writableEnded) res.end();
+    }
+  })();
 });
 
 export function mapCourse(row: any) {

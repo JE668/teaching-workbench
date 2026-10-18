@@ -7,6 +7,9 @@ import {
   RotateCcw,
   Star,
   Search,
+  Sparkles,
+  Loader2,
+  X,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -77,6 +80,14 @@ interface SheetSummary {
   subject: string;
   courses: number;
   error?: string;
+}
+
+/** AI 批量定档的进度 */
+interface SuggestProgress {
+  batch: number;
+  totalBatches: number;
+  done: number;
+  total: number;
 }
 
 type ImportResult = {
@@ -230,6 +241,68 @@ export default function Catalog() {
     }
   };
 
+  // AI 批量定掌握星级
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestInfo, setSuggestInfo] = useState<SuggestProgress | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * 按当前筛选范围让 AI 给未定档的课程定档。
+   * 走 SSE 拿进度；中途断了再点一次只补剩下的，不会重复定档。
+   */
+  const runSuggest = async () => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setSuggesting(true);
+    setSuggestInfo(null);
+    let updated = 0;
+    let total = 0;
+    let failed = false;
+
+    try {
+      await api.streamPostRaw(
+        '/catalog/courses/suggest-stars',
+        { grade, subject, term, track, type },
+        {
+          onEvent: (event, data) => {
+            if (event === 'start') {
+              total = Number(data.total || 0);
+              setSuggestInfo({ batch: 0, totalBatches: 0, done: 0, total });
+            } else if (event === 'progress') {
+              updated = Number(data.updated || 0);
+              setSuggestInfo({
+                batch: Number(data.batch || 0),
+                totalBatches: Number(data.totalBatches || 0),
+                done: updated,
+                total: Number(data.total || total),
+              });
+            } else if (event === 'error') {
+              failed = true;
+              toast.error(data.error || 'AI 定档失败');
+            } else if (event === 'done') {
+              updated = Number(data.updated || 0);
+            }
+          },
+        },
+        controller.signal
+      );
+      await reload();
+      if (!failed) {
+        toast.success(total ? 'AI 已定档 ' + updated + ' 门，点星星可以修改' : '没有待定档的课程');
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') toast.error(e.message || 'AI 定档失败');
+    } finally {
+      abortRef.current = null;
+      setSuggesting(false);
+      setSuggestInfo(null);
+    }
+  };
+
+  const cancelSuggest = () => {
+    abortRef.current?.abort();
+  };
+
   const filtered = courses.filter(
     (c) =>
       (!grade || c.grade === grade) &&
@@ -246,6 +319,9 @@ export default function Catalog() {
     if (!byGroup.has(key)) byGroup.set(key, []);
     byGroup.get(key)!.push(c);
   }
+
+  /** 当前筛选范围内还没有掌握星期的课程数 */
+  const pendingStars = filtered.filter((c) => c.mastery_star == null).length;
 
   const anyImported = imports.length > 0;
 
@@ -365,9 +441,46 @@ export default function Catalog() {
         </Card>
       ) : (
         <div className="space-y-3">
-          <p className="px-1 text-xs text-slate-400">
-            共 {filtered.length} 条 · 点击星星可直接设掌握星级
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <p className="text-xs text-slate-400">
+              共 {filtered.length} 条 · 待定档 <span className="font-medium text-amber-600">{pendingStars}</span> 条
+              · 点击星星可直接设掌握星级
+            </p>
+            {pendingStars > 0 && (
+              <Button size="sm" onClick={() => void runSuggest()} disabled={suggesting}>
+                {suggesting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {suggesting ? 'AI 定档中' : 'AI 定档'}
+              </Button>
+            )}
+          </div>
+
+          {suggestInfo && suggestInfo.total > 0 && (
+            <Card className="px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm text-slate-600">
+                  <Loader2 size={15} className="animate-spin text-brand-500" />
+                  <span>
+                    AI 正在定档
+                    {suggestInfo.totalBatches > 0
+                      ? ' · 第 ' + suggestInfo.batch + '/' + suggestInfo.totalBatches + ' 批'
+                      : ''}
+                    {' · 已定 ' + suggestInfo.done + ' 门'}
+                  </span>
+                </div>
+                <Button variant="ghost" size="sm" onClick={cancelSuggest}>
+                  <X size={14} />
+                  取消
+                </Button>
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full bg-brand-500 transition-all duration-300"
+                  style={{ width: (suggestInfo.done / suggestInfo.total) * 100 + '%' }}
+                />
+              </div>
+            </Card>
+          )}
+
           {[...byGroup.entries()].map(([key, list]) => (
             <Card key={key} className="overflow-hidden">
               <div className="border-b border-slate-100 bg-slate-50/60 px-4 py-2 text-sm font-medium text-slate-600">

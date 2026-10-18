@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Catalog from './Catalog';
 import { renderWithProviders } from '../test/test-utils';
@@ -10,11 +10,13 @@ vi.mock('../api/client', () => ({
     request: vi.fn(),
     upload: vi.fn(),
     getToken: vi.fn(() => 'test-token'),
+    streamPostRaw: vi.fn(),
   },
 }));
 
 const request = api.request as Mock;
 const upload = api.upload as Mock;
+const streamPostRaw = api.streamPostRaw as Mock;
 
 const FACETS = {
   grades: ['高一'],
@@ -107,6 +109,7 @@ async function openImportDialog(user: ReturnType<typeof userEvent.setup>): Promi
 
 beforeEach(() => {
   request.mockReset();
+  streamPostRaw.mockReset();
   upload.mockReset();
 });
 
@@ -298,5 +301,149 @@ describe('课程目录页', () => {
       const del = request.mock.calls.find(([, init]) => init?.method === 'DELETE');
       expect(del?.[0]).toBe('/catalog/imports/1');
     });
+  });
+});
+
+describe('掌握星级 · AI 批量定档', () => {
+  const user = userEvent.setup();
+
+  it('显示待定档数量并露出 AI 定档按钮', async () => {
+    mockApi({
+      courses: [
+        makeCourse({ subject: '物理', course_type: '专题', mastery_star: null }),
+        makeCourse({ subject: '数学', course_type: '专题', mastery_star: 4 }),
+      ],
+      imports: [makeImport()],
+    });
+    renderWithProviders(<Catalog />);
+
+    await screen.findByText(/共 2 条/);
+
+    expect(screen.getByText(/待定档/).querySelector('span')?.textContent).toBe('1');
+    expect(screen.getByText('AI 定档')).toBeInTheDocument();
+  });
+
+  it('当前筛选范围内全部已定档时不出现 AI 定档按钮', async () => {
+    mockApi({
+      courses: [makeCourse({ subject: '物理', course_type: '专题', mastery_star: 4 })],
+      imports: [makeImport()],
+    });
+    renderWithProviders(<Catalog />);
+
+    await screen.findByText(/共 1 条/);
+
+    expect(screen.getByText(/待定档/).querySelector('span')?.textContent).toBe('0');
+    expect(screen.queryByText('AI 定档')).not.toBeInTheDocument();
+  });
+
+  it('点 AI 定档按当前筛选范围发请求，回传进度，完成后刷新列表并提示', async () => {
+    mockApi({
+      courses: [
+        makeCourse({ subject: '物理', course_type: '专题', mastery_star: null }),
+        makeCourse({ subject: '数学', course_type: '专题', mastery_star: 4 }),
+      ],
+      imports: [makeImport()],
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText(/共 2 条/);
+
+    // 让请求挂起，直到断言完「进行中」的界面再回传事件
+    let finish: (() => void) | undefined;
+    streamPostRaw.mockImplementation((_path: string, _body: any, handlers: any) => {
+      handlers.onEvent?.('start', { total: 1, batches: 1 });
+      handlers.onEvent?.('progress', { batch: 1, totalBatches: 1, updated: 1, total: 1 });
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          handlers.onEvent?.('done', { total: 1, batches: 1, updated: 1 });
+          resolve();
+        };
+      });
+    });
+
+    await user.click(screen.getByText('AI 定档'));
+
+    expect(streamPostRaw).toHaveBeenCalledTimes(1);
+    const [path, body, handlers, signal] = streamPostRaw.mock.calls[0];
+    expect(path).toBe('/catalog/courses/suggest-stars');
+    expect(body).toEqual({ grade: '', subject: '', term: '', track: '', type: '' });
+    expect(typeof handlers.onEvent).toBe('function');
+    expect(signal).toBeInstanceOf(AbortSignal);
+
+    // 进行中：按钮转圈、进度面板与取消按钮出现
+    expect(screen.getByText('AI 定档中')).toBeInTheDocument();
+    expect(screen.getByText(/已定 1 门/)).toBeInTheDocument();
+    expect(screen.getByText('取消')).toBeInTheDocument();
+
+    await act(async () => {
+      finish?.();
+    });
+
+    // 完成后提示成功、按钮复位、进度面板收起
+    expect(await screen.findByText(/AI 已定档 1 门/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'AI 定档' })).not.toBeDisabled();
+    expect(screen.queryByText('AI 定档中')).not.toBeInTheDocument();
+    expect(screen.queryByText('取消')).not.toBeInTheDocument();
+  });
+
+  it('点取消会中断 AI 定档，且不弹成功提示', async () => {
+    mockApi({
+      courses: [makeCourse({ subject: '物理', course_type: '专题', mastery_star: null })],
+      imports: [makeImport()],
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText(/共 1 条/);
+
+    streamPostRaw.mockImplementation((_p: string, _b: any, handlers: any, signal?: AbortSignal) => {
+      handlers.onEvent?.('start', { total: 1, batches: 1 });
+      return new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          reject(e);
+        });
+      });
+    });
+
+    await user.click(screen.getByText('AI 定档'));
+    expect(screen.getByText('AI 定档中')).toBeInTheDocument();
+    expect(screen.getByText('取消')).toBeInTheDocument();
+
+    await user.click(screen.getByText('取消'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('AI 定档中')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'AI 定档' })).not.toBeDisabled();
+    });
+    expect(screen.queryByText('取消')).not.toBeInTheDocument();
+    expect(screen.queryByText(/AI 已定档/)).not.toBeInTheDocument();
+  });
+
+  it('AI 回传 error 事件时只报错，不弹成功提示', async () => {
+    mockApi({
+      courses: [makeCourse({ subject: '物理', course_type: '专题', mastery_star: null })],
+      imports: [makeImport()],
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText(/共 1 条/);
+
+    let finish: (() => void) | undefined;
+    streamPostRaw.mockImplementation((_p: string, _b: any, handlers: any) => {
+      handlers.onEvent?.('start', { total: 1, batches: 1 });
+      return new Promise<void>((resolve) => {
+        finish = () => {
+          handlers.onEvent?.('error', { error: '模型返回了无法解析的结果' });
+          resolve();
+        };
+      });
+    });
+
+    await user.click(screen.getByText('AI 定档'));
+    await act(async () => {
+      finish?.();
+    });
+
+    expect(await screen.findByText('模型返回了无法解析的结果')).toBeInTheDocument();
+    expect(screen.queryByText(/AI 已定档/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'AI 定档' })).not.toBeDisabled();
   });
 });
