@@ -44,6 +44,19 @@ function ownedTeacherId(userId: number, raw: any): number | null {
   return row ? id : null;
 }
 
+/** 本地日期 → 'YYYY-MM-DD'（与库里 datetime('now','localtime') 存的一致） */
+function toDateStr(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+/** 覆盖率时间窗天数：默认 90 天，上限 10 年，非法值回退默认 */
+function clampCoverageDays(raw: unknown): number {
+  const n = parseInt(String(raw ?? '90'), 10);
+  if (!Number.isFinite(n) || n <= 0) return 90;
+  return Math.min(3650, n);
+}
+
 function readFields(body: any, userId: number): Record<string, any> {
   const str = (v: any, max?: number) => {
     const s = v != null ? String(v).trim() : '';
@@ -245,6 +258,68 @@ router.get('/reply-metrics', (req: AuthenticatedRequest, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: '获取回复闭环统计失败', message: error.message });
+  }
+});
+
+/**
+ * 听课覆盖率：时间窗内有多少老师至少被听过 1 节课。
+ *
+ * 与 /teacher-stats 的区别：老师统计在有时间窗时会用 HAVING 剔除零行，
+ * 而覆盖率恰恰要**看见**那些窗口内一次都没被听过的老师 —— 这才是管理者关心的信号。
+ * 须在 /:id 之前注册，否则会被当成 id 吃掉。
+ */
+router.get('/coverage', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const days = clampCoverageDays(req.query.days);
+
+    const to = toDateStr(new Date());
+    const from = toDateStr(new Date(Date.now() - (days - 1) * 86_400_000));
+
+    const rows = db
+      .prepare(
+        `SELECT t.id AS teacher_id, t.name AS teacher_name, t.subject AS subject,
+          COUNT(CASE WHEN date(o.observed_at) >= date(?) AND date(o.observed_at) <= date(?) THEN 1 END) AS window_count,
+          MAX(o.observed_at) AS last_observed
+         FROM teachers t
+         LEFT JOIN observations o ON o.teacher_id = t.id AND o.user_id = ?
+         WHERE t.user_id = ?
+         GROUP BY t.id`
+      )
+      .all(from, to, userId, userId) as any[];
+
+    const today = Date.now();
+    const all = rows.map((r) => {
+      const windowCount = Number(r.window_count || 0);
+      const last = r.last_observed || null;
+      return {
+        teacherId: r.teacher_id,
+        teacherName: r.teacher_name,
+        subject: r.subject ?? null,
+        windowCount,
+        lastObservedAt: last,
+        daysSince: last ? Math.max(0, Math.round((today - new Date(last).getTime()) / 86_400_000)) : null,
+      };
+    });
+
+    // 听过课的按次数降序；没听过的把「最该被听的」排最前：
+    // 从未听过课的最前，其次按「距离上次听课」从久到近
+    const observed = all.filter((t) => t.windowCount > 0).sort((a, b) => b.windowCount - a.windowCount);
+    const unobserved = all
+      .filter((t) => t.windowCount === 0)
+      .sort((a, b) => (b.daysSince ?? Infinity) - (a.daysSince ?? Infinity));
+
+    res.json({
+      window: { days, from, to },
+      totalTeachers: all.length,
+      observedCount: observed.length,
+      unobservedCount: unobserved.length,
+      coverage: all.length > 0 ? observed.length / all.length : 0,
+      observed,
+      unobserved,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: '获取听课覆盖率失败', message: error.message });
   }
 });
 
