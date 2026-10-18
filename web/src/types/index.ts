@@ -179,3 +179,27 @@ export interface TeacherStat {
     ungraded: number;
   };
 }
+
+/** 覆盖率维度下的单个老师（与 TeacherStat 不同：这里是"是否被听过"，不是"听了几次"） */
+export interface CoverageTeacher {
+  teacherId: number;
+  teacherName: string;
+  subject: string | null;
+  /** 时间窗内的听课次数 */
+  windowCount: number;
+  /** 全时段最后一次听课日期（窗外名单也要能看出上次是哪天听的） */
+  lastObservedAt: string | null;
+  /** 距离最后一次听课的天数；从未听过课为 null */
+  daysSince: number | null;
+}
+
+export interface CoverageData {
+  window: { days: number; from: string; to: string };
+  totalTeachers: number;
+  observedCount: number;
+  unobservedCount: number;
+  /** observedCount / totalTeachers；无老师时为 0 */
+  coverage: number;
+  observed: CoverageTeacher[];
+  unobserved: CoverageTeacher[];
+}
