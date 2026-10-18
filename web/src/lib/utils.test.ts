@@ -1,5 +1,44 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cn, countWords, formatDate, relativeTime, copyText } from './utils';
+import { cn, countWords, formatDate, relativeTime, copyText, localDateStr, localNowISO } from './utils';
+
+describe('localDateStr / localNowISO', () => {
+  it('按本地年月日取值（用本地分量构造，任何时区下结论都一致）', () => {
+    for (const hour of [0, 1, 5, 12, 23]) {
+      expect(localDateStr(new Date(2026, 9, 18, hour, 0, 0))).toBe('2026-10-18');
+    }
+    expect(localDateStr(new Date(2026, 0, 1, 0, 0, 0))).toBe('2026-01-01');
+    expect(localDateStr(new Date(2025, 11, 31, 23, 59, 59))).toBe('2025-12-31');
+  });
+
+  it('回归：不能用 toISOString 取日期（那在凌晨会退回前一天）', () => {
+    // 只有本地时区不是 UTC 时两者才会分歧；UTC 环境下无法体现，明确跳过而不是假装通过
+    if (new Date().getTimezoneOffset() === 0) return;
+    // 本地凌晨 1 点：UTC 口径是前一天
+    const d = new Date(2026, 9, 18, 1, 0, 0);
+    expect(d.toISOString().slice(0, 10)).toBe('2026-10-17');
+    expect(localDateStr(d)).toBe('2026-10-18');
+  });
+
+  it('默认取当前时刻', () => {
+    expect(localDateStr()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('localNowISO 输出与库里 datetime(now) 一致的格式', () => {
+    expect(localNowISO()).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('localNowISO 不含 T / Z / 毫秒（relativeTime 按本地解析，带这些会算错）', () => {
+    const s = localNowISO();
+    expect(s).not.toContain('T');
+    expect(s).not.toContain('Z');
+    expect(s).not.toContain('.');
+  });
+
+  it('localNowISO 与当前时间一致（按本地解析）', () => {
+    const drift = Math.abs(Date.now() - new Date(localNowISO().replace(' ', 'T')).getTime());
+    expect(drift).toBeLessThan(60_000);
+  });
+});
 
 describe('cn', () => {
   it('合并类名', () => {

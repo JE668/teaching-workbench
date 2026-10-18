@@ -36,6 +36,95 @@ function ensureColumn(table: string, column: string, definition: string): void {
   log.info({ table, column, default: definition }, '数据库迁移：添加列');
 }
 
+/**
+ * 存量数据时区订正（一次性迁移）。
+ *
+ * 事故：SQLite 的 datetime('now','localtime') 依赖容器时区，而 Docker 默认时区是 UTC，
+ * 于是线上库里所有时间戳都存成了 UTC —— 界面上比真实时间慢 8 小时。
+ * 本地开发跑在 macOS 上时区正确，所以本地完全看不出这个问题。
+ *
+ * 现在所有写入都改成显式 '+8 hours'，不再依赖容器时区；
+ * 这个迁移负责把旧库里已经写坏的存量数据补回来。
+ *
+ * 三重保护，避免误伤：
+ *   1) schema_migrations 留痕 —— 只跑一次
+ *   2) 自动判定 —— 只有能确认库里存的是 UTC 才动手；已经是对的库直接跳过
+ *   3) MIGRATE_TZ_FORCE=1 强制执行 —— 数据太旧无法判定时用这个兜底
+ */
+const TZ_FIX_VERSION = '2026_10_18_shift_utc_to_beijing';
+
+/** 需要订正的列：只含服务端自动生成的时间戳。
+ * 注意 observations.observed_at 是用户手填的日期，绝不能挪。 */
+export const SERVER_GENERATED_TIMES: Array<[string, string]> = [
+  ['users', 'created_at'],
+  ['students', 'created_at'],
+  ['students', 'updated_at'],
+  ['followups', 'created_at'],
+  ['followups', 'updated_at'],
+  ['drafts', 'updated_at'],
+  ['settings', 'updated_at'],
+  ['groups', 'created_at'],
+  ['teachers', 'created_at'],
+  ['observations', 'created_at'],
+  ['observations', 'updated_at'],
+  ['observations', 'report_at'],
+];
+
+/** 库里存的最新时间戳，相对「当前 UTC 时刻」的偏差（毫秒）。
+ * 存的是 UTC → 偏差点（刚写过的记录几乎为 0）
+ * 存的是北京时间 → 负 8 小时（把北京时间当 UTC 解析会超前 8 小时） */
+function latestUtcSkewMs(): number | null {
+  let latest: string | null = null;
+  for (const [table, column] of SERVER_GENERATED_TIMES) {
+    const row = db.prepare('SELECT MAX(' + column + ") AS m FROM " + table).get() as any;
+    const m = row?.m ? String(row.m) : null;
+    if (m && (!latest || m > latest)) latest = m;
+  }
+  if (!latest) return null; // 空库，无需订正
+
+  const asUtc = Date.parse(latest.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(asUtc)) return null;
+  return Date.now() - asUtc;
+}
+
+export function migrateTimestampsUtcToLocal(): void {
+  db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+
+  if (db.prepare('SELECT 1 FROM schema_migrations WHERE name = ?').get(TZ_FIX_VERSION)) {
+    return;
+  }
+
+  const skew = latestUtcSkewMs();
+  // 判定门槛：偏差在 0~12 小时之间才认定「库里是 UTC」。
+  // 超过 12 小时说明最后一条记录太旧，无法和「本地库 + 长时间未使用」区分，宁可不动。
+  const shift = process.env.MIGRATE_TZ_FORCE === '1' || (skew !== null && skew >= 0 && skew < 12 * 3600 * 1000);
+
+  if (!shift) {
+    db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, datetime(\'now\', \'+8 hours\'))').run(TZ_FIX_VERSION);
+    log.info({ skewMs: skew, forced: process.env.MIGRATE_TZ_FORCE }, '时区迁移：库内时间戳已是北京时间，跳过订正');
+    return;
+  }
+
+  let rows = 0;
+  const tx = db.transaction(() => {
+    for (const [table, column] of SERVER_GENERATED_TIMES) {
+      const info = db
+        .prepare(
+          'UPDATE ' + table + ' SET ' + column +
+            " = datetime(" + column + ", '+8 hours')" +
+            " WHERE " + column + ' IS NOT NULL AND ' + column + " != ''" +
+            // datetime() 解析不了会返回 NULL，不能拿 NULL 把原值盖掉
+            " AND datetime(" + column + ", '+8 hours') IS NOT NULL"
+        )
+        .run();
+      rows += info.changes;
+    }
+    db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, datetime(\'now\', \'+8 hours\'))').run(TZ_FIX_VERSION);
+  });
+  tx();
+  log.warn({ rows, skewMs: skew, forced: process.env.MIGRATE_TZ_FORCE === '1' }, '时区迁移：已把存量时间戳从 UTC 订正为北京时间');
+}
+
 // 初始化表结构
 export function initDatabase() {
   // 用户表
@@ -45,7 +134,7 @@ export function initDatabase() {
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       preferences TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
     )
   `);
 
@@ -59,8 +148,8 @@ export function initDatabase() {
       subject TEXT NOT NULL,
       phone TEXT,
       notes TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
@@ -82,8 +171,8 @@ export function initDatabase() {
       images TEXT NOT NULL DEFAULT '[]',
       content TEXT NOT NULL,
       word_count INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE SET NULL
     )
@@ -102,7 +191,7 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS drafts (
       user_id INTEGER PRIMARY KEY,
       payload TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
@@ -112,7 +201,7 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
     )
   `);
 
@@ -123,7 +212,7 @@ export function initDatabase() {
       user_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       student_ids TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
@@ -135,7 +224,7 @@ export function initDatabase() {
       user_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       subject TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
@@ -159,8 +248,8 @@ export function initDatabase() {
       overall_grade TEXT,
       status TEXT NOT NULL DEFAULT 'draft',
       teacher_reply TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE SET NULL
     )
@@ -177,6 +266,9 @@ export function initDatabase() {
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');
+
+  // 存量数据时区订正（一次性）
+  migrateTimestampsUtcToLocal();
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_user ON followups(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_student ON followups(student_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_created ON followups(created_at DESC)');

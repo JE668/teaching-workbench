@@ -31,7 +31,7 @@ import { PageSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import Modal from '../components/ui/Modal';
 import { Input } from '../components/ui/Field';
-import { formatDate, relativeTime, copyText, saveBlob, cn } from '../lib/utils';
+import { formatDate, relativeTime, copyText, saveBlob, cn, localDateStr } from '../lib/utils';
 
 interface FollowUpRecord {
   id: number;
@@ -116,7 +116,7 @@ export default function StudentProfile() {
       if (rangeTo) params.set('to', rangeTo);
 
       const blob = await api.download('/students/' + data.student.id + '/export?' + params.toString());
-      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const stamp = localDateStr().replace(/-/g, '');
       saveBlob(blob, data.student.name + '-学习档案-' + stamp + '.' + exportFormat);
 
       toast.success('档案已导出');

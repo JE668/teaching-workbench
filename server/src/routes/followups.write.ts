@@ -193,7 +193,7 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
       const result = db
         .prepare(
           `UPDATE followups
-           SET grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime')
+           SET grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','+8 hours')
            WHERE user_id=? AND batch_id=?`
         )
         .run(
@@ -219,7 +219,7 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
     }
 
     db.prepare(
-      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','localtime') WHERE id=?`
+      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','+8 hours') WHERE id=?`
     ).run(
       studentId ?? existing.student_id,
       studentName ?? existing.student_name,

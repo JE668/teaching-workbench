@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { isoDate } from './dateRange';
 
 /** 合并 Tailwind 类名，处理条件与冲突 */
 export function cn(...inputs: ClassValue[]) {
@@ -44,6 +45,18 @@ export function saveBlob(blob: Blob, filename: string): void {
   document.body.removeChild(a);
   // 延后释放，确保下载已开始
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** 本地日期 → 'YYYY-MM-DD'。
+ * 不能用 toISOString().slice(0,10)：那是 UTC，北京时间凌晨 0-8 点会取到前一天。 */
+export { isoDate as localDateStr } from './dateRange';
+
+/** 当前时刻的本地时间字符串，'YYYY-MM-DD HH:MM:SS'。
+ * 与库里 datetime('now','+8 hours') 的格式一致；
+ * 直接 toISOString() 会带上 Z 且是 UTC，和库里格式对不上。 */
+export function localNowISO(): string {
+  const d = new Date();
+  return isoDate(d) + ' ' + d.toTimeString().slice(0, 8);
 }
 
 /** 格式化日期：2026-10-08 12:30:00 → 10月8日 */
