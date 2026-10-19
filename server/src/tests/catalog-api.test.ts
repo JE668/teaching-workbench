@@ -475,6 +475,54 @@ describe('目录 ↔ 报告打通：课程使用情况', () => {
     assert.equal(otherView.body.usage[String(courseId)].taught, 1);
     assert.equal(otherView.body.usage[String(courseId)].entries[0].student_name, '隔壁班同学');
   });
+
+  test('传 student_id 只算这个学生的进度，非法值回退全量聚合', async () => {
+    const second = await createStudent(token, { name: '进度小红', grade: '高二', subject: '物理' });
+    const rep = await req('POST', '/api/reports', {
+      token,
+      body: { studentId: second.id, yearMonth: '2026-11', term: '秋季' },
+    });
+    await req('POST', `/api/reports/${rep.body.report.id}/items`, {
+      token,
+      body: { kind: 'summary', content: 'A', courseId },
+    });
+    await req('POST', `/api/reports/${rep.body.report.id}/items`, {
+      token,
+      body: { kind: 'plan', content: 'A', courseId },
+    });
+
+    const mine = await req('GET', `/api/catalog/usage?student_id=${second.id}`, { token });
+    assert.equal(mine.status, 200);
+    const u = mine.body.usage[String(courseId)];
+    assert.ok(u, '这个学生的用量也应聚合出来');
+    assert.equal(u.taught, 1);
+    assert.equal(u.planned, 1);
+    assert.equal(u.entries.length, 2);
+    for (const e of u.entries) {
+      assert.equal(e.student_id, second.id);
+      assert.equal(e.student_name, '进度小红');
+      assert.equal(e.year_month, '2026-11');
+    }
+
+    // 另一个学生的口径里看不到小红那两个月
+    const otherMine = await req('GET', `/api/catalog/usage?student_id=${student.id}`, { token });
+    const u2 = otherMine.body.usage[String(courseId)];
+    assert.ok(u2);
+    for (const e of u2.entries) {
+      assert.equal(e.student_id, student.id);
+      assert.notEqual(e.year_month, '2026-11');
+    }
+
+    // 非法值一律忽略，回退成全量聚合
+    for (const bad of ['0', '-1', 'abc', '', '1.5']) {
+      const r = await req('GET', '/api/catalog/usage?student_id=' + bad, { token });
+      assert.equal(r.status, 200);
+      assert.ok(
+        r.body.usage[String(courseId)].entries.length > u.entries.length,
+        'student_id=' + bad + ' 应回退成全量聚合'
+      );
+    }
+  });
 });
 
 describe('导入历史与删除', () => {

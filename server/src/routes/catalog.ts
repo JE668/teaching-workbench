@@ -209,10 +209,15 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
  * 明细行的 kind='summary' 记在「已上的课」，'plan' 记在「下月要上的课」，
  * 于是目录里能看出「已经给几个学生上过了 / 计划给几个学生上」。
  * 一次性返回全量映射，前端按 course_id 自己 join —— 几百门课不需要 N 次请求。
+ *
+ * 传 ?student_id= 时只返回这个学生的：目录页「按学生看进度」模式用，
+ * 聚合口径从「全校区」收窄到「一个人」，数据量和数字含义都跟着变。
  */
 router.get('/usage', (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.userId!;
+    const studentParam = Number(req.query.student_id);
+    const onlyStudent = Number.isInteger(studentParam) && studentParam > 0;
     const rows = db
       .prepare(
         `SELECT ri.course_id AS course_id, ri.kind AS kind, ri.report_id AS report_id,
@@ -221,9 +226,10 @@ router.get('/usage', (req: AuthenticatedRequest, res) => {
          JOIN monthly_reports mr ON mr.id = ri.report_id AND mr.user_id = ri.user_id
          LEFT JOIN students s ON s.id = mr.student_id
          WHERE ri.user_id = ? AND ri.course_id IS NOT NULL AND ri.kind IN ('summary', 'plan')
+               ${onlyStudent ? 'AND mr.student_id = ?' : ''}
          ORDER BY ri.course_id, mr.year_month DESC, s.name`
       )
-      .all(userId) as any[];
+      .all(...(onlyStudent ? [userId, studentParam] : [userId])) as any[];
 
     const usage: Record<string, unknown> = {};
     for (const r of rows) {
