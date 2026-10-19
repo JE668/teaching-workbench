@@ -41,9 +41,10 @@ describe('待回访 · 列表', () => {
     const s = await createStudent(fresh, { name: '很久没回访' });
     const f = await createFollowUp(fresh, { studentId: s.id, studentName: '很久没回访' });
 
-    // 把回访时间改到 20 天前
+    // 把回访时间改到 20 天前。必须用 '+8 hours' 而不是 'localtime'：
+    // 库里统一存北京时间，用 localtime 造的数据在 UTC 的 CI 上会差 8 小时。
     const { db } = await import('../config/database.js');
-    db.prepare("UPDATE followups SET created_at = datetime('now','localtime','-20 days') WHERE id = ?").run(f.id);
+    db.prepare("UPDATE followups SET created_at = datetime('now', '+8 hours', '-20 days') WHERE id = ?").run(f.id);
 
     const within7 = await req('GET', '/api/students/needs-followup?days=7', { token: fresh });
     const names7 = within7.body.students.map((x: any) => x.name);
@@ -57,6 +58,34 @@ describe('待回访 · 列表', () => {
     assert.ok(row.daysSince >= 19 && row.daysSince <= 21, '应给出约 20 天，实际: ' + row.daysSince);
   });
 
+  test('daysSince 按北京日历日计，在北京凌晨也不会少算一天', async () => {
+    const fresh = await createUser('pending-tz');
+    const s = await createStudent(fresh, { name: '时区锚定' });
+    const f = await createFollowUp(fresh, { studentId: s.id, studentName: '时区锚定' });
+    const { db } = await import('../config/database.js');
+
+    // 把 Date.now 钉在「北京 06:00」—— UTC runner 最容易差一天的窗口。
+    // 2026-10-20T22:00Z = 2026-10-21 06:00 北京时间
+    const beijingNowMs = Date.UTC(2026, 9, 20, 22, 0, 0);
+    const realNow = Date.now;
+    Date.now = () => beijingNowMs;
+
+    try {
+      // last_at 存北京时间字符串：正好 20 天前 06:00
+      db.prepare('UPDATE followups SET created_at = ? WHERE id = ?').run('2026-10-01 06:00:00', f.id);
+
+      const res = await req('GET', '/api/students/needs-followup?days=7', { token: fresh });
+      const row = res.body.students.find((x: any) => x.name === '时区锚定');
+      assert.ok(row, '20 天前回访的学生应出现在列表里');
+      // 真实经过正好 20 天整 → 必须正好是 20。
+      // 旧写法用 Date.now()（真实 UTC）去减被当成 UTC 解读的北京字符串，
+      // 在这里会得到 19 天 16 小时 → floor 成 19。
+      assert.equal(row.daysSince, 20, '北京 06:00 时仍应是整 20 天，实际: ' + row.daysSince);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   test('排序：最久没回访的排在前面，从未回访的最靠前', async () => {
     const fresh = await createUser('pending-order');
     const never = await createStudent(fresh, { name: 'A从未回访' });
@@ -64,7 +93,7 @@ describe('待回访 · 列表', () => {
 
     const f = await createFollowUp(fresh, { studentId: old.id, studentName: 'B很久没回访' });
     const { db } = await import('../config/database.js');
-    db.prepare("UPDATE followups SET created_at = datetime('now','localtime','-15 days') WHERE id = ?").run(f.id);
+    db.prepare("UPDATE followups SET created_at = datetime('now', '+8 hours', '-15 days') WHERE id = ?").run(f.id);
 
     const res = await req('GET', '/api/students/needs-followup?days=7', { token: fresh });
     const names = res.body.students.map((x: any) => x.name);

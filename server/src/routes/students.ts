@@ -63,11 +63,19 @@ router.get('/needs-followup', (req: any, res) => {
       )
       .all(userId, '-' + days + ' days') as any[];
 
-    const now = Date.now();
+    // created_at 统一存北京时间字符串（datetime('now','+8 hours')），
+    // new Date(...) 解析出来的 epoch 相当于「把北京墙上时钟当 UTC 解读」，
+    // 比真实时刻多 8 小时。所以这里的 now 也必须是同一个坐标系里的值，
+    // 否则在北京 00:00–08:00 之间会整整少算一天 —— 20 天未回访的提醒
+    // 会推迟 8 小时才触发。本仓库已修过两次同类问题。
+    const now = Date.now() + 8 * 3_600_000;
     const students = rows.map((r) => {
       const lastAt = r.last_at as string | null;
-      // SQLite 存的是本地时间字符串，按本地时间解析
-      const lastMs = lastAt ? new Date(lastAt.replace(' ', 'T')).getTime() : null;
+      // SQLite 存的是北京时间字符串。必须显式按 UTC 解析（补一个 Z）：
+      // 不带偏移量的 datetime 串会被 JS 当成「runner 本地时间」，容器不是
+      // Asia/Shanghai 时就会整体偏移 —— 上面把 now 也挪到北京坐标系后，
+      // 两端就都在同一个坐标系里了。
+      const lastMs = lastAt ? Date.parse(lastAt.replace(' ', 'T') + 'Z') : null;
       return {
         ...mapStudent(r),
         lastFollowUpAt: lastAt,
