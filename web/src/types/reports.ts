@@ -56,7 +56,14 @@ export interface ExamSuggestion {
   date: string;
   ordinal: string;
   prefix: string;
+  /** 阶测行文案，末尾留了「：」给老师补考试时间；带覆盖时会写成「…：覆盖A、B；时间…：」 */
   content: string;
+  /** 这次阶测覆盖的课 */
+  courses: { date: string; content: string }[];
+  /** 覆盖课数 */
+  courseCount: number;
+  /** 覆盖文案；覆盖不到课（比如手动指定跨度落在规划之外）就是空串 */
+  coverage: string;
 }
 
 /** 学期选项（对齐课程体系目录里的取值） */
