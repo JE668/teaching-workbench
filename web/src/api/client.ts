@@ -411,16 +411,26 @@ class ApiClient {
 /** 从 Content-Disposition 里取文件名，优先 RFC 5987 的 UTF-8 编码形式 */
 function filenameFromHeaders(headers: Headers): string | null {
   const raw = headers.get('content-disposition') || '';
-  const encoded = /filename\*\s*=\s*([^';]+)/i.exec(raw)?.[1];
-  if (encoded) {
-    const name = encoded.replace(/^UTF-8''|^utf-8''/i, '');
+
+  // RFC 6266 的编码形式是 filename*=UTF-8''<百分号编码>。
+  // 参数值的分隔符只有 ; 和 ,，而 ' 是合法字符（编码形式本身就是 charset'lang'value），
+  // 所以捕获组只能用 [^;] 截断。写成 [^';] 会在第一个撇号处就断掉，整串只剩 "UTF-8"，
+  // 下载下来的文件会变成无扩展名的 UTF-8 —— 这是真的导出坏掉。
+  const star = /filename\*\s*=\s*([^;,]+)/i.exec(raw)?.[1]?.trim();
+  if (star) {
+    const quoted = star.replace(/^"|"$/g, '');
+    // 编码形式按第三个 ' 之前的内容切出 charset 与 lang，剩下的才是文件名
+    const parts = quoted.split("'");
+    const encoded = parts.length >= 3 ? parts.slice(2).join("'") : quoted;
     try {
-      return decodeURIComponent(name);
+      return decodeURIComponent(encoded);
     } catch {
       return null;
     }
   }
-  return /filename\s*=\s*"?([^";]+)"?/i.exec(raw)?.[1] || null;
+
+  // ASCII 回退：filename="中文或英文.csv" / filename=plain.csv
+  return /filename\s*=\s*"([^"]*)"/i.exec(raw)?.[1] || /filename\s*=\s*([^";,]+)/i.exec(raw)?.[1]?.trim() || null;
 }
 
 export const api = new ApiClient();

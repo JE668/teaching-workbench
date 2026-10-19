@@ -392,3 +392,93 @@ describe('api 客户端 · 登录态失效（401）处理', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 下载文件名的解析。这个函数曾把
+ * `attachment; filename*=UTF-8''%E4%B8%80%E5%8F%AF.xlsx`
+ * 解析成字符串 "UTF-8" —— 捕获组写成 [^';]，在第一个撇号处就断了，
+ * 于是所有 Excel / Word 导出都落成一个无扩展名的文件 UTF-8。
+ * 这里逐个把编码形式里合法的字符都喂进去，确保扩展名不丢。
+ */
+describe('downloadFile · Content-Disposition 文件名解析', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    api.clearAuth();
+  });
+
+  /** 给 downloadFile 挂一个带 Content-Disposition 的响应 */
+  function respond(disposition: string) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['data']),
+        headers: new Headers({ 'Content-Disposition': disposition }),
+      } as any)
+    );
+  }
+
+  it('纯中文名能完整解出（含扩展名）', async () => {
+    respond("attachment; filename*=UTF-8''" + encodeURIComponent('一可 秋季初二物理 9月总结与10月规划.xlsx'));
+    const { filename } = await api.downloadFile('/reports/1/xlsx');
+    expect(filename).toBe('一可 秋季初二物理 9月总结与10月规划.xlsx');
+  });
+
+  it('文件名里带撇号时不被当作分隔符截断', async () => {
+    respond("attachment; filename*=UTF-8''" + encodeURIComponent("O'Brien 学习档案.docx"));
+    const { filename } = await api.downloadFile('/x');
+    expect(filename).toBe("O'Brien 学习档案.docx");
+  });
+
+  it('文件名里带双引号（编码为 %22）时不产生多余引号', async () => {
+    respond("attachment; filename*=UTF-8''" + encodeURIComponent('他说"很好"的成绩单.csv'));
+    const { filename } = await api.downloadFile('/x');
+    expect(filename).toBe('他说"很好"的成绩单.csv');
+  });
+
+  it('文件名里带百分号、括号、中文标点都能原样还原', async () => {
+    const raw = '100% (秋季) 期末复习（一）.xlsx';
+    respond("attachment; filename*=UTF-8''" + encodeURIComponent(raw));
+    expect((await api.downloadFile('/x')).filename).toBe(raw);
+  });
+
+  it('只给 ASCII filename 时走回退分支', async () => {
+    respond('attachment; filename="student-1-followups-20260310.csv"');
+    const { filename } = await api.downloadFile('/x');
+    expect(filename).toBe('student-1-followups-20260310.csv');
+  });
+
+  it('同时给 filename 与 filename* 时优先取 UTF-8 中文名', async () => {
+    respond(
+      'attachment; filename="student-1-followups-20260310.csv"; filename*=UTF-8' +
+        "''" +
+        encodeURIComponent('张三-学习档案-20260310.csv')
+    );
+    expect((await api.downloadFile('/x')).filename).toBe('张三-学习档案-20260310.csv');
+  });
+
+  it('整串被误包进 filename="..." 的畸形头也能救回中文名', async () => {
+    // 历史写法：'attachment; filename="' + exportFilename(...) + '"'，编码名被套在引号里
+    respond(
+      'attachment; filename="student-7-followups-20260310.csv; filename*=UTF-8' +
+        "''" +
+        encodeURIComponent('张三-学习档案-20260310.csv') +
+        '"'
+    );
+    expect((await api.downloadFile('/x')).filename).toBe('张三-学习档案-20260310.csv');
+  });
+
+  it('编码无法解析时回退到默认文件名，绝不返回 "UTF-8"', async () => {
+    respond("attachment; filename*=UTF-8''%E0%A4%A");
+    expect((await api.downloadFile('/x')).filename).toBe('下载文件');
+  });
+
+  it('没有 Content-Disposition 时用默认文件名', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, blob: async () => new Blob(['d']), headers: new Headers() } as any)
+    );
+    expect((await api.downloadFile('/x')).filename).toBe('下载文件');
+  });
+});
