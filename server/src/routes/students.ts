@@ -3,7 +3,7 @@ import { db } from '../config/database.js';
 import { linkOrphansByName } from '../services/linkOrphans.js';
 import { StudentCreate, StudentUpdate } from '../types/index.js';
 import { mapStudent, mapStudents, mapFollowUps } from '../utils/mappers.js';
-import { toMarkdown, toCsv, exportFilename } from '../services/export.js';
+import { toMarkdown, toCsv, contentDisposition } from '../services/export.js';
 import { validateBody } from '../utils/validation.js';
 import { studentCreateSchema, studentUpdateSchema } from '../utils/schemas.js';
 import { parseSections } from '../utils/sections.js';
@@ -186,7 +186,7 @@ router.get('/:id/export', (req: any, res) => {
     const contentType = format === 'csv' ? 'text/csv; charset=utf-8' : 'text/markdown; charset=utf-8';
 
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', 'attachment; filename="' + exportFilename(student, format) + '"');
+    res.setHeader('Content-Disposition', contentDisposition(student, format));
     res.send(body);
   } catch (error: any) {
     res.status(500).json({ error: '导出失败', message: error.message });

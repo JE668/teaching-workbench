@@ -115,11 +115,15 @@ export function toMarkdown(
 /** CSV 单元格转义 */
 function csvCell(value: unknown): string {
   const s = value === null || value === undefined ? '' : String(value);
+  // 以 = + - @ 开头会被 Excel / WPS 当成公式执行（CSV 公式注入）。
+  // 回访正文是 AI 生成 + 老师手填的文本，学生姓名也可能以这些符号开头，
+  // 前置一个制表符让整格按文本处理，跨软件表现一致。
+  const safe = s.length > 1 && /^[ \t]*[=+\-@]/.test(s) ? '\t' + s : s;
   // 含逗号/引号/换行时用双引号包裹，内部引号翻倍
-  if (/[",\n\r]/.test(s)) {
-    return '"' + s.replace(/"/g, '""') + '"';
+  if (/[",\n\r]/.test(safe)) {
+    return '"' + safe.replace(/"/g, '""') + '"';
   }
-  return s;
+  return safe;
 }
 
 /** 生成 CSV（含 BOM，保证 Excel 正确识别 UTF-8） */
@@ -149,11 +153,15 @@ export function toCsv(student: Student, followups: FollowUp[]): string {
   return '\uFEFF' + body + '\r\n';
 }
 
-/** 生成下载用的文件名（ASCII 回退 + UTF-8 名） */
-export function exportFilename(student: Student, format: 'md' | 'csv', now: Date = new Date()): string {
+/**
+ * 生成导出响应的 Content-Disposition 头值：ASCII 回退名 + RFC 6266 的 UTF-8 中文名。
+ * 调用方直接把返回值塞进 setHeader，不要再套一层 filename="..." —— 那会把整串编码名
+ * 当成 ASCII 名的值，中文永远取不到。
+ */
+export function contentDisposition(student: Student, format: 'md' | 'csv', now: Date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = '' + now.getFullYear() + p(now.getMonth() + 1) + p(now.getDate());
   const ascii = 'student-' + student.id + '-followups-' + stamp + '.' + format;
   const pretty = student.name + '-学习档案-' + stamp + '.' + format;
-  return ascii + "; filename*=UTF-8''" + encodeURIComponent(pretty);
+  return 'attachment; filename="' + ascii + '"; filename*=UTF-8' + "''" + encodeURIComponent(pretty);
 }

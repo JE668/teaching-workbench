@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, url, createUser, createStudent, createFollowUp } from './helpers.js';
-import { toMarkdown, toCsv, exportFilename } from '../services/export.js';
+import { toMarkdown, toCsv, contentDisposition } from '../services/export.js';
 
 let token = '';
 
@@ -98,6 +98,19 @@ describe('导出接口', () => {
     assert.match(r.text, /,2,1\/x\.png/, '图片数应为 2');
   });
 
+  test('响应头必须真的能取到中文文件名', async () => {
+    const s = await createStudent(token, { name: '张三' });
+    const r = await fetchExport('/api/students/' + s.id + '/export?format=csv');
+    assert.equal(r.status, 200);
+
+    // 两个参数并列；编码名绝不能被套进 filename="..." 里，否则中文名永远取不到
+    assert.match(r.disposition, /^attachment; filename="student-\d+-followups-\d{8}\.csv"; filename\*=UTF-8''/);
+
+    const encoded = /filename\*=UTF-8''([^;]+)/.exec(r.disposition)?.[1];
+    assert.ok(encoded, '必须给 RFC 6266 的 UTF-8 文件名');
+    assert.match(decodeURIComponent(encoded), /^张三-学习档案-\d{8}\.csv$/);
+  });
+
   test('日期区间过滤生效', async () => {
     const s = await createStudent(token, { name: '区间测试' });
     await createFollowUp(token, { studentId: s.id, studentName: '区间测试', topic: '区间内' });
@@ -187,9 +200,29 @@ describe('导出格式化（单元）', () => {
     assert.match(lines[0], /学生姓名/);
   });
 
-  test('文件名含 ASCII 回退与 UTF-8 中文名', () => {
-    const name = exportFilename(student, 'csv', new Date(2026, 2, 10));
-    assert.match(name, /^student-7-followups-20260310\.csv; filename\*=UTF-8''/);
-    assert.ok(name.includes(encodeURIComponent('张三-学习档案-20260310.csv')));
+  test('Content-Disposition 同时给 ASCII 回退名与 UTF-8 中文名', () => {
+    const header = contentDisposition(student, 'csv', new Date(2026, 2, 10));
+    // 两个参数并列；编码名绝不能再被套进 filename="..." 里，否则中文永远取不到
+    assert.match(header, /^attachment; filename="student-7-followups-20260310\.csv"; filename\*=UTF-8''/);
+    assert.ok(header.includes(encodeURIComponent('张三-学习档案-20260310.csv')));
+    assert.ok(!header.includes('.csv; filename*'), '编码名前必须先用引号闭合 ASCII 名，不能共享引号');
+  });
+
+  test('CSV 里以 = + - @ 开头的单元格不会被当成公式执行', () => {
+    const named: any = { ...student, name: '=-A1' };
+    const evil: any = {
+      ...followups[0],
+      topic: '=HYPERLINK(A1,B1)',
+      performance: '@SUM(A1)',
+      content: ' -1+2',
+      images: ['=cmd'],
+    };
+    const csv = toCsv(named, [evil]).replace('\uFEFF', '');
+
+    // 每个危险格前都要有制表符，让 Excel / WPS 按文本处理
+    for (const cell of ['=-A1', evil.topic, evil.performance, evil.content, evil.images[0]]) {
+      assert.ok(csv.includes('\t' + cell), '以公式符号开头的单元格应前置制表符：' + cell);
+    }
+    assert.ok(!csv.includes('\t初三'), '正常文本不应被加制表符');
   });
 });
