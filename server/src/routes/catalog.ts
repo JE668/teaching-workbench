@@ -9,6 +9,11 @@ import { AuthenticatedRequest } from '../types/index.js';
 import { parseCatalogWorkbook, type Band } from '../utils/catalogParse.js';
 import { suggestMasteryStars } from '../services/catalogStar.js';
 import { STAR_SCOPE_LIMIT } from '../utils/catalogStar.js';
+import {
+  buildCatalogXlsx,
+  buildCatalogFilename,
+  type CatalogExcelInput,
+} from '../utils/catalogExcel.js';
 
 /**
  * 全年课程体系目录。
@@ -173,33 +178,90 @@ function clean(v: unknown): string {
 }
 
 /** 课程目录查询。筛选都是可选的，不传就按用户全量返回。 */
+/**
+ * /courses 和 /xlsx 共用一套筛选口径。
+ *
+ * 目录页在前端本地过滤，导出走服务端；两边各写一份筛选逻辑，迟早会出现
+ * 「导出的比页面上多 / 少几门」。所以收敛成这一个函数。
+ */
+function courseFilter(req: AuthenticatedRequest, userId: number) {
+  const where: string[] = ['user_id = ?'];
+  const params: unknown[] = [userId];
+
+  for (const key of ['grade', 'subject', 'term', 'type', 'track', 'textbook', 'sheet'] as const) {
+    const v = clean(req.query[key]).trim();
+    if (v) {
+      where.push(`${key} = ?`);
+      params.push(v);
+    }
+  }
+  const q = clean(req.query.q).trim();
+  if (q) {
+    // 5 个字段跟前端 filtered 完全一致，教材版本和难度以前搜不到
+    where.push('(content LIKE ? OR section LIKE ? OR textbook LIKE ? OR type LIKE ? OR difficulty LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+  return { clause: where.join(' AND '), params };
+}
+
+/** 目录清单的排序：同页分组顺序，导出出来也是这个顺序 */
+const COURSE_ORDER = 'ORDER BY grade, subject, term, track, seq, id';
+
 router.get('/courses', (req: AuthenticatedRequest, res) => {
   try {
-    const userId = req.userId!;
-    const where: string[] = ['user_id = ?'];
-    const params: unknown[] = [userId];
-
-    for (const key of ['grade', 'subject', 'term', 'type', 'track', 'textbook', 'sheet'] as const) {
-      const v = clean(req.query[key]).trim();
-      if (v) {
-        where.push(`${key} = ?`);
-        params.push(v);
-      }
-    }
-    const q = clean(req.query.q).trim();
-    if (q) {
-      where.push('(content LIKE ? OR section LIKE ?)');
-      params.push(`%${q}%`, `%${q}%`);
-    }
-
+    const { clause, params } = courseFilter(req, req.userId!);
     const limit = Math.min(Math.max(Number(req.query.limit) || 5000, 1), 20000);
-    const sql = `SELECT * FROM course_catalog WHERE ${where.join(' AND ')} ORDER BY grade, subject, term, track, seq, id LIMIT ?`;
+    const sql = `SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER} LIMIT ?`;
     params.push(limit);
 
     const rows = db.prepare(sql).all(...params) as any[];
     res.json({ courses: rows.map(mapCourse), total: rows.length });
   } catch (error: any) {
     res.status(500).json({ error: '查询课程目录失败', message: error.message });
+  }
+});
+
+/**
+ * 导出当前筛选范围的课程目录为 Excel。
+ *
+ * 老师要给家长 / 校区留一份「这学期上哪些课」的清单，以前只能整本拖下来自己删，
+ * 现在筛完直接导出就是那一屏。没有筛选条件时导出全部。
+ */
+router.get('/xlsx', async (req: AuthenticatedRequest, res) => {
+  try {
+    const { clause, params } = courseFilter(req, req.userId!);
+    const rows = db
+      .prepare(`SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER}`)
+      .all(...params) as any[];
+
+    const input: CatalogExcelInput = {
+      title: `课程目录 · 共 ${rows.length} 课`,
+      courses: rows.map((r) => ({
+        grade: r.grade,
+        subject: r.subject,
+        term: r.term,
+        track: r.track,
+        seq: r.seq,
+        section: r.section,
+        content: r.content,
+        type: r.type,
+        score: r.score,
+        difficulty: r.difficulty,
+        textbook: r.textbook,
+        mastery_star: r.mastery_star == null ? null : Number(r.mastery_star),
+      })),
+    };
+
+    const buf = await buildCatalogXlsx(input);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(buildCatalogFilename(input))}`
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (error: any) {
+    res.status(500).json({ error: '导出课程目录失败', message: error.message });
   }
 });
 

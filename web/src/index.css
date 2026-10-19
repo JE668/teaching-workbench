@@ -114,3 +114,15 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ * 打印：把外壳去掉，只留内容。
+ * 侧边栏 / 移动端顶栏 / 抽屉遮罩一律不打印；主内容顶满纸宽。
+ * 页内的具体打印样式（隐藏筛选栏、分页，加页头）由各页面自己用 print-hide / print-show 控制。
+ */
+@media print {
+  aside,
+  .lg\:hidden { display: none !important; }
+  main { margin-left: 0 !important; }
+  body { background: #fff !important; }
+}

@@ -597,3 +597,151 @@ describe('导入历史与删除', () => {
     assert.equal(del.body.deleted, 0);
   });
 });
+
+describe('目录导出 Excel', () => {
+  /** 单轨 sheet：三条课夹一条分节行，教材版本跨行合并 */
+  async function exportFixture() {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('初二物理');
+    const set = (r: number, c: number, v: string) => {
+      ws.getCell(r, c).value = v;
+    };
+    ws.mergeCells(1, 1, 1, 6);
+    set(1, 1, '星火教育个性化  初二物理  秋季  课程目录');
+    ws.mergeCells(2, 1, 2, 6);
+    set(2, 1, '【XX月课程规划】……');
+    ws.mergeCells(3, 1, 4, 1);
+    ws.mergeCells(3, 2, 4, 2);
+    set(3, 1, '教材版本');
+    set(3, 2, '序号');
+    set(3, 3, '辅导内容');
+    set(3, 4, '课程类型');
+    set(3, 5, '学习难度');
+    set(3, 6, '对后续课程影响程度');
+    ws.mergeCells(5, 1, 8, 1);
+    set(5, 1, '沪科版（导出专用）');
+    set(5, 2, '1'); set(5, 3, '声现象'); set(5, 4, '同步'); set(5, 5, '★★'); set(5, 6, '★★');
+    set(6, 2, '2'); set(6, 3, '物态变化'); set(6, 4, '专题'); set(6, 5, '★★★'); set(6, 6, '★★★');
+    // 分节行：辅导内容单元格横向合并 = 这一行是分区标题
+    ws.mergeCells(7, 3, 7, 4);
+    set(7, 3, '秋季第一次阶段性测试');
+    set(8, 2, '3'); set(8, 3, '光现象'); set(8, 4, '专题'); set(8, 5, '★★'); set(8, 6, '★★');
+    return await wb.xlsx.writeBuffer() as any;
+  }
+
+  before(async () => {
+    const r = await req('POST', '/api/catalog/import', {
+      token,
+      raw: form(await exportFixture(), { band: '小初' }),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.coursesImported, 3);
+  });
+
+  /** 导出是二进制，走 fetch 直接取，不能走 JSON 的 req */
+  async function downloadXlsx(query = '') {
+    const res = await fetch(url('/api/catalog/xlsx' + query), {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    return { status: res.status, headers: res.headers, buf: Buffer.from(await res.arrayBuffer()) };
+  }
+
+  async function sheetText(buf: Buffer): Promise<string[]> {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as any);
+    const text: string[] = [];
+    wb.eachSheet((ws) => {
+      ws.eachRow((row) => row.eachCell((cell) => text.push(String(cell.value ?? ''))));
+    });
+    return text;
+  }
+
+  test('未登录 401', async () => {
+    assert.equal((await fetch(url('/api/catalog/xlsx'))).status, 401);
+  });
+
+  test('导出当前筛选范围，文件名是 RFC 5987 的中文编码', async () => {
+    const q = 'grade=初二&subject=物理&term=秋季';
+    const [list, r] = await Promise.all([
+      req('GET', '/api/catalog/courses?' + q, { token }),
+      downloadXlsx('?' + q),
+    ]);
+    assert.equal(r.status, 200);
+    assert.ok(r.headers.get('content-type')?.includes('spreadsheetml'));
+
+    const disposition = r.headers.get('content-disposition') || '';
+    assert.match(disposition, /filename\*=UTF-8''/);
+    assert.equal(
+      decodeURIComponent(/filename\*=UTF-8''([^;\s]+)/.exec(disposition)![1]),
+      '课程目录 初二物理 秋季 共3课.xlsx'
+    );
+
+    // 导出条数必须跟 /courses 同筛选口径一致，否则页面和文件会对不上
+    const text = await sheetText(r.buf);
+    assert.equal(list.body.courses.length, 3);
+    assert.ok(text.includes('课程目录 · 共 3 课'));
+    for (const want of ['年级', '学科', '分节', '课程内容', '掌握星级', '声现象', '物态变化', '光现象', '沪科版（导出专用）']) {
+      assert.ok(text.includes(want), '缺少 ' + want);
+    }
+  });
+
+  test('搜索范围跟前端一致：教材版本和难度都搜得到', async () => {
+    // 教材版本：之前服务端只搜辅导内容和分节，目录页能搜到教材、导出却搜不到
+    const byBook = await req('GET', '/api/catalog/courses?grade=初二&subject=物理&q=沪科', { token });
+    assert.equal(byBook.body.courses.length, 3);
+
+    // 难度：只有「物态变化」是 ★★★
+    const byDiff = await req('GET', '/api/catalog/courses?grade=初二&subject=物理&q=★★★', { token });
+    assert.deepEqual(
+      byDiff.body.courses.map((c: any) => c.content),
+      ['物态变化']
+    );
+  });
+
+  test('分节行导出成整行合并的分区标题，并跟着课程一起筛选', async () => {
+    const r = await downloadXlsx('?grade=初二&subject=物理&term=秋季');
+    assert.equal(r.status, 200);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(r.buf as any);
+    const ws = wb.getWorksheet('课程目录')!;
+    const text = await sheetText(r.buf);
+    assert.ok(text.includes('秋季第一次阶段性测试'));
+
+    // 定位分节标题落在第几行（前面是标题行和表头，行号不该写死）
+    let sectionRow = 0;
+    ws.eachRow((row, n) => {
+      if (String(row.getCell(1).value ?? '') === '秋季第一次阶段性测试') sectionRow = n;
+    });
+    assert.ok(sectionRow > 0, '分节标题行应出现在导出里');
+
+    // 分节标题整行合并：占满 12 列（最后一列 L），不是只并了前几列
+    const merged = new Set<string>(ws.model.merges || []);
+    assert.ok(
+      [...merged].includes('A' + sectionRow + ':L' + sectionRow),
+      '分节标题应整行合并到最后一列，实际：' + [...merged].join(',')
+    );
+  });
+
+  test('掌握星级导出成中文档位，未定档留空', async () => {
+    const list = await req('GET', '/api/catalog/courses?grade=初二&subject=物理&term=秋季', { token });
+    await req('PATCH', '/api/catalog/courses/' + list.body.courses[0].id, {
+      token,
+      body: { mastery_star: 3 },
+    });
+
+    const r = await downloadXlsx('?grade=初二&subject=物理&term=秋季');
+    assert.equal(r.status, 200);
+    const text = await sheetText(r.buf);
+    assert.ok(text.includes('常规掌握'));
+  });
+
+  test('导出只带自己的目录，别人账号的课混不进来', async () => {
+    const foreign = await fetch(url('/api/catalog/xlsx?grade=初二&subject=物理&term=秋季'), {
+      headers: { Authorization: 'Bearer ' + otherToken },
+    });
+    assert.equal(foreign.status, 200);
+    const buf = Buffer.from(await foreign.arrayBuffer());
+    const text = await sheetText(buf);
+    assert.ok(!text.includes('声现象'), '别人账号的目录不该出现在导出里');
+  });
+});

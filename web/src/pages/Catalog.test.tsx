@@ -12,12 +12,14 @@ vi.mock('../api/client', () => ({
     upload: vi.fn(),
     getToken: vi.fn(() => 'test-token'),
     streamPostRaw: vi.fn(),
+    downloadFile: vi.fn(),
   },
 }));
 
 const request = api.request as Mock;
 const upload = api.upload as Mock;
 const streamPostRaw = api.streamPostRaw as Mock;
+const downloadFile = api.downloadFile as Mock;
 
 const FACETS = {
   grades: ['高一'],
@@ -133,6 +135,7 @@ beforeEach(() => {
   request.mockReset();
   streamPostRaw.mockReset();
   upload.mockReset();
+  downloadFile.mockReset();
 });
 
 describe('课程目录页', () => {
@@ -780,5 +783,60 @@ describe('按学生看进度', () => {
     renderWithProviders(<Catalog />);
     await screen.findByText('声现象');
     expect(screen.queryByLabelText('按学生查看课程进度')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('目录导出与打印', () => {
+  it('导出按钮把当前筛选条件带给后端，下载后提示条数', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      courses: [makeCourse({ content: '古代诗歌鉴赏' }), makeCourse({ content: '记叙文写作', seq: 2 })],
+      imports: [makeImport()],
+    });
+    downloadFile.mockResolvedValue({
+      blob: new Blob(['xlsx-bytes']),
+      filename: '课程目录 高一语文 暑假 共2课.xlsx',
+    });
+    renderWithProviders(<Catalog />);
+
+    const btn = await screen.findByRole('button', { name: /导出 Excel/ });
+    await user.click(btn);
+
+    expect(downloadFile).toHaveBeenCalledWith('/catalog/xlsx');
+    expect(await screen.findByText('已导出 2 门课')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出 Excel' })).toBeEnabled();
+  });
+
+  it('筛选条件在地址栏里，导出请求跟着带上', async () => {
+    const user = userEvent.setup();
+    mockApi({ courses: [makeCourse({})], imports: [makeImport()] });
+    downloadFile.mockResolvedValue({ blob: new Blob(['x']), filename: 'f.xlsx' });
+    // 初始路由就带筛选条件，模拟「先筛选再导出」
+    renderWithProviders(<Catalog />, { route: '/?grade=高一&term=暑假' });
+    await screen.findByText('古代诗歌鉴赏');
+
+    await user.click(await screen.findByRole('button', { name: /导出 Excel/ }));
+    expect(downloadFile).toHaveBeenCalledWith(
+      '/catalog/xlsx?grade=%E9%AB%98%E4%B8%80&term=%E6%9A%91%E5%81%87'
+    );
+  });
+
+  it('没有任何课程时导出按钮不可点', async () => {
+    mockApi({ courses: [], imports: [makeImport()] });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('没有匹配的课程');
+    expect(screen.getByRole('button', { name: /导出 Excel/ })).toBeDisabled();
+  });
+
+  it('导出失败给出错误提示，按钮恢复可点', async () => {
+    const user = userEvent.setup();
+    mockApi({ courses: [makeCourse({})], imports: [makeImport()] });
+    downloadFile.mockRejectedValue(new Error('网络中断'));
+    renderWithProviders(<Catalog />);
+
+    await user.click(await screen.findByRole('button', { name: /导出 Excel/ }));
+    expect(await screen.findByText('网络中断')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出 Excel' })).toBeEnabled();
   });
 });
