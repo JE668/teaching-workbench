@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useSearchParams } from 'react-router-dom';
 import Catalog from './Catalog';
 import { renderWithProviders } from '../test/test-utils';
 import { api } from '../api/client';
@@ -107,6 +108,12 @@ async function openImportDialog(user: ReturnType<typeof userEvent.setup>): Promi
   return (await screen.findByText('导入全年课程体系目录')).closest('.fixed') as HTMLElement;
 }
 
+/** 把当前 useSearchParams 渲成文本，用来断言筛选条件真的进了地址栏 */
+function UrlProbe() {
+  const [sp] = useSearchParams();
+  return <div data-testid="url">{sp.toString()}</div>;
+}
+
 beforeEach(() => {
   request.mockReset();
   streamPostRaw.mockReset();
@@ -135,8 +142,86 @@ describe('课程目录页', () => {
     expect(await screen.findByText('高一语文 · 暑假')).toBeInTheDocument();
     expect(screen.getByText('古代诗歌鉴赏')).toBeInTheDocument();
     expect(screen.getByText('记叙文写作')).toBeInTheDocument();
-    expect(screen.getAllByText('人教版').length).toBe(2);
+    const table = await screen.findByRole('table');
+    expect(within(table).getAllByText('人教版').length).toBe(2);
     expect(screen.getByText(/共 2 条/)).toBeInTheDocument();
+  });
+
+  it('教材版本可以搜，也可以按教材版本筛选', async () => {
+    mockApi({
+      courses: [
+        makeCourse({ seq: 1, content: '古代诗歌鉴赏', textbook: '部编版' }),
+        makeCourse({ seq: 2, content: '记叙文写作', textbook: '人教版' }),
+      ],
+      imports: [makeImport()],
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<Catalog />);
+    await screen.findByText('记叙文写作');
+
+    // 教材版本进了搜索范围：搜「部编」只留 1 条（之前搜不到）
+    await user.type(screen.getByPlaceholderText(/搜索辅导内容/), '部编');
+    await waitFor(() => expect(screen.queryByText('记叙文写作')).not.toBeInTheDocument());
+    expect(screen.getByText('古代诗歌鉴赏')).toBeInTheDocument();
+
+    await user.clear(screen.getByPlaceholderText(/搜索辅导内容/));
+
+    // 按教材版本下拉筛选
+    await user.selectOptions(screen.getByRole('combobox', { name: '按教材版本筛选' }), '人教版');
+    await waitFor(() => expect(screen.queryByText('古代诗歌鉴赏')).not.toBeInTheDocument());
+    expect(screen.getByText('记叙文写作')).toBeInTheDocument();
+  });
+
+  it('筛选条件写进地址栏，刷新不丢', async () => {
+    mockApi({
+      courses: [
+        makeCourse({ seq: 1, content: '古代诗歌鉴赏', subject: '语文' }),
+        makeCourse({ seq: 2, content: '集合与逻辑', subject: '数学' }),
+      ],
+      imports: [makeImport()],
+    });
+    const user = userEvent.setup();
+    renderWithProviders(
+      <>
+        <UrlProbe />
+        <Catalog />
+      </>,
+      { path: '/catalog', route: '/catalog?grade=高一&subject=数学' }
+    );
+    // 地址栏来的条件生效：只留数学那条（URLSearchParams 里中文是编码后的，解码断言）
+    expect(new URLSearchParams(screen.getByTestId('url').textContent).get('subject')).toBe('数学');
+    expect(await screen.findByText('集合与逻辑')).toBeInTheDocument();
+    expect(screen.queryByText('古代诗歌鉴赏')).not.toBeInTheDocument();
+
+    await user.type(screen.getByPlaceholderText(/搜索辅导内容/), '集合');
+    await waitFor(() => expect(screen.getByText('集合与逻辑')).toBeInTheDocument());
+    // 搜索词也同步写进地址栏
+    expect(new URLSearchParams(screen.getByTestId('url').textContent).get('q')).toBe('集合');
+
+    await user.click(screen.getByRole('button', { name: /清空筛选/ }));
+    await waitFor(() => expect(screen.getByTestId('url').textContent).toBe(''));
+    expect(screen.getByText('古代诗歌鉴赏')).toBeInTheDocument();
+  });
+
+  it('分组超过一页时分页展示，可展开与收起', async () => {
+    const many = Array.from({ length: 15 }, (_, i) =>
+      makeCourse({ seq: i + 1, content: '第 ' + (i + 1) + ' 课' })
+    );
+    mockApi({ courses: many, imports: [makeImport()] });
+    renderWithProviders(<Catalog />);
+
+    const table = await screen.findByRole('table');
+    expect(table.querySelectorAll('tbody tr').length).toBe(12);
+    expect(screen.getByRole('button', { name: /还有 3 条/ })).toBeInTheDocument();
+    expect(screen.queryByText('第 13 课')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /还有 3 条/ }));
+    expect(table.querySelectorAll('tbody tr').length).toBe(15);
+    expect(screen.getByText('第 13 课')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '收起' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '收起' }));
+    expect(table.querySelectorAll('tbody tr').length).toBe(12);
   });
 
   it('关键词筛选生效，无结果时可一键清空', async () => {
@@ -152,15 +237,18 @@ describe('课程目录页', () => {
     await screen.findByText('集合与逻辑');
 
     // 搜「古代诗歌」只剩 1 条
-    await user.type(screen.getByPlaceholderText('搜索辅导内容'), '古代诗歌');
+    await user.type(screen.getByPlaceholderText(/搜索辅导内容/), '古代诗歌');
     await waitFor(() => expect(screen.queryByText('集合与逻辑')).not.toBeInTheDocument());
     expect(screen.getByText('古代诗歌鉴赏')).toBeInTheDocument();
 
     // 搜不存在的关键词 → 空状态 + 清空筛选
-    await user.clear(screen.getByPlaceholderText('搜索辅导内容'));
-    await user.type(screen.getByPlaceholderText('搜索辅导内容'), '不存在');
+    await user.clear(screen.getByPlaceholderText(/搜索辅导内容/));
+    await user.type(screen.getByPlaceholderText(/搜索辅导内容/), '不存在');
     expect(await screen.findByText('没有匹配的课程')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /清空筛选/ }));
+    // 筛选卡里的「清空筛选」和空状态里的都出现，点空状态那个
+    const clearButtons = screen.getAllByRole('button', { name: /清空筛选/ });
+    expect(clearButtons.length).toBe(2);
+    await user.click(clearButtons[clearButtons.length - 1]);
     await waitFor(() => expect(screen.getByText('集合与逻辑')).toBeInTheDocument());
     expect(screen.getByText('古代诗歌鉴赏')).toBeInTheDocument();
   });

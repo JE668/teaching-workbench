@@ -22,6 +22,8 @@ export interface CatalogFixtureOptions {
   secondCourses?: [number, string, string, string][];
   /** 在第一条分区末尾插一行分节（阶测安排） */
   sectionLabel?: string;
+  /** 教材版本原文（A 列纵向合并），默认人教版 */
+  textbook?: string;
   filename?: string;
 }
 
@@ -52,11 +54,11 @@ function writeSection(ws: ExcelJS.Worksheet, start: number, title: string): numb
 }
 
 /** 从 start 行连续写 n 条课程，返回下一条空行的行号 */
-function writeCourses(ws: ExcelJS.Worksheet, start: number, rows: [number, string, string, string][]): number {
+function writeCourses(ws: ExcelJS.Worksheet, start: number, rows: [number, string, string, string][], textbook = '人教版（2024）'): number {
   const end = start + rows.length - 1;
   // 教材版本纵向合并，只有左上角有值（真实模板就是这样）
   ws.mergeCells(start, 1, end, 1);
-  setCell(ws, start, 1, '人教版（2024）');
+  setCell(ws, start, 1, textbook);
 
   rows.forEach((r, i) => {
     const row = start + i;
@@ -85,7 +87,7 @@ export async function buildCatalogFixture(opts: CatalogFixtureOptions): Promise<
   const titles = opts.courses.map((c) => c[1]);
 
   const firstData = writeSection(ws, 1, `星火教育个性化  ${opts.sheet}  ${opts.term}  课程目录`);
-  let next = writeCourses(ws, firstData, opts.courses);
+  let next = writeCourses(ws, firstData, opts.courses, opts.textbook);
 
   if (opts.sectionLabel) {
     // 分节行（整行合并的阶测安排）插在数据中间 —— 必须被识别成分节而不是课程
@@ -97,7 +99,7 @@ export async function buildCatalogFixture(opts: CatalogFixtureOptions): Promise<
 
   if (opts.secondCourses && opts.secondTerm) {
     const d = writeSection(ws, next, `星火教育个性化  ${opts.sheet}  ${opts.secondTerm}  课程目录`);
-    writeCourses(ws, d, opts.secondCourses);
+    writeCourses(ws, d, opts.secondCourses, opts.textbook);
     titles.push(...opts.secondCourses.map((c) => c[1]));
   }
 

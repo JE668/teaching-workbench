@@ -88,8 +88,9 @@ test.describe('课程目录导入', () => {
     await expect(page.getByText('声现象')).toBeVisible();
     await expect(page.getByText('透镜及其应用')).toBeVisible();
     await expect(page.getByText('电学入门')).toBeVisible();
-    // 教材版本要归一化：原表「人教版（2024）」→「人教版」（每行都有，取第一处即可）
-    await expect(page.getByText('人教版').first()).toBeVisible();
+    // 教材版本要归一化：原表「人教版（2024）」→「人教版」（每行都有，取第一处即可）。
+    // 限定在表格里找：「全部教材版本」下拉里也有同名 option，是隐藏元素。
+    await expect(page.getByRole('table').getByText('人教版').first()).toBeVisible();
 
     // —— 就地设掌握星级（保存是静默乐观更新，成功不弹 toast，所以验 UI 态 + 接口值）——
     const row = page.locator('tr', { hasText: '声现象' }).first();
@@ -103,6 +104,49 @@ test.describe('课程目录导入', () => {
     const starred = (await courses()).filter((c) => c.content === '声现象');
     expect(starred.length).toBeGreaterThan(0);
     expect(starred[0].mastery_star).toBe(4);
+  });
+
+  test('教材版本可以搜，筛选条件同步地址栏，分组可分页', async ({ page }) => {
+    // 同一组 14 条 + 独占的教材版本：既测分页，又能把搜索范围精确锁在这批课上，
+    // 不受同一后端里其它用例留下的数据干扰
+    const TEXTBOOK = '北师大版（查找浏览专用）';
+    const rows = Array.from({ length: 14 }, (_, i) =>
+      [i + 1, '查找浏览课 ' + (i + 1), i % 2 === 0 ? '同步' : '专题', '★★'] as [number, string, string, string]
+    );
+    const fixture = await buildCatalogFixture({
+      sheet: '初二物理',
+      term: '秋季',
+      courses: rows,
+      textbook: TEXTBOOK,
+      filename: '查找浏览校验.xlsx',
+    });
+    await loginViaApi(page);
+    expect((await importCatalog(page, { name: fixture.filename, buffer: fixture.buffer })).coursesImported).toBe(14);
+
+    await page.goto('/catalog');
+
+    const search = page.getByPlaceholder(/搜索辅导内容/);
+    const table = page.getByRole('table').first();
+
+    // 教材版本进了搜索范围（之前只搜辅导内容和分节，教材搜不到）
+    await search.fill('北师大');
+    await expect(table.getByText('查找浏览课 1', { exact: true })).toBeVisible();
+    // 搜索词同步写进地址栏
+    expect(new URL(page.url()).searchParams.get('q')).toBe('北师大');
+
+    // 分组分页：先露 12 条，第 13 条还在外面
+    expect(await table.locator('tbody tr').count()).toBe(12);
+    expect(await table.getByText('查找浏览课 13').count()).toBe(0);
+    await page.getByRole('button', { name: /还有 2 条/ }).click();
+    expect(await table.locator('tbody tr').count()).toBe(14);
+    await expect(table.getByText('查找浏览课 13')).toBeVisible();
+    await expect(page.getByRole('button', { name: '收起' })).toBeVisible();
+
+    // 教材版本下拉筛选，条件同样落进地址栏
+    await search.fill('');
+    await page.getByRole('combobox', { name: '按教材版本筛选' }).selectOption(TEXTBOOK);
+    expect(await table.locator('tbody tr').count()).toBe(14);
+    expect(new URL(page.url()).searchParams.get('textbook')).toBe(TEXTBOOK);
   });
 
   test('同一份文件重复上传不会重复灌库', async ({ page }) => {
