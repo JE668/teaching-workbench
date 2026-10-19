@@ -73,7 +73,16 @@ function makeImport(overrides: Record<string, unknown> = {}) {
 }
 
 /** 统一 mock 掉页面用到的所有接口 */
-function mockApi(opts: { courses?: any[]; imports?: any[] } = {}) {
+function mockApi(
+  opts: {
+    courses?: any[];
+    imports?: any[];
+    usage?: Record<string, any>;
+    /** 按 student_id 返回不同 usage：用来测「换个学生只重拉 usage」 */
+    usageByStudent?: Record<string, Record<string, any>>;
+    students?: { id: number; name: string }[];
+  } = {}
+) {
   const courses = opts.courses || [];
   const imports = opts.imports || [];
   request.mockImplementation((path: string, init?: any) => {
@@ -84,6 +93,12 @@ function mockApi(opts: { courses?: any[]; imports?: any[] } = {}) {
     if (path.startsWith('/catalog/courses')) {
       return Promise.resolve({ courses, total: courses.length });
     }
+    if (path.startsWith('/catalog/usage')) {
+      const sid = new URLSearchParams(path.split('?')[1] || '').get('student_id') || '';
+      const usage = sid && opts.usageByStudent ? opts.usageByStudent[sid] || {} : opts.usage || {};
+      return Promise.resolve({ usage });
+    }
+    if (path.startsWith('/students')) return Promise.resolve({ students: opts.students || [] });
     if (path.startsWith('/catalog/imports/') && init?.method === 'DELETE') {
       return Promise.resolve({ deleted: courses.length });
     }
@@ -533,5 +548,237 @@ describe('掌握星级 · AI 批量定档', () => {
     expect(await screen.findByText('模型返回了无法解析的结果')).toBeInTheDocument();
     expect(screen.queryByText(/AI 已定档/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'AI 定档' })).not.toBeDisabled();
+  });
+});
+
+describe('目录 ↔ 报告打通', () => {
+  it('这门课在月度报告里用过，目录里显示已上/计划，点开看是哪些学生', async () => {
+    const user = userEvent.setup();
+    const course = makeCourse({ id: 7, content: '声现象' });
+    mockApi({
+      courses: [course],
+      imports: [makeImport()],
+      usage: {
+        '7': {
+          course_id: 7,
+          taught: 2,
+          planned: 1,
+          entries: [
+            { report_id: 11, student_id: 1, student_name: '李小明', year_month: '2026-09', kind: 'summary' },
+            { report_id: 12, student_id: 2, student_name: '王小红', year_month: '2026-09', kind: 'summary' },
+            { report_id: 13, student_id: 1, student_name: '李小明', year_month: '2026-10', kind: 'plan' },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+
+    const chip = await screen.findByRole('button', { name: /已上2 · 计划1/ });
+    expect(chip).toBeInTheDocument();
+
+    await user.click(chip);
+    expect(await screen.findByText('「声现象」上过哪些课')).toBeInTheDocument();
+    expect(screen.getByText('已上 2 次 · 计划 1 次')).toBeInTheDocument();
+    // 李小明出现两次（9 月已上 + 10 月计划）
+    expect(screen.getAllByText('李小明').length).toBe(2);
+    expect(screen.getByText('王小红')).toBeInTheDocument();
+    expect(screen.getAllByText('已上').length).toBe(2);
+    expect(screen.getAllByText('计划').length).toBe(1);
+  });
+
+  it('老师旁听过的课显示听课数，明细里标出（听课）', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      courses: [makeCourse({ id: 8, content: '光的反射' })],
+      imports: [makeImport()],
+      usage: {
+        '8': {
+          course_id: 8,
+          taught: 1,
+          planned: 0,
+          observed: 2,
+          entries: [
+            { report_id: 21, student_id: 1, student_name: '李小明', year_month: '2026-09', kind: 'summary', source: 'report' },
+            { report_id: 31, student_id: null, student_name: '听课同学', year_month: '2026-10', kind: 'summary', source: 'observation' },
+            { report_id: 32, student_id: null, student_name: '', year_month: '2026-10', kind: 'summary', source: 'observation' },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('光的反射');
+
+    // 听课数跟已上/计划分开列，计划为 0 时不占位
+    const chip = await screen.findByRole('button', { name: /已上1 · 听课2/ });
+    expect(chip).toBeInTheDocument();
+
+    await user.click(chip);
+    expect(await screen.findByText('「光的反射」上过哪些课')).toBeInTheDocument();
+    expect(screen.getByText('已上 1 次 · 听课 2 次')).toBeInTheDocument();
+    // 两条旁听都标出（听课），没记学生姓名的回退成「未填姓名」
+    expect(screen.getAllByText('（听课）').length).toBe(2);
+    expect(screen.getByText('未填姓名')).toBeInTheDocument();
+    expect(screen.getAllByText('听课').length).toBe(2);
+  });
+
+  it('没有学生上过课时不显示标签', async () => {
+    mockApi({ courses: [makeCourse({ content: '声现象' })], imports: [makeImport()], usage: {} });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+    expect(screen.queryByRole('button', { name: /已上|计划/ })).not.toBeInTheDocument();
+  });
+
+  it('usage 接口挂了也不影响目录浏览', async () => {
+    mockApi({ courses: [makeCourse({ content: '声现象' })], imports: [makeImport()] });
+    // 只让 usage 这一个接口失败，其它照常
+    const real = request.getMockImplementation()!;
+    request.mockImplementation((path: string, init?: any) =>
+      path.startsWith('/catalog/usage') ? Promise.reject(new Error('boom')) : real(path, init)
+    );
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+    expect(screen.queryByRole('button', { name: /已上|计划/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('按学生看进度', () => {
+  const STUDENTS = [
+    { id: 11, name: '李小明' },
+    { id: 12, name: '王小红' },
+  ];
+
+  it('选中学生后行内显示上过哪几个月，汇总行给出已上/计划/未上', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      courses: [
+        makeCourse({ id: 1, content: '声现象' }),
+        makeCourse({ id: 2, content: '光的反射' }),
+        makeCourse({ id: 3, content: '平面镜成像' }),
+        makeCourse({ id: 4, content: '凸透镜成像' }),
+      ],
+      imports: [makeImport()],
+      students: STUDENTS,
+      usage: {
+        '1': {
+          course_id: 1,
+          taught: 2,
+          planned: 0,
+          entries: [
+            { report_id: 1, student_id: 11, student_name: '李小明', year_month: '2026-09', kind: 'summary' },
+            { report_id: 2, student_id: 11, student_name: '李小明', year_month: '2026-10', kind: 'summary' },
+          ],
+        },
+        '2': {
+          course_id: 2,
+          taught: 1,
+          planned: 0,
+          entries: [
+            { report_id: 3, student_id: 11, student_name: '李小明', year_month: '2026-10', kind: 'summary' },
+          ],
+        },
+        '3': {
+          course_id: 3,
+          taught: 0,
+          planned: 1,
+          entries: [
+            { report_id: 4, student_id: 11, student_name: '李小明', year_month: '2026-11', kind: 'plan' },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<Catalog />);
+
+    // 默认是聚合模式：显示「已上2 · 计划0」之类的标签
+    await screen.findByRole('button', { name: /已上2/ });
+    expect(screen.queryByText('未上')).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('按学生查看课程进度'), '11');
+
+    // 切到进度模式：四行分别是 已上×2 / 计划 / 未上
+    expect(await screen.findByText('已上 2026-09、2026-10')).toBeInTheDocument();
+    expect(screen.getByText('已上 2026-10')).toBeInTheDocument();
+    expect(screen.getByText('计划 2026-11')).toBeInTheDocument();
+    expect(screen.getByText('未上')).toBeInTheDocument();
+    // 汇总行：按「门」数，不是按月份数
+    expect(screen.getByText('已上 2', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('计划 1', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('未上 1', { exact: true })).toBeInTheDocument();
+    // 聚合标签在进度模式下不再显示
+    expect(screen.queryByRole('button', { name: /已上2/ })).not.toBeInTheDocument();
+  });
+
+  it('换一个学生只重拉 usage，不动目录', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      courses: [makeCourse({ id: 1, content: '声现象' })],
+      imports: [makeImport()],
+      students: STUDENTS,
+      usageByStudent: {
+        '11': {
+          '1': {
+            course_id: 1,
+            taught: 1,
+            planned: 0,
+            entries: [
+              { report_id: 1, student_id: 11, student_name: '李小明', year_month: '2026-09', kind: 'summary' },
+            ],
+          },
+        },
+        '12': {},
+      },
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+
+    await user.selectOptions(screen.getByLabelText('按学生查看课程进度'), '11');
+    expect(await screen.findByText('已上 2026-09')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('按学生查看课程进度'), '12');
+    expect(await screen.findByText('未上')).toBeInTheDocument();
+    expect(screen.queryByText('已上 2026-09')).not.toBeInTheDocument();
+
+    // 地址栏带上学生，刷新不丢
+    renderWithProviders(<Catalog />, { path: '/catalog', route: '/catalog?student=11' });
+    expect(await screen.findByText('已上 2026-09')).toBeInTheDocument();
+  });
+
+  it('清空筛选不会把选中的学生清掉', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      courses: [makeCourse({ id: 1, content: '声现象', subject: '物理' })],
+      imports: [makeImport()],
+      students: STUDENTS,
+      usageByStudent: {
+        '11': {
+          '1': {
+            course_id: 1,
+            taught: 1,
+            planned: 0,
+            entries: [
+              { report_id: 1, student_id: 11, student_name: '李小明', year_month: '2026-09', kind: 'summary' },
+            ],
+          },
+        },
+      },
+    });
+    renderWithProviders(<Catalog />, { path: '/catalog', route: '/catalog?subject=物理&student=11' });
+
+    await screen.findByText('声现象');
+    expect(await screen.findByText('已上 2026-09')).toBeInTheDocument();
+
+    const clear = screen.getAllByRole('button', { name: /清空筛选/ });
+    await user.click(clear[clear.length - 1]);
+
+    // 学生还在，进度还在
+    expect(await screen.findByText('已上 2026-09')).toBeInTheDocument();
+    expect(screen.getByText('全部学科')).toBeInTheDocument();
+  });
+
+  it('没有学生时不显示「看谁进度」这一栏', async () => {
+    mockApi({ courses: [makeCourse({ content: '声现象' })], imports: [makeImport()] });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+    expect(screen.queryByLabelText('按学生查看课程进度')).not.toBeInTheDocument();
   });
 });

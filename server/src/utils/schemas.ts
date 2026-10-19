@@ -107,6 +107,9 @@ export const teacherCreateSchema = z
 export const observationCreateSchema = z
   .object({
     topic: reqd('请填写课题'),
+    // courseId：故意不收窄。课题手输、目录里查不到时留空，用户填错了不该连整张评课表都存不了，
+    // 所以这里先全收，交给 numOrNull 统一归一成「正整数或 null」。
+    courseId: z.unknown().optional(),
     teacherId: z.union([z.number(), z.coerce.number(), z.null()]).optional(),
     lessonType: z.string().optional(),
     observedAt: z.string().trim().optional().nullable(),
@@ -124,6 +127,9 @@ export const observationCreateSchema = z
 export const observationUpdateSchema = z
   .object({
     topic: z.string().trim().optional(),
+    // courseId：故意不收窄。课题手输、目录里查不到时留空，用户填错了不该连整张评课表都存不了，
+    // 所以这里先全收，交给 numOrNull 统一归一成「正整数或 null」。
+    courseId: z.unknown().optional(),
     teacherId: z.union([z.number(), z.coerce.number(), z.null()]).optional(),
     lessonType: z.string().optional(),
     observedAt: z.string().trim().optional().nullable(),

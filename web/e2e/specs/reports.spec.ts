@@ -154,6 +154,43 @@ test.describe('月度总结与课程规划', () => {
     const allText = await readAllText(buf);
     expect(allText).toContain('空气的成分');
     expect(allText).toContain('金属活动性');
+
+    // —— 目录 ↔ 报告打通：从目录取来的课，回到目录里能看到「已上 / 计划」——
+    // 只筛初三化学：DB 是共享的，前面用例也导过目录，全量看会把数字带跑
+    await page.goto('/catalog?subject=化学');
+    const usedRow = page.locator('tr', { hasText: '空气的成分' }).first();
+    await expect(usedRow.getByRole('button', { name: '已上1' })).toBeVisible();
+    const plannedRow = page.locator('tr', { hasText: '金属活动性' }).first();
+    await expect(plannedRow.getByRole('button', { name: '计划1' })).toBeVisible();
+    // 没被取过课的目录条目不带标签
+    await expect(page.locator('tr', { hasText: '水' }).first().getByRole('button', { name: /已上|计划/ })).toHaveCount(0);
+
+    await usedRow.getByRole('button', { name: '已上1' }).click();
+    // 弹窗断言要圈在弹窗里：页面上的「看谁进度」下拉也有同名 <option>，会撞 strict mode
+    const usageDlg = page.locator('div.fixed.inset-0.z-50').last();
+    await expect(usageDlg.getByText('「空气的成分」上过哪些课')).toBeVisible();
+    // 汇总只列非零项：没规划就不占位「计划 0 次」（跟行内标签口径一致）
+    await expect(usageDlg.getByText('已上 1 次', { exact: true })).toBeVisible();
+    await expect(usageDlg.getByText(/计划 0 次/)).toHaveCount(0);
+    await expect(usageDlg.getByText('报告同学')).toBeVisible();
+    await expect(usageDlg.getByText('2026-09')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(usageDlg.getByText('「空气的成分」上过哪些课')).toHaveCount(0);
+
+    // 切到「看谁进度」：上过/计划的都标上报告所在的月份，没取的显示未上
+    await page.getByLabel('按学生查看课程进度').selectOption({ label: '报告同学' });
+    await expect(usedRow.getByText('已上 2026-09')).toBeVisible();
+    await expect(plannedRow.getByText('计划 2026-09')).toBeVisible();
+    await expect(page.locator('tr', { hasText: '水' }).first().getByRole('button', { name: /已上|计划/ })).toHaveCount(0);
+    await expect(page.locator('tr', { hasText: '水' }).first().getByText('未上')).toBeVisible();
+    // 汇总行给出三类各几门（exact：「已上 2」不能被行内的「已上 2026-09」误中）
+    await expect(page.getByText('已上 2', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('计划 2', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('未上 1', { exact: true })).toBeVisible();
+    // 学生记在地址栏里，刷新还在
+    expect(page.url()).toContain('student=');
+    await page.reload();
+    await expect(usedRow.getByText('已上 2026-09')).toBeVisible();
   });
 
   test('手动上移一条跨月的课，区块月份标题保持不变（回归）', async ({ page }) => {

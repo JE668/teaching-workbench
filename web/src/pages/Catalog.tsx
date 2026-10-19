@@ -11,6 +11,7 @@ import {
   Sparkles,
   Loader2,
   X,
+  UserCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -64,6 +65,28 @@ interface CatalogImport {
   courses_duplicated: number;
   failed_sheets: string[];
   created_at: string;
+}
+
+/** 目录 ↔ 报告 / 听评课打通：一门课被用过几次 */
+interface CourseUsageEntry {
+  report_id: number;
+  student_id: number | null;
+  student_name: string;
+  year_month: string;
+  kind: 'summary' | 'plan';
+  /** 记录来自月度报告还是听评课 */
+  source: 'report' | 'observation';
+}
+
+interface CourseUsage {
+  course_id: number;
+  /** 记在「已上的课」里的次数 */
+  taught: number;
+  /** 记在「下月要上的课」里的次数 */
+  planned: number;
+  /** 有老师旁听过几节课（听评课） */
+  observed: number;
+  entries: CourseUsageEntry[];
 }
 
 interface Facets {
@@ -138,8 +161,113 @@ function StarEditor({ value, onPick }: { value: number | null; onPick: (v: numbe
 /** 每个分组先展示的课程条数，其余按需展开 */
 const GROUP_PAGE_SIZE = 12;
 
+/** 「已上 3 · 计划 1 · 听课 1」小标签：点一下看是哪些学生 */
+function UsageChip({
+  usage,
+  onShow,
+}: {
+  usage: CourseUsage;
+  onShow: () => void;
+}) {
+  const parts = [
+    usage.taught > 0 ? '已上' + usage.taught : '',
+    usage.planned > 0 ? '计划' + usage.planned : '',
+    usage.observed > 0 ? '听课' + usage.observed : '',
+  ].filter(Boolean);
+  if (!parts.length) return null;
+  return (
+    <button
+      type="button"
+      onClick={onShow}
+      title="点一下看是哪些学生、上过还是听课"
+      className="mt-1 inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-600 hover:bg-brand-100"
+    >
+      <UserCheck size={11} />
+      {parts.join(' · ')}
+    </button>
+  );
+}
+
+/** 一门课的使用明细：哪些学生、哪个月、已上还是计划，还有谁听过这节 */
+function UsageDialog({ course, usage, onClose }: { course: CatalogCourse | null; usage: CourseUsage | undefined; onClose: () => void }) {
+  if (!course) return null;
+  const u = usage || { course_id: course.id, taught: 0, planned: 0, observed: 0, entries: [] };
+  const parts = [
+    u.taught > 0 ? '已上 ' + u.taught + ' 次' : '',
+    u.planned > 0 ? '计划 ' + u.planned + ' 次' : '',
+    u.observed > 0 ? '听课 ' + u.observed + ' 次' : '',
+  ].filter(Boolean);
+  return (
+    <Modal open title={'「' + course.content + '」上过哪些课'} onClose={onClose} footer={null}>
+      <p className="text-sm text-slate-500">{parts.length ? parts.join(' · ') : '还没有记录'}</p>
+      {u.entries.length ? (
+        <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-100">
+          {u.entries.map((e, i) => (
+            <div
+              key={e.report_id + ':' + i}
+              className="flex items-center justify-between gap-2 border-b border-slate-50 px-3 py-2 text-sm last:border-0"
+            >
+              <span className="font-medium text-slate-700">
+                {e.student_name || '未填姓名'}
+                {e.source === 'observation' && <span className="ml-1.5 text-xs font-normal text-slate-400">（听课）</span>}
+              </span>
+              <span className="flex items-center gap-2 text-xs text-slate-400">
+                {e.year_month}
+                <Badge tone={e.source === 'observation' ? 'success' : e.kind === 'summary' ? 'brand' : 'info'}>
+                  {e.source === 'observation' ? '听课' : e.kind === 'summary' ? '已上' : '计划'}
+                </Badge>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-slate-400">还没有学生上过这门课。</p>
+      )}
+    </Modal>
+  );
+}
+
 /**
- * 一个分组（年级+学科 · 学期 · 轨）的课程表。
+ * 按学生看进度：这门课对这个学生来说是已上 / 计划 / 还没上。
+ * months 里是已经上的那几个月（已上模式）或计划的那几个月（计划模式）。
+ */
+interface CourseProgress {
+  kind: 'taught' | 'planned' | 'none';
+  months: string[];
+}
+
+/** 从 usage 聚合里抽出某一个学生的进度。usage 传 student_id 拉来的口径已经是这个学生的。 */
+function progressOf(usage: Record<string, CourseUsage>, courseId: number): CourseProgress {
+  const u = usage[String(courseId)];
+  if (!u) return { kind: 'none', months: [] };
+  const taught = u.entries.filter((e) => e.kind === 'summary').map((e) => e.year_month);
+  if (taught.length) return { kind: 'taught', months: taught };
+  const planned = u.entries.filter((e) => e.kind === 'plan').map((e) => e.year_month);
+  if (planned.length) return { kind: 'planned', months: planned };
+  return { kind: 'none', months: [] };
+}
+
+/** 进度模式下的行内标记：已上（哪几个月）/ 计划（哪几个月）/ 未上 */
+function ProgressBadge({ progress }: { progress: CourseProgress }) {
+  if (progress.kind === 'none') {
+    return <span className="text-[11px] text-slate-300">未上</span>;
+  }
+  const taught = progress.kind === 'taught';
+  const label = taught ? '已上' : '计划';
+  return (
+    <span
+      title={label + '：' + progress.months.join('、')}
+      className={cn(
+        'mt-1 inline-flex max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-[11px] font-medium',
+        taught ? 'bg-emerald-50 text-emerald-700' : 'bg-info-50 text-info-700'
+      )}
+    >
+      {label + (progress.months.length ? ' ' + progress.months.join('、') : '')}
+    </span>
+  );
+}
+
+/** 一个分组（年级+学科 · 学期 · 轨）的课程表。
  *
  * 分组内分页，几百门课不会一次性铺满整个页面；
  * 窄屏隐藏序号 / 分值占比 / 教材，手机上留辅导内容、课程类型、难度、掌握四列。
@@ -147,14 +275,23 @@ const GROUP_PAGE_SIZE = 12;
 function CourseGroupCard({
   name,
   list,
+  usage,
   onPickStar,
+  onShowUsage,
+  studentId,
 }: {
   name: string;
   list: CatalogCourse[];
+  /** course_id → 已上/计划次数 */
+  usage: Record<string, CourseUsage>;
   onPickStar: (course: CatalogCourse, value: number | null) => void;
+  onShowUsage: (course: CatalogCourse) => void;
+  /** 非空时是「按学生看进度」模式，行内显示这个学生上过没有 */
+  studentId: string;
 }) {
   const [visible, setVisible] = useState(GROUP_PAGE_SIZE);
   const rest = Math.max(0, list.length - visible);
+  const inProgressMode = studentId !== '';
 
   return (
     <Card className="overflow-hidden">
@@ -187,6 +324,13 @@ function CourseGroupCard({
                     <span className="ml-1.5 inline-block align-middle text-[11px] text-amber-600">
                       「{c.section}」
                     </span>
+                  )}
+                  {inProgressMode ? (
+                    <ProgressBadge progress={progressOf(usage, c.id)} />
+                  ) : (
+                    usage[String(c.id)] && (
+                      <UsageChip usage={usage[String(c.id)]!} onShow={() => onShowUsage(c)} />
+                    )
                   )}
                 </td>
                 <td className="px-3 py-2">
@@ -229,6 +373,11 @@ export default function Catalog() {
   const [courses, setCourses] = useState<CatalogCourse[]>([]);
   const [facets, setFacets] = useState<Facets>({ grades: [], subjects: [], terms: [], types: [], tracks: [], textbooks: [] });
   const [imports, setImports] = useState<CatalogImport[]>([]);
+  // 目录 ↔ 报告打通：course_id → 已上/计划次数
+  const [usage, setUsage] = useState<Record<string, CourseUsage>>({});
+  const [usageCourse, setUsageCourse] = useState<CatalogCourse | null>(null);
+  // 按学生看进度：校区里的学生列表
+  const [students, setStudents] = useState<{ id: number; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
   // 筛选条件读写地址栏：刷新不丢、手机上能分享某个视图、也能直接回跳
@@ -240,6 +389,8 @@ export default function Catalog() {
   const track = params.get('track') ?? '';
   const textbook = params.get('textbook') ?? '';
   const q = params.get('q') ?? '';
+  // 选中某个学生 = 「按学生看进度」模式
+  const student = params.get('student') ?? '';
 
   const setFilter = useCallback(
     (key: string, value: string) => {
@@ -257,7 +408,20 @@ export default function Catalog() {
   );
 
   const hasFilter = !!(grade || subject || term || type || track || textbook || q);
-  const clearFilters = useCallback(() => setParams(new URLSearchParams(), { replace: true }), [setParams]);
+  // 清筛选只清筛选：选中的学生属于「看进度模式」，不该被一起清掉
+  const clearFilters = useCallback(
+    () =>
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams();
+          const s = prev.get('student');
+          if (s) next.set('student', s);
+          return next;
+        },
+        { replace: true }
+      ),
+    [setParams]
+  );
 
   // 导入
   const [importOpen, setImportOpen] = useState(false);
@@ -270,6 +434,16 @@ export default function Catalog() {
   const [deleteTarget, setDeleteTarget] = useState<CatalogImport | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  /** 拉一次使用情况。studentId 非空时只拉这个学生的（进度模式）。 */
+  const loadUsage = useCallback((studentId: string) => {
+    void api
+      .request<{ usage: Record<string, CourseUsage> }>(
+        '/catalog/usage' + (studentId ? '?student_id=' + encodeURIComponent(studentId) : '')
+      )
+      .then((r) => setUsage(r.usage))
+      .catch(() => setUsage({}));
+  }, []);
+
   const reload = useCallback(async () => {
     setLoading(true);
     try {
@@ -281,6 +455,10 @@ export default function Catalog() {
       setFacets(f);
       setCourses(cs.courses);
       setImports(im.imports);
+      void api
+        .request<{ students: { id: number; name: string }[] }>('/students')
+        .then((r) => setStudents((r.students || []).map((s) => ({ id: s.id, name: s.name }))))
+        .catch(() => setStudents([]));
     } catch (e: any) {
       toast.error(e.message || '加载课程目录失败');
     } finally {
@@ -291,6 +469,11 @@ export default function Catalog() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // 使用情况跟着「选中了哪个学生」走；目录不用重拉
+  useEffect(() => {
+    loadUsage(student);
+  }, [student, loadUsage]);
 
   const submitImport = async (dryRun: boolean) => {
     if (!pickedFile) {
@@ -435,6 +618,26 @@ export default function Catalog() {
   /** 当前筛选范围内还没有掌握星期的课程数 */
   const pendingStars = filtered.filter((c) => c.mastery_star == null).length;
 
+  // 进度模式的汇总：当前筛选范围内，这个学生已上 / 计划 / 还没上各多少门
+  const progressCounts = (() => {
+    if (!student) return null;
+    let taught = 0;
+    let planned = 0;
+    let none = 0;
+    for (const c of filtered) {
+      const p = progressOf(usage, c.id);
+      if (p.kind === 'taught') taught++;
+      else if (p.kind === 'planned') planned++;
+      else none++;
+    }
+    return { taught, planned, none };
+  })();
+
+  const activeStudentName = (() => {
+    if (!student) return null;
+    return students.find((s) => String(s.id) === student)?.name || '未知学生';
+  })();
+
   const anyImported = imports.length > 0;
 
   return (
@@ -479,6 +682,25 @@ export default function Catalog() {
             title="筛选"
             description="全部本地过滤，不用来回请求；条件存在地址栏里，刷新不丢也能分享"
           />
+          {students.length > 0 && (
+            <div className="border-b border-slate-100 bg-slate-50/40 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 text-xs font-medium text-slate-500">看谁进度</span>
+                <Select
+                  aria-label="按学生查看课程进度"
+                  value={student}
+                  onChange={(e) => setFilter('student', e.target.value)}
+                  options={students.map((s) => ({ value: String(s.id), label: s.name }))}
+                  placeholder="全部学生（看总用量）"
+                />
+                {student && activeStudentName ? (
+                  <span className="truncate text-xs text-slate-400">
+                    {activeStudentName} · 已上 {progressCounts?.taught ?? 0} · 计划 {progressCounts?.planned ?? 0} · 未上 {progressCounts?.none ?? 0}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 px-4 pb-4 md:grid-cols-3 lg:grid-cols-4">
             <Select
               aria-label="按年级筛选"
@@ -576,6 +798,16 @@ export default function Catalog() {
             <p className="text-xs text-slate-400">
               共 {filtered.length} 条 · 待定档 <span className="font-medium text-amber-600">{pendingStars}</span> 条
               · 点击星星可直接设掌握星级
+              {progressCounts ? (
+                <span className="ml-1">
+                  ·{' '}
+                  <span className="font-medium text-emerald-600">已上 {progressCounts.taught}</span>
+                  {' · '}
+                  <span className="font-medium text-info-600">计划 {progressCounts.planned}</span>
+                  {' · '}
+                  <span className="font-medium text-slate-400">未上 {progressCounts.none}</span>
+                </span>
+              ) : null}
             </p>
             {pendingStars > 0 && (
               <Button size="sm" onClick={() => void runSuggest()} disabled={suggesting}>
@@ -613,10 +845,25 @@ export default function Catalog() {
           )}
 
           {[...byGroup.entries()].map(([key, list]) => (
-            <CourseGroupCard key={key} name={key} list={list} onPickStar={pickStar} />
+            <CourseGroupCard
+              key={key}
+              name={key}
+              list={list}
+              usage={usage}
+              onPickStar={pickStar}
+              onShowUsage={setUsageCourse}
+              studentId={student}
+            />
           ))}
         </div>
       )}
+
+      {/* 目录 ↔ 报告打通：这门课已经给谁上过了 */}
+      <UsageDialog
+        course={usageCourse}
+        usage={usageCourse ? usage[String(usageCourse.id)] : undefined}
+        onClose={() => setUsageCourse(null)}
+      />
 
       {/* 导入历史 */}
       {anyImported && (

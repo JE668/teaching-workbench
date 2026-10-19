@@ -204,6 +204,69 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
 });
 
 /**
+ * 目录 ↔ 报告 / 听评课打通：每门目录课程被用过几次。
+ *
+ * 明细行的 kind='summary' 记在「已上的课」，'plan' 记在「下月要上的课」，
+ * 听评课记录整条算一次「上过这门课」（老师旁听了这节课）。
+ * 于是目录里能看出「已经给几个学生上过了 / 计划给几个 / 被听过几节课」。
+ * 一次性返回全量映射，前端按 course_id 自己 join —— 几百门课不需要 N 次请求。
+ *
+ * 传 ?student_id= 时只返回这个学生的：目录页「按学生看进度」模式用，
+ * 聚合口径从「全校区」收窄到「一个人」，数据量和数字含义都跟着变。
+ * 听评课没有学生外键（学生只是记个姓名），没法归到某个学生头上，
+ * 所以收窄到单学生口径时把听评课整块拿掉，避免进度数字被旁听记录污染。
+ */
+router.get('/usage', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const studentParam = Number(req.query.student_id);
+    const onlyStudent = Number.isInteger(studentParam) && studentParam > 0;
+    const rows = db
+      .prepare(
+        `SELECT course_id, kind, source, ref_id, year_month, student_id, student_name FROM (
+           SELECT ri.course_id AS course_id, ri.kind AS kind, 'report' AS source, ri.id AS ref_id,
+                  mr.year_month AS year_month, mr.student_id AS student_id,
+                  s.name AS student_name
+           FROM report_items ri
+           JOIN monthly_reports mr ON mr.id = ri.report_id AND mr.user_id = ri.user_id
+           LEFT JOIN students s ON s.id = mr.student_id
+           WHERE ri.user_id = ? AND ri.course_id IS NOT NULL AND ri.kind IN ('summary', 'plan')
+                 ${onlyStudent ? 'AND mr.student_id = ?' : ''}
+           ${onlyStudent ? '' : `UNION ALL
+           SELECT o.course_id AS course_id, 'summary' AS kind, 'observation' AS source, o.id AS ref_id,
+                  substr(o.observed_at, 1, 7) AS year_month, NULL AS student_id,
+                  o.student_name AS student_name
+           FROM observations o
+           WHERE o.user_id = ? AND o.course_id IS NOT NULL`}
+         ) ORDER BY course_id, year_month DESC, student_name`
+      )
+      .all(...(onlyStudent ? [userId, studentParam] : [userId, userId])) as any[];
+
+    const usage: Record<string, unknown> = {};
+    for (const r of rows) {
+      const key = String(r.course_id);
+      const entry =
+        (usage[key] as any) ||
+        (usage[key] = { course_id: r.course_id, taught: 0, planned: 0, observed: 0, entries: [] });
+      if (r.kind === 'plan') entry.planned++;
+      else if (r.source === 'observation') entry.observed++;
+      else entry.taught++;
+      entry.entries.push({
+        report_id: r.ref_id,
+        student_id: r.student_id,
+        student_name: r.student_name ?? '',
+        year_month: r.year_month,
+        kind: r.kind,
+        source: r.source,
+      });
+    }
+    res.json({ usage });
+  } catch (error: any) {
+    res.status(500).json({ error: '查询课程使用情况失败', message: error.message });
+  }
+});
+
+/**
  * AI 批量定掌握星级（SSE）。
  *
  * 老师手点几百门课定档不现实，让模型先给一档，回来照表改。

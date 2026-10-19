@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
-import { startServer, stopServer, req, createUser, url } from './helpers.js';
+import { startServer, stopServer, req, createUser, createStudent, url } from './helpers.js';
 import { setStarGenerator, resetStarGenerator } from '../services/catalogStar.js';
 
 let token = '';
@@ -398,6 +398,170 @@ describe('掌握星级 AI 初评', () => {
 
     const after = await req('GET', '/api/catalog/courses', { token });
     assert.ok(after.body.courses.every((c: any) => c.mastery_star === null), '失败批次不应落库');
+  });
+});
+
+describe('目录 ↔ 报告打通：课程使用情况', () => {
+  let student: any = null;
+  let courseId = 0;
+
+  before(async () => {
+    // 注意：本块要放在「导入历史与删除」之前 —— 那里会删掉全部课程
+    student = await createStudent(token, { name: '打通小明', grade: '高二', subject: '物理' });
+    const cs = await req('GET', '/api/catalog/courses', { token });
+    assert.equal(cs.status, 200);
+    assert.ok(cs.body.courses.length >= 1, '前序用例应已导入课程');
+    courseId = cs.body.courses[0].id;
+  });
+
+  test('还没有任何报告时返回空映射', async () => {
+    const res = await req('GET', '/api/catalog/usage', { token });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.usage, {});
+  });
+
+  test('未登录 401', async () => {
+    assert.equal((await req('GET', '/api/catalog/usage')).status, 401);
+  });
+
+  test('能按课程聚合出已上/计划次数与学生明细，阶测行不计入', async () => {
+    const mk = (body: any) => req('POST', '/api/reports', { token, body });
+    const r1 = await mk({ studentId: student.id, yearMonth: '2026-09', term: '秋季' });
+    const r2 = await mk({ studentId: student.id, yearMonth: '2026-10', term: '秋季' });
+
+    const put = (reportId: number, body: any) =>
+      req('POST', `/api/reports/${reportId}/items`, { token, body });
+
+    await put(r1.body.report.id, { kind: 'summary', content: 'A', courseId });
+    await put(r1.body.report.id, { kind: 'summary', content: 'A', courseId });
+    await put(r1.body.report.id, { kind: 'plan', content: 'A', courseId });
+    await put(r1.body.report.id, { kind: 'exam', content: '阶测安排', courseId });
+    await put(r2.body.report.id, { kind: 'plan', content: 'A', courseId });
+    // 手输的内容（没带 course_id）不该出现在聚合里
+    await put(r1.body.report.id, { kind: 'summary', content: '临时加的课' });
+
+    const res = await req('GET', '/api/catalog/usage', { token });
+    assert.equal(res.status, 200);
+    const u = res.body.usage[String(courseId)];
+    assert.ok(u, '应聚合出这门课的使用情况');
+    assert.equal(u.course_id, courseId);
+    assert.equal(u.taught, 2);
+    assert.equal(u.planned, 2);
+    assert.equal(u.entries.length, 4);
+    for (const e of u.entries) {
+      assert.equal(e.student_name, '打通小明');
+      assert.ok(e.year_month === '2026-09' || e.year_month === '2026-10');
+      assert.ok(e.kind === 'summary' || e.kind === 'plan');
+    }
+  });
+
+  test('听评课也算一次使用：observed 计数 + 明细带 source=observation', async () => {
+    // 老师旁听过这节课 → 目录这门课的「听课」数 +1，跟「已上」分开算
+    const obs = await req('POST', '/api/observations', {
+      token,
+      body: { topic: '旁听的课', courseId, observedAt: '2026-10-20', studentName: '听课同学' },
+    });
+    assert.equal(obs.status, 200);
+    await req('POST', '/api/observations', {
+      token,
+      body: { topic: '又听一节', courseId, observedAt: '2026-10-22' },
+    });
+    // 没关联目录的听评课不该进聚合
+    await req('POST', '/api/observations', { token, body: { topic: '没关联的课' } });
+
+    const res = await req('GET', '/api/catalog/usage', { token });
+    assert.equal(res.status, 200);
+    const u = res.body.usage[String(courseId)];
+    assert.equal(u.observed, 2, '两条旁听记两次');
+    // 已上 / 计划不该被听课数污染
+    assert.equal(u.taught, 2);
+    assert.equal(u.planned, 2);
+
+    const obsEntries = u.entries.filter((e: any) => e.source === 'observation');
+    assert.equal(obsEntries.length, 2);
+    for (const e of obsEntries) {
+      assert.equal(e.kind, 'summary');
+      assert.equal(e.year_month, '2026-10', '听课月份从 observed_at 取');
+      assert.equal(e.student_id, null, '听评课没有学生外键');
+    }
+    // 记了学生姓名的那条要能带出来
+    assert.ok(obsEntries.some((e: any) => e.student_name === '听课同学'));
+  });
+
+  test('别人的报告里的用量看不到', async () => {
+    // 另一个账号拿同一个 courseId 造一条明细（外键不校验，正好测隔离）
+    const otherStudent = await createStudent(otherToken, { name: '隔壁班同学' });
+    const otherReport = await req('POST', '/api/reports', {
+      token: otherToken,
+      body: { studentId: otherStudent.id, yearMonth: '2026-09' },
+    });
+    await req('POST', `/api/reports/${otherReport.body.report.id}/items`, {
+      token: otherToken,
+      body: { kind: 'summary', content: 'A', courseId },
+    });
+
+    const res = await req('GET', '/api/catalog/usage', { token });
+    const u = res.body.usage[String(courseId)];
+    // 只看报告口径的明细（听评课是同账号自己的旁听记录，学生名可以不一样）
+    const reportEntries = u.entries.filter((e: any) => e.source === 'report');
+    assert.ok(reportEntries.length > 0);
+    for (const e of reportEntries) assert.equal(e.student_name, '打通小明');
+
+    const otherView = await req('GET', '/api/catalog/usage', { token: otherToken });
+    const otherCourse = otherView.body.usage[String(courseId)];
+    const otherReports = otherCourse.entries.filter((e: any) => e.source === 'report');
+    assert.equal(otherReports.length, 1);
+    assert.equal(otherReports[0].student_name, '隔壁班同学');
+    assert.equal(otherCourse.observed, 0, '听评课也按账号隔离');
+  });
+
+  test('传 student_id 只算这个学生的进度，非法值回退全量聚合', async () => {
+    const second = await createStudent(token, { name: '进度小红', grade: '高二', subject: '物理' });
+    const rep = await req('POST', '/api/reports', {
+      token,
+      body: { studentId: second.id, yearMonth: '2026-11', term: '秋季' },
+    });
+    await req('POST', `/api/reports/${rep.body.report.id}/items`, {
+      token,
+      body: { kind: 'summary', content: 'A', courseId },
+    });
+    await req('POST', `/api/reports/${rep.body.report.id}/items`, {
+      token,
+      body: { kind: 'plan', content: 'A', courseId },
+    });
+
+    const mine = await req('GET', `/api/catalog/usage?student_id=${second.id}`, { token });
+    assert.equal(mine.status, 200);
+    const u = mine.body.usage[String(courseId)];
+    assert.ok(u, '这个学生的用量也应聚合出来');
+    assert.equal(u.taught, 1);
+    assert.equal(u.planned, 1);
+    assert.equal(u.entries.length, 2);
+    for (const e of u.entries) {
+      assert.equal(e.student_id, second.id);
+      assert.equal(e.student_name, '进度小红');
+      assert.equal(e.year_month, '2026-11');
+      assert.equal(e.source, 'report', '按学生看进度不带听评课（它没有学生外键）');
+    }
+
+    // 另一个学生的口径里看不到小红那两个月
+    const otherMine = await req('GET', `/api/catalog/usage?student_id=${student.id}`, { token });
+    const u2 = otherMine.body.usage[String(courseId)];
+    assert.ok(u2);
+    for (const e of u2.entries) {
+      assert.equal(e.student_id, student.id);
+      assert.notEqual(e.year_month, '2026-11');
+    }
+
+    // 非法值一律忽略，回退成全量聚合
+    for (const bad of ['0', '-1', 'abc', '', '1.5']) {
+      const r = await req('GET', '/api/catalog/usage?student_id=' + bad, { token });
+      assert.equal(r.status, 200);
+      assert.ok(
+        r.body.usage[String(courseId)].entries.length > u.entries.length,
+        'student_id=' + bad + ' 应回退成全量聚合'
+      );
+    }
   });
 });
 

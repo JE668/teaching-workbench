@@ -35,6 +35,8 @@ export interface ReportItem {
   mistakes_done: string;
   homework_done: string;
   exam: string;
+  /** 从课程目录取课时记下的来源条目 id；手输的内容为 null */
+  course_id: number | null;
   sort: number;
   created_at: string;
   updated_at: string;
