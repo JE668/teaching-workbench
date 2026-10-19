@@ -136,6 +136,9 @@ test.describe('月度总结与课程规划', () => {
     const examDlg = page.locator('div.fixed.inset-0.z-50').last();
     await expect(examDlg.getByText('自动推算的阶测安排')).toBeVisible();
     await expect(examDlg.getByText('跨度不够排一次阶测')).toHaveCount(0);
+    // 阶测自动带上它覆盖的课；覆盖不到课的那场会提示可能要调排期
+    await expect(examDlg.getByText(/覆盖金属活动性（共1课）/)).toBeVisible();
+    await expect(examDlg.getByText(/这段跨度里没有计划上课时间/)).toBeVisible();
     await expect(examDlg.getByRole('button', { name: '全部加入规划' })).toBeEnabled();
     await examDlg.getByRole('button', { name: '全部加入规划' }).click();
     await expect(page.getByText(/已加入 \d+ 次阶测安排/)).toBeVisible();
@@ -154,6 +157,8 @@ test.describe('月度总结与课程规划', () => {
     const allText = await readAllText(buf);
     expect(allText).toContain('空气的成分');
     expect(allText).toContain('金属活动性');
+    // 阶测行也带着覆盖文案，老师打出来能看到这次考的是哪几节
+    expect(allText).toContain('覆盖金属活动性');
 
     // —— 目录 ↔ 报告打通：从目录取来的课，回到目录里能看到「已上 / 计划」——
     // 只筛初三化学：DB 是共享的，前面用例也导过目录，全量看会把数字带跑

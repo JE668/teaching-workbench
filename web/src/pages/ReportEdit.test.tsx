@@ -111,8 +111,27 @@ function mockStore(opts: { report?: any; items?: any[]; notFound?: boolean } = {
     if (path === `/reports/${REPORT_ID}/exams` && method === 'POST') {
       const body = JSON.parse(init.body);
       const suggestions = [
-        { date: '2026-11-08', ordinal: '第一次', prefix: '秋季度', content: '秋季度第一次阶测安排：时间11月8日：' },
-        { date: '2026-11-29', ordinal: '第二次', prefix: '秋季度', content: '秋季度第二次阶测安排：时间11月29日：' },
+        {
+          date: '2026-11-08',
+          ordinal: '第一次',
+          prefix: '秋季度',
+          content: '秋季度第一次阶测安排：覆盖凸透镜成像、眼睛与眼镜（共2课）；时间11月8日：',
+          courses: [
+            { date: '2026-10-01', content: '凸透镜成像' },
+            { date: '2026-10-20', content: '眼睛与眼镜' },
+          ],
+          courseCount: 2,
+          coverage: '覆盖凸透镜成像、眼睛与眼镜（共2课）',
+        },
+        {
+          date: '2026-11-29',
+          ordinal: '第二次',
+          prefix: '秋季度',
+          content: '秋季度第二次阶测安排：时间11月29日：',
+          courses: [],
+          courseCount: 0,
+          coverage: '',
+        },
       ];
       if (body.insert) {
         for (const s of suggestions) {
@@ -350,8 +369,15 @@ describe('月度报告编辑器', () => {
     await user.click(screen.getByRole('button', { name: /自动推算阶测/ }));
 
     const dialog = (await screen.findByText('自动推算的阶测安排')).closest('.fixed') as HTMLElement;
-    expect(within(dialog).getByText('秋季度第一次阶测安排：时间11月8日：')).toBeInTheDocument();
+    // 覆盖写进阶测行文案里，老师一眼能看到这次考哪些课
+    expect(
+      within(dialog).getByText('秋季度第一次阶测安排：覆盖凸透镜成像、眼睛与眼镜（共2课）；时间11月8日：')
+    ).toBeInTheDocument();
+    // 覆盖不到课的那场保持老文案，并提示可能要调排期
     expect(within(dialog).getByText('秋季度第二次阶测安排：时间11月29日：')).toBeInTheDocument();
+    expect(within(dialog).getByText('这段跨度里没有计划上课时间，可能要调整排期')).toBeInTheDocument();
+    // 有覆盖的那场不该出现这条提示
+    expect(within(dialog).getAllByText('这段跨度里没有计划上课时间，可能要调整排期')).toHaveLength(1);
     // 只预览时不应插库
     expect(
       request.mock.calls.find(([p, init]) => p === `/reports/${REPORT_ID}/exams` && JSON.parse(init.body).insert === true)

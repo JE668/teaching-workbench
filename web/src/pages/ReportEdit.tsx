@@ -943,15 +943,20 @@ function ExamDialog({
     >
       <div className="space-y-2">
         <p className="text-xs text-slate-400">
-          按规划里已有上课时间的跨度推算：学期每 3 周一次，寒暑假每 2 周一次。加入后仍可以改时间。
+          按规划里已有上课时间的跨度推算：学期每 3 周一次，寒暑假每 2 周一次。每场阶测自动带上它覆盖的课，加入后仍可以改时间。
         </p>
         {suggestions.length === 0 ? (
           <div className="py-8 text-center text-sm text-slate-400">跨度不够排一次阶测</div>
         ) : (
           suggestions.map((s) => (
-            <div key={s.date} className="flex items-center justify-between rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2">
-              <span className="text-sm text-slate-700">{s.content}</span>
-              <Badge tone="violet">{s.date.slice(5).replace('-', '.')}</Badge>
+            <div key={s.date} className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-slate-700">{s.content}</span>
+                <Badge tone="violet">{s.date.slice(5).replace('-', '.')}</Badge>
+              </div>
+              {s.courseCount === 0 && (
+                <p className="mt-1 text-xs text-amber-500">这段跨度里没有计划上课时间，可能要调整排期</p>
+              )}
             </div>
           ))
         )}

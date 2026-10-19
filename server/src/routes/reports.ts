@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { generateExamSchedule, dateSpan } from '../utils/examSchedule.js';
+import { generateExamScheduleWithCourses, dateSpan } from '../utils/examSchedule.js';
 import {
   buildReportXlsx,
   buildReportFilename,
@@ -319,22 +319,33 @@ router.post('/:id/exams', (req: AuthenticatedRequest, res) => {
     const report = loadReport(id, userId);
     if (!report) return res.status(404).json({ error: '月度报告不存在' });
 
-    const items = db
-      .prepare('SELECT scheduled_at FROM report_items WHERE report_id = ? AND user_id = ?')
+    // 规划块里的课。总结/阶测本来就没有计划上课时间，不参与推算。
+    // 按 sort 排，这样覆盖列表的顺序和页面上的行顺序一致。
+    const planRows = db
+      .prepare(
+        `SELECT content, scheduled_at FROM report_items
+         WHERE report_id = ? AND user_id = ? AND kind = 'plan'
+         ORDER BY sort, id`
+      )
       .all(id, userId) as any[];
 
     const start = String(req.body?.startDate || '').trim();
     const end = String(req.body?.endDate || '').trim();
     let span = { startDate: start, endDate: end };
     if (!start && !end) {
-      const found = dateSpan(items.map((r) => String(r.scheduled_at || '')));
+      const found = dateSpan(planRows.map((r) => String(r.scheduled_at || '')));
       if (!found) {
         return res.status(422).json({ error: '规划里还没有计划上课时间，无法推算阶测' });
       }
       span = found;
     }
 
-    const suggestions = generateExamSchedule(String(report.term || ''), span.startDate, span.endDate);
+    const suggestions = generateExamScheduleWithCourses(
+      String(report.term || ''),
+      span.startDate,
+      span.endDate,
+      planRows.map((r) => ({ date: String(r.scheduled_at || ''), content: String(r.content || '') }))
+    );
     if (!suggestions.length) {
       return res.status(422).json({
         error: '这个月的排课跨度不够一次阶测',

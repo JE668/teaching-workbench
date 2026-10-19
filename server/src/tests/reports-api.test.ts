@@ -354,7 +354,7 @@ describe('阶测安排自动生成', () => {
     assert.equal(res.body.endDate, '2026-11-16');
     assert.ok(res.body.suggestions.length >= 2);
     assert.equal(res.body.inserted, res.body.suggestions.length);
-    assert.match(res.body.suggestions[0].content, /^秋季度第一次阶测安排：时间\d+月\d+日：$/);
+    assert.match(res.body.suggestions[0].content, /^秋季度第一次阶测安排：.*时间\d+月\d+日：$/);
 
     const items = (await req('GET', `/api/reports/${fresh.id}`, { token })).body.items;
     const exams = items.filter((i: any) => i.kind === 'exam');
@@ -388,6 +388,57 @@ describe('阶测安排自动生成', () => {
     });
     assert.equal(res.status, 422);
     assert.match(res.body.error, /跨度不够/);
+  });
+
+  test('每场阶测带上它覆盖的课，落库后文案里也带着', async () => {
+    // yearMonth 要用别的用例没占过的月份：同月报告是 upsert，撞了会把上一条用例的规划带进来
+    const fresh = await makeReport({ yearMonth: '2025-09', term: '秋季' });
+    for (const row of [
+      { kind: 'plan', content: '整式的加减', scheduledAt: '2026-09-08' },
+      { kind: 'plan', content: '一元一次方程', scheduledAt: '2026-09-15' },
+      { kind: 'plan', content: '二元一次方程组', scheduledAt: '2026-09-29' },
+      { kind: 'summary', content: '本月总结', scheduledAt: '2026-09-01' },
+    ]) {
+      await req('POST', `/api/reports/${fresh.id}/items`, { token, body: row });
+    }
+
+    const res = await req('POST', `/api/reports/${fresh.id}/exams`, { token, body: { insert: true } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.startDate, '2026-09-08');
+    assert.equal(res.body.endDate, '2026-09-29');
+    assert.equal(res.body.suggestions.length, 1);
+    assert.deepEqual(
+      res.body.suggestions[0].courses.map((c: any) => c.content),
+      ['整式的加减', '一元一次方程', '二元一次方程组']
+    );
+    assert.equal(res.body.suggestions[0].courseCount, 3);
+    assert.equal(
+      res.body.suggestions[0].content,
+      '秋季度第一次阶测安排：覆盖整式的加减、一元一次方程、二元一次方程组（共3课）；时间9月29日：'
+    );
+
+    // 覆盖写进阶测行文案，Excel 导出的日期解析靠它，不能被覆盖文案挤掉
+    const items = (await req('GET', `/api/reports/${fresh.id}`, { token })).body.items;
+    const exams = items.filter((i: any) => i.kind === 'exam');
+    assert.equal(exams.length, 1);
+    assert.match(exams[0].content, /覆盖整式的加减.*9月29日：/);
+    assert.equal(exams[0].scheduled_at, '2026-09-29');
+  });
+
+  test('手输跨度但规划里有课，覆盖照样算出来', async () => {
+    const fresh = await makeReport({ yearMonth: '2026-07', term: '暑假' });
+    await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'plan', content: '声现象', scheduledAt: '2026-07-10' },
+    });
+    const res = await req('POST', `/api/reports/${fresh.id}/exams`, {
+      token,
+      body: { startDate: '2026-07-06', endDate: '2026-08-31' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.suggestions.length, 4);
+    assert.equal(res.body.inserted, 0);
+    assert.equal(res.body.suggestions[0].coverage, '覆盖声现象（共1课）');
   });
 });
 

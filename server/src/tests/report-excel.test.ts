@@ -43,6 +43,17 @@ describe('parseExamDate', () => {
     assert.equal(parseExamDate('阶测时间10.7', '2026-10'), '2026-10-07');
   });
 
+  test('阶测行带了覆盖文案也照样能抠出日期（覆盖在时间前面）', () => {
+    assert.equal(
+      parseExamDate('秋季度第一次阶测安排：覆盖整式的加减、一元一次方程（共2课）；时间11月8日：', '2026-10'),
+      '2026-11-08'
+    );
+    assert.equal(
+      parseExamDate('秋季度第二次阶测安排：覆盖声现象等6课；时间12月1日：', '2026-10'),
+      '2026-12-01'
+    );
+  });
+
   test('拿不到年月时用当前年份', () => {
     const got = parseExamDate('时间12月20日', '');
     assert.equal(got, `${new Date().getFullYear()}-12-20`);
