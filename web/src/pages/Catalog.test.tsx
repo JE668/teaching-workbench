@@ -73,7 +73,7 @@ function makeImport(overrides: Record<string, unknown> = {}) {
 }
 
 /** 统一 mock 掉页面用到的所有接口 */
-function mockApi(opts: { courses?: any[]; imports?: any[] } = {}) {
+function mockApi(opts: { courses?: any[]; imports?: any[]; usage?: Record<string, any> } = {}) {
   const courses = opts.courses || [];
   const imports = opts.imports || [];
   request.mockImplementation((path: string, init?: any) => {
@@ -84,6 +84,7 @@ function mockApi(opts: { courses?: any[]; imports?: any[] } = {}) {
     if (path.startsWith('/catalog/courses')) {
       return Promise.resolve({ courses, total: courses.length });
     }
+    if (path.startsWith('/catalog/usage')) return Promise.resolve({ usage: opts.usage || {} });
     if (path.startsWith('/catalog/imports/') && init?.method === 'DELETE') {
       return Promise.resolve({ deleted: courses.length });
     }
@@ -533,5 +534,61 @@ describe('掌握星级 · AI 批量定档', () => {
     expect(await screen.findByText('模型返回了无法解析的结果')).toBeInTheDocument();
     expect(screen.queryByText(/AI 已定档/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'AI 定档' })).not.toBeDisabled();
+  });
+});
+
+describe('目录 ↔ 报告打通', () => {
+  it('这门课在月度报告里用过，目录里显示已上/计划，点开看是哪些学生', async () => {
+    const user = userEvent.setup();
+    const course = makeCourse({ id: 7, content: '声现象' });
+    mockApi({
+      courses: [course],
+      imports: [makeImport()],
+      usage: {
+        '7': {
+          course_id: 7,
+          taught: 2,
+          planned: 1,
+          entries: [
+            { report_id: 11, student_id: 1, student_name: '李小明', year_month: '2026-09', kind: 'summary' },
+            { report_id: 12, student_id: 2, student_name: '王小红', year_month: '2026-09', kind: 'summary' },
+            { report_id: 13, student_id: 1, student_name: '李小明', year_month: '2026-10', kind: 'plan' },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+
+    const chip = await screen.findByRole('button', { name: /已上2 · 计划1/ });
+    expect(chip).toBeInTheDocument();
+
+    await user.click(chip);
+    expect(await screen.findByText('「声现象」上过哪些课')).toBeInTheDocument();
+    expect(screen.getByText('已上 2 次 · 计划 1 次')).toBeInTheDocument();
+    // 李小明出现两次（9 月已上 + 10 月计划）
+    expect(screen.getAllByText('李小明').length).toBe(2);
+    expect(screen.getByText('王小红')).toBeInTheDocument();
+    expect(screen.getAllByText('已上').length).toBe(2);
+    expect(screen.getAllByText('计划').length).toBe(1);
+  });
+
+  it('没有学生上过课时不显示标签', async () => {
+    mockApi({ courses: [makeCourse({ content: '声现象' })], imports: [makeImport()], usage: {} });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+    expect(screen.queryByRole('button', { name: /已上|计划/ })).not.toBeInTheDocument();
+  });
+
+  it('usage 接口挂了也不影响目录浏览', async () => {
+    mockApi({ courses: [makeCourse({ content: '声现象' })], imports: [makeImport()] });
+    // 只让 usage 这一个接口失败，其它照常
+    const real = request.getMockImplementation()!;
+    request.mockImplementation((path: string, init?: any) =>
+      path.startsWith('/catalog/usage') ? Promise.reject(new Error('boom')) : real(path, init)
+    );
+    renderWithProviders(<Catalog />);
+    await screen.findByText('声现象');
+    expect(screen.queryByRole('button', { name: /已上|计划/ })).not.toBeInTheDocument();
   });
 });

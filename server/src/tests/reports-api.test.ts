@@ -205,6 +205,48 @@ describe('明细行', () => {
     summaryItem = res.body.item;
   });
 
+  test('新增行可以带 course_id（从目录取课时记下来源）', async () => {
+    const res = await req('POST', `/api/reports/${report.id}/items`, {
+      token,
+      body: { kind: 'summary', content: '目录里的课', courseId: 4242 },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.item.course_id, 4242);
+
+    // camelCase 与 snake_case 都认
+    const camel = await req('POST', `/api/reports/${report.id}/items`, {
+      token,
+      body: { kind: 'plan', content: '又一条', course_id: 77 },
+    });
+    assert.equal(camel.body.item.course_id, 77);
+  });
+
+  test('非法的 course_id 一律落 null，不会把脏值写进库里', async () => {
+    for (const bad of [0, -5, 1.5, 'abc', '', null]) {
+      const res = await req('POST', `/api/reports/${report.id}/items`, {
+        token,
+        body: { kind: 'plan', content: '脏值校验', courseId: bad },
+      });
+      assert.equal(res.status, 200, 'courseId=' + JSON.stringify(bad));
+      assert.equal(res.body.item.course_id, null, 'courseId=' + JSON.stringify(bad));
+    }
+  });
+
+  test('可以改单格，也可以把来源课程清成 null', async () => {
+    const res = await req('POST', `/api/reports/${report.id}/items`, {
+      token,
+      body: { kind: 'plan', content: '手输替换掉目录课', courseId: 999 },
+    });
+    const itemId = res.body.item.id;
+
+    const cleared = await req('PATCH', `/api/reports/${report.id}/items/${itemId}`, {
+      token,
+      body: { courseId: null },
+    });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.item.course_id, null);
+  });
+
   test('行类型不合法返回 400', async () => {
     const id = report.id;
     for (const bad of ['summarys', 'PLAN', '', 'other']) {

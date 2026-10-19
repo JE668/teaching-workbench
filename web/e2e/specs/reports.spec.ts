@@ -154,6 +154,23 @@ test.describe('月度总结与课程规划', () => {
     const allText = await readAllText(buf);
     expect(allText).toContain('空气的成分');
     expect(allText).toContain('金属活动性');
+
+    // —— 目录 ↔ 报告打通：从目录取来的课，回到目录里能看到「已上 / 计划」——
+    await page.goto('/catalog');
+    const usedRow = page.locator('tr', { hasText: '空气的成分' }).first();
+    await expect(usedRow.getByRole('button', { name: '已上1' })).toBeVisible();
+    const plannedRow = page.locator('tr', { hasText: '金属活动性' }).first();
+    await expect(plannedRow.getByRole('button', { name: '计划1' })).toBeVisible();
+    // 没被取过课的目录条目不带标签
+    await expect(page.locator('tr', { hasText: '水' }).first().getByRole('button', { name: /已上|计划/ })).toHaveCount(0);
+
+    await usedRow.getByRole('button', { name: '已上1' }).click();
+    await expect(page.getByText('「空气的成分」上过哪些课')).toBeVisible();
+    await expect(page.getByText('已上 1 次 · 计划 0 次')).toBeVisible();
+    await expect(page.getByText('报告同学')).toBeVisible();
+    await expect(page.getByText('2026-09')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByText('「空气的成分」上过哪些课')).toHaveCount(0);
   });
 
   test('手动上移一条跨月的课，区块月份标题保持不变（回归）', async ({ page }) => {

@@ -204,6 +204,50 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
 });
 
 /**
+ * 目录 ↔ 报告打通：每门目录课程在月度报告里被用过几次。
+ *
+ * 明细行的 kind='summary' 记在「已上的课」，'plan' 记在「下月要上的课」，
+ * 于是目录里能看出「已经给几个学生上过了 / 计划给几个学生上」。
+ * 一次性返回全量映射，前端按 course_id 自己 join —— 几百门课不需要 N 次请求。
+ */
+router.get('/usage', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const rows = db
+      .prepare(
+        `SELECT ri.course_id AS course_id, ri.kind AS kind, ri.report_id AS report_id,
+                mr.year_month AS year_month, mr.student_id AS student_id, s.name AS student_name
+         FROM report_items ri
+         JOIN monthly_reports mr ON mr.id = ri.report_id AND mr.user_id = ri.user_id
+         LEFT JOIN students s ON s.id = mr.student_id
+         WHERE ri.user_id = ? AND ri.course_id IS NOT NULL AND ri.kind IN ('summary', 'plan')
+         ORDER BY ri.course_id, mr.year_month DESC, s.name`
+      )
+      .all(userId) as any[];
+
+    const usage: Record<string, unknown> = {};
+    for (const r of rows) {
+      const key = String(r.course_id);
+      const entry =
+        (usage[key] as any) ||
+        (usage[key] = { course_id: r.course_id, taught: 0, planned: 0, entries: [] });
+      if (r.kind === 'plan') entry.planned++;
+      else entry.taught++;
+      entry.entries.push({
+        report_id: r.report_id,
+        student_id: r.student_id,
+        student_name: r.student_name ?? '',
+        year_month: r.year_month,
+        kind: r.kind,
+      });
+    }
+    res.json({ usage });
+  } catch (error: any) {
+    res.status(500).json({ error: '查询课程使用情况失败', message: error.message });
+  }
+});
+
+/**
  * AI 批量定掌握星级（SSE）。
  *
  * 老师手点几百门课定档不现实，让模型先给一档，回来照表改。

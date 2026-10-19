@@ -11,6 +11,7 @@ import {
   Sparkles,
   Loader2,
   X,
+  UserCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -64,6 +65,24 @@ interface CatalogImport {
   courses_duplicated: number;
   failed_sheets: string[];
   created_at: string;
+}
+
+/** 目录 ↔ 报告打通：一门课在月度报告里被用过几次 */
+interface CourseUsageEntry {
+  report_id: number;
+  student_id: number;
+  student_name: string;
+  year_month: string;
+  kind: 'summary' | 'plan';
+}
+
+interface CourseUsage {
+  course_id: number;
+  /** 记在「已上的课」里的次数 */
+  taught: number;
+  /** 记在「下月要上的课」里的次数 */
+  planned: number;
+  entries: CourseUsageEntry[];
 }
 
 interface Facets {
@@ -138,6 +157,63 @@ function StarEditor({ value, onPick }: { value: number | null; onPick: (v: numbe
 /** 每个分组先展示的课程条数，其余按需展开 */
 const GROUP_PAGE_SIZE = 12;
 
+/** 「已上 3 · 计划 1」小标签：点一下看是哪些学生 */
+function UsageChip({
+  usage,
+  onShow,
+}: {
+  usage: CourseUsage;
+  onShow: () => void;
+}) {
+  const parts = [
+    usage.taught > 0 ? '已上' + usage.taught : '',
+    usage.planned > 0 ? '计划' + usage.planned : '',
+  ].filter(Boolean);
+  if (!parts.length) return null;
+  return (
+    <button
+      type="button"
+      onClick={onShow}
+      title="点一下看是哪些学生"
+      className="mt-1 inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-600 hover:bg-brand-100"
+    >
+      <UserCheck size={11} />
+      {parts.join(' · ')}
+    </button>
+  );
+}
+
+/** 一门课的使用明细：哪些学生、哪个月、已上还是计划 */
+function UsageDialog({ course, usage, onClose }: { course: CatalogCourse | null; usage: CourseUsage | undefined; onClose: () => void }) {
+  if (!course) return null;
+  const u = usage || { course_id: course.id, taught: 0, planned: 0, entries: [] };
+  return (
+    <Modal open title={'「' + course.content + '」上过哪些课'} onClose={onClose} footer={null}>
+      <p className="text-sm text-slate-500">已上 {u.taught} 次 · 计划 {u.planned} 次</p>
+      {u.entries.length ? (
+        <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-100">
+          {u.entries.map((e, i) => (
+            <div
+              key={e.report_id + ':' + i}
+              className="flex items-center justify-between gap-2 border-b border-slate-50 px-3 py-2 text-sm last:border-0"
+            >
+              <span className="font-medium text-slate-700">{e.student_name || '未填姓名'}</span>
+              <span className="flex items-center gap-2 text-xs text-slate-400">
+                {e.year_month}
+                <Badge tone={e.kind === 'summary' ? 'brand' : 'info'}>
+                  {e.kind === 'summary' ? '已上' : '计划'}
+                </Badge>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm text-slate-400">还没有学生上过这门课。</p>
+      )}
+    </Modal>
+  );
+}
+
 /**
  * 一个分组（年级+学科 · 学期 · 轨）的课程表。
  *
@@ -147,11 +223,16 @@ const GROUP_PAGE_SIZE = 12;
 function CourseGroupCard({
   name,
   list,
+  usage,
   onPickStar,
+  onShowUsage,
 }: {
   name: string;
   list: CatalogCourse[];
+  /** course_id → 已上/计划次数 */
+  usage: Record<string, CourseUsage>;
   onPickStar: (course: CatalogCourse, value: number | null) => void;
+  onShowUsage: (course: CatalogCourse) => void;
 }) {
   const [visible, setVisible] = useState(GROUP_PAGE_SIZE);
   const rest = Math.max(0, list.length - visible);
@@ -187,6 +268,9 @@ function CourseGroupCard({
                     <span className="ml-1.5 inline-block align-middle text-[11px] text-amber-600">
                       「{c.section}」
                     </span>
+                  )}
+                  {usage[String(c.id)] && (
+                    <UsageChip usage={usage[String(c.id)]!} onShow={() => onShowUsage(c)} />
                   )}
                 </td>
                 <td className="px-3 py-2">
@@ -229,6 +313,9 @@ export default function Catalog() {
   const [courses, setCourses] = useState<CatalogCourse[]>([]);
   const [facets, setFacets] = useState<Facets>({ grades: [], subjects: [], terms: [], types: [], tracks: [], textbooks: [] });
   const [imports, setImports] = useState<CatalogImport[]>([]);
+  // 目录 ↔ 报告打通：course_id → 已上/计划次数
+  const [usage, setUsage] = useState<Record<string, CourseUsage>>({});
+  const [usageCourse, setUsageCourse] = useState<CatalogCourse | null>(null);
   const [loading, setLoading] = useState(true);
 
   // 筛选条件读写地址栏：刷新不丢、手机上能分享某个视图、也能直接回跳
@@ -281,6 +368,11 @@ export default function Catalog() {
       setFacets(f);
       setCourses(cs.courses);
       setImports(im.imports);
+      // 使用情况单独取：报告改了才会变，跟着目录一起刷一次即可
+      void api
+        .request<{ usage: Record<string, CourseUsage> }>('/catalog/usage')
+        .then((r) => setUsage(r.usage))
+        .catch(() => setUsage({}));
     } catch (e: any) {
       toast.error(e.message || '加载课程目录失败');
     } finally {
@@ -613,10 +705,24 @@ export default function Catalog() {
           )}
 
           {[...byGroup.entries()].map(([key, list]) => (
-            <CourseGroupCard key={key} name={key} list={list} onPickStar={pickStar} />
+            <CourseGroupCard
+              key={key}
+              name={key}
+              list={list}
+              usage={usage}
+              onPickStar={pickStar}
+              onShowUsage={setUsageCourse}
+            />
           ))}
         </div>
       )}
+
+      {/* 目录 ↔ 报告打通：这门课已经给谁上过了 */}
+      <UsageDialog
+        course={usageCourse}
+        usage={usageCourse ? usage[String(usageCourse.id)] : undefined}
+        onClose={() => setUsageCourse(null)}
+      />
 
       {/* 导入历史 */}
       {anyImported && (

@@ -566,6 +566,8 @@ export default function ReportEdit() {
               type: c.type,
               score: c.score,
               difficulty: c.difficulty,
+              // 记下来源课程，目录里才能看出「这门课已经给几个学生上过了」
+              course_id: c.id,
             });
             added++;
           }

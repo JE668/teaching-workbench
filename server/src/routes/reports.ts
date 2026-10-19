@@ -49,6 +49,7 @@ const ITEM_FIELDS = [
   'mistakes_done',
   'homework_done',
   'exam',
+  'course_id',
 ] as const;
 
 /** 前端发 camelCase，库列是 snake_case，统一在这里对齐 */
@@ -57,6 +58,7 @@ const ITEM_ALIASES: Record<string, (typeof ITEM_FIELDS)[number]> = {
   notesDone: 'notes_done',
   mistakesDone: 'mistakes_done',
   homeworkDone: 'homework_done',
+  courseId: 'course_id',
 };
 
 /** 把请求体归一成 snake_case 列名 */
@@ -104,10 +106,17 @@ function mapItem(row: any) {
     mistakes_done: row.mistakes_done,
     homework_done: row.homework_done,
     exam: row.exam,
+    course_id: numOrNull(row.course_id),
     sort: row.sort,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+/** 课程目录条目 id：合法正整数才认，其它一律落 null（等于「不是从目录取的」） */
+function numOrNull(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 /** 报告列表，可带 studentId 过滤 */
@@ -415,8 +424,8 @@ router.post('/:id/items', (req: AuthenticatedRequest, res) => {
     const id = db
       .prepare(
         `INSERT INTO report_items (user_id, report_id, kind, seq, content, type, score, difficulty,
-          scheduled_at, attendance, notes_done, mistakes_done, homework_done, exam, sort)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          scheduled_at, attendance, notes_done, mistakes_done, homework_done, exam, course_id, sort)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         userId,
@@ -433,6 +442,7 @@ router.post('/:id/items', (req: AuthenticatedRequest, res) => {
         str(body.mistakes_done),
         str(body.homework_done),
         str(body.exam),
+        numOrNull(body.course_id),
         Number(maxSort?.m || 0) + 1
       ).lastInsertRowid as number;
 
@@ -469,6 +479,10 @@ router.patch('/:id/items/:itemId', (req: AuthenticatedRequest, res) => {
       if (field === 'seq') {
         sets.push('seq = ?');
         params.push(num(body[field], 0));
+      } else if (field === 'course_id') {
+        // 手输替换掉目录课时，允许把来源清成 null
+        sets.push('course_id = ?');
+        params.push(numOrNull(body[field]));
       } else {
         sets.push(`${field} = ?`);
         params.push(str(body[field]));
