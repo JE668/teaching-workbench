@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   BookOpen,
   Upload,
@@ -134,6 +135,95 @@ function StarEditor({ value, onPick }: { value: number | null; onPick: (v: numbe
   );
 }
 
+/** 每个分组先展示的课程条数，其余按需展开 */
+const GROUP_PAGE_SIZE = 12;
+
+/**
+ * 一个分组（年级+学科 · 学期 · 轨）的课程表。
+ *
+ * 分组内分页，几百门课不会一次性铺满整个页面；
+ * 窄屏隐藏序号 / 分值占比 / 教材，手机上留辅导内容、课程类型、难度、掌握四列。
+ */
+function CourseGroupCard({
+  name,
+  list,
+  onPickStar,
+}: {
+  name: string;
+  list: CatalogCourse[];
+  onPickStar: (course: CatalogCourse, value: number | null) => void;
+}) {
+  const [visible, setVisible] = useState(GROUP_PAGE_SIZE);
+  const rest = Math.max(0, list.length - visible);
+
+  return (
+    <Card className="overflow-hidden">
+      <div className="border-b border-slate-100 bg-slate-50/60 px-4 py-2 text-sm font-medium text-slate-600">
+        {name}
+        <span className="ml-2 text-xs font-normal text-slate-400">
+          {list.length} 条{visible < list.length ? ' · 已显示 ' + visible : ''}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+              <th className="hidden px-3 py-2 font-medium sm:table-cell">序号</th>
+              <th className="px-3 py-2 font-medium">辅导内容</th>
+              <th className="px-3 py-2 font-medium">课程类型</th>
+              <th className="hidden px-3 py-2 font-medium md:table-cell">分值占比</th>
+              <th className="px-3 py-2 font-medium">难度</th>
+              <th className="hidden px-3 py-2 font-medium md:table-cell">教材</th>
+              <th className="px-3 py-2 font-medium">掌握</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.slice(0, visible).map((c) => (
+              <tr key={c.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                <td className="hidden px-3 py-2 text-slate-400 sm:table-cell">{c.seq}</td>
+                <td className="px-3 py-2">
+                  <span className="font-medium text-slate-700">{c.content}</span>
+                  {c.section && (
+                    <span className="ml-1.5 inline-block align-middle text-[11px] text-amber-600">
+                      「{c.section}」
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <Badge tone={c.type === '专题' ? 'brand' : c.type === '预习' ? 'info' : 'neutral'}>{c.type || '—'}</Badge>
+                </td>
+                <td className="hidden px-3 py-2 text-slate-500 md:table-cell">{c.score || '—'}</td>
+                <td className="px-3 py-2 text-amber-500">{c.difficulty || '—'}</td>
+                <td className="hidden px-3 py-2 text-slate-500 md:table-cell">{c.textbook || '—'}</td>
+                <td className="px-3 py-1.5">
+                  <StarEditor value={c.mastery_star} onPick={(v) => onPickStar(c, v)} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rest > 0 ? (
+        <div className="border-t border-slate-100 px-4 py-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setVisible((n) => Math.min(n + GROUP_PAGE_SIZE, list.length))}
+          >
+            展开更多 · 还有 {rest} 条
+          </Button>
+        </div>
+      ) : visible > GROUP_PAGE_SIZE ? (
+        <div className="border-t border-slate-100 px-4 py-2">
+          <Button variant="ghost" size="sm" onClick={() => setVisible(GROUP_PAGE_SIZE)}>
+            收起
+          </Button>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 export default function Catalog() {
   const toast = useToast();
   const [courses, setCourses] = useState<CatalogCourse[]>([]);
@@ -141,13 +231,33 @@ export default function Catalog() {
   const [imports, setImports] = useState<CatalogImport[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // 筛选
-  const [grade, setGrade] = useState('');
-  const [subject, setSubject] = useState('');
-  const [term, setTerm] = useState('');
-  const [type, setType] = useState('');
-  const [track, setTrack] = useState('');
-  const [q, setQ] = useState('');
+  // 筛选条件读写地址栏：刷新不丢、手机上能分享某个视图、也能直接回跳
+  const [params, setParams] = useSearchParams();
+  const grade = params.get('grade') ?? '';
+  const subject = params.get('subject') ?? '';
+  const term = params.get('term') ?? '';
+  const type = params.get('type') ?? '';
+  const track = params.get('track') ?? '';
+  const textbook = params.get('textbook') ?? '';
+  const q = params.get('q') ?? '';
+
+  const setFilter = useCallback(
+    (key: string, value: string) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (value) next.set(key, value);
+          else next.delete(key);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setParams]
+  );
+
+  const hasFilter = !!(grade || subject || term || type || track || textbook || q);
+  const clearFilters = useCallback(() => setParams(new URLSearchParams(), { replace: true }), [setParams]);
 
   // 导入
   const [importOpen, setImportOpen] = useState(false);
@@ -303,15 +413,17 @@ export default function Catalog() {
     abortRef.current?.abort();
   };
 
-  const filtered = courses.filter(
-    (c) =>
-      (!grade || c.grade === grade) &&
-      (!subject || c.subject === subject) &&
-      (!term || c.term === term) &&
-      (!type || c.type === type) &&
-      (!track || c.track === track) &&
-      (!q || c.content.includes(q) || c.section.includes(q))
-  );
+  // 关键词命中辅导内容 / 分节 / 教材 / 课程类型 / 难度——教材和难度之前搜不到
+  const filtered = courses.filter((c) => {
+    if (grade && c.grade !== grade) return false;
+    if (subject && c.subject !== subject) return false;
+    if (term && c.term !== term) return false;
+    if (type && c.type !== type) return false;
+    if (track && c.track !== track) return false;
+    if (textbook && c.textbook !== textbook) return false;
+    if (!q) return true;
+    return [c.content, c.section, c.textbook, c.type, c.difficulty].some((f) => f.includes(q));
+  });
 
   const byGroup = new Map<string, CatalogCourse[]>();
   for (const c of filtered) {
@@ -363,44 +475,66 @@ export default function Catalog() {
 
       {anyImported && (
         <Card>
-          <CardHeader title="筛选" description="全部本地过滤，不用来回请求" />
-          <div className="grid grid-cols-2 gap-2 px-4 pb-4 md:grid-cols-3 lg:grid-cols-6">
+          <CardHeader
+            title="筛选"
+            description="全部本地过滤，不用来回请求；条件存在地址栏里，刷新不丢也能分享"
+          />
+          <div className="grid grid-cols-2 gap-2 px-4 pb-4 md:grid-cols-3 lg:grid-cols-4">
             <Select
+              aria-label="按年级筛选"
               value={grade}
-              onChange={(e) => setGrade(e.target.value)}
+              onChange={(e) => setFilter('grade', e.target.value)}
               options={facets.grades.map((v) => ({ value: v, label: v }))}
               placeholder="全部年级"
             />
             <Select
+              aria-label="按学科筛选"
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => setFilter('subject', e.target.value)}
               options={facets.subjects.map((v) => ({ value: v, label: v }))}
               placeholder="全部学科"
             />
             <Select
+              aria-label="按学期筛选"
               value={term}
-              onChange={(e) => setTerm(e.target.value)}
+              onChange={(e) => setFilter('term', e.target.value)}
               options={facets.terms.map((v) => ({ value: v, label: v }))}
               placeholder="全部学期"
             />
             <Select
+              aria-label="按课程类型筛选"
               value={type}
-              onChange={(e) => setType(e.target.value)}
+              onChange={(e) => setFilter('type', e.target.value)}
               options={facets.types.map((v) => ({ value: v, label: v }))}
               placeholder="全部类型"
             />
             <Select
+              aria-label="按轨筛选"
               value={track}
-              onChange={(e) => setTrack(e.target.value)}
+              onChange={(e) => setFilter('track', e.target.value)}
               options={facets.tracks.map((v) => ({ value: v, label: v }))}
               placeholder="全部轨"
             />
+            <Select
+              aria-label="按教材版本筛选"
+              value={textbook}
+              onChange={(e) => setFilter('textbook', e.target.value)}
+              options={facets.textbooks.map((v) => ({ value: v, label: v }))}
+              placeholder="全部教材版本"
+            />
             <Input
+              aria-label="搜索辅导内容 / 教材 / 难度"
               value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="搜索辅导内容"
+              onChange={(e) => setFilter('q', e.target.value)}
+              placeholder="搜索辅导内容 / 教材 / 难度"
               icon={<Search size={14} />}
             />
+            {hasFilter ? (
+              <Button variant="outline" onClick={() => clearFilters()}>
+                <RotateCcw size="14" />
+                清空筛选
+              </Button>
+            ) : null}
           </div>
         </Card>
       )}
@@ -429,10 +563,7 @@ export default function Catalog() {
             title="没有匹配的课程"
             description="换个筛选条件试试"
             action={
-              <Button
-                variant="outline"
-                onClick={() => { setGrade(''); setSubject(''); setTerm(''); setType(''); setTrack(''); setQ(''); }}
-              >
+              <Button variant="outline" onClick={() => clearFilters()}>
                 <RotateCcw size={16} />
                 清空筛选
               </Button>
@@ -482,51 +613,7 @@ export default function Catalog() {
           )}
 
           {[...byGroup.entries()].map(([key, list]) => (
-            <Card key={key} className="overflow-hidden">
-              <div className="border-b border-slate-100 bg-slate-50/60 px-4 py-2 text-sm font-medium text-slate-600">
-                {key}
-                <span className="ml-2 text-xs font-normal text-slate-400">{list.length} 条</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                      <th className="px-3 py-2 font-medium">序号</th>
-                      <th className="px-3 py-2 font-medium">辅导内容</th>
-                      <th className="px-3 py-2 font-medium">课程类型</th>
-                      <th className="px-3 py-2 font-medium">分值占比</th>
-                      <th className="px-3 py-2 font-medium">难度</th>
-                      <th className="px-3 py-2 font-medium">教材</th>
-                      <th className="px-3 py-2 font-medium">掌握</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {list.map((c) => (
-                      <tr key={c.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
-                        <td className="px-3 py-2 text-slate-400">{c.seq}</td>
-                        <td className="px-3 py-2">
-                          <span className="font-medium text-slate-700">{c.content}</span>
-                          {c.section && (
-                            <span className="ml-1.5 inline-block align-middle text-[11px] text-amber-600">
-                              「{c.section}」
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <Badge tone={c.type === '专题' ? 'brand' : c.type === '预习' ? 'info' : 'neutral'}>{c.type || '—'}</Badge>
-                        </td>
-                        <td className="px-3 py-2 text-slate-500">{c.score || '—'}</td>
-                        <td className="px-3 py-2 text-amber-500">{c.difficulty || '—'}</td>
-                        <td className="px-3 py-2 text-slate-500">{c.textbook || '—'}</td>
-                        <td className="px-3 py-1.5">
-                          <StarEditor value={c.mastery_star} onPick={(v) => void pickStar(c, v)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
+            <CourseGroupCard key={key} name={key} list={list} onPickStar={pickStar} />
           ))}
         </div>
       )}
