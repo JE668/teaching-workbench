@@ -166,7 +166,7 @@ test.describe('图片链路', () => {
     });
     await expect(page.getByText(/已上传 1 张图片/)).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('img[alt="图片 1"]')).toBeVisible();
-    expect(stagedPath).toMatch(/^_staging\//, '上传应落暂存区');
+    expect(stagedPath, '上传应落暂存区').toMatch(/^_staging\//);
 
     // 暂存文件此刻可访问
     const before = await page.request.get('/uploads/' + stagedPath);

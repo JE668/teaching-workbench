@@ -105,3 +105,43 @@ export async function seedFollowUp(page: Page, data: Record<string, unknown>) {
   expect(res.ok(), '创建回访失败: ' + res.status() + ' ' + (await res.text())).toBeTruthy();
   return (await res.json()).followup.id as number;
 }
+
+/** 通过 API 建一份月度报告，返回其 id。同名学生同月已存在时返回那条。 */
+export async function seedReport(
+  page: Page,
+  data: { studentId: number; yearMonth: string; term?: string; grade?: string; subject?: string }
+): Promise<number> {
+  const res = await apiPost(page, '/api/reports', data);
+  expect(res.ok(), '创建月度报告失败: ' + res.status() + ' ' + (await res.text())).toBeTruthy();
+  return (await res.json()).report.id as number;
+}
+
+/** 给一份月度报告加一条明细（总结 / 规划 / 阶测） */
+export async function seedReportItem(
+  page: Page,
+  reportId: number,
+  data: Record<string, unknown>
+): Promise<{ id: number }> {
+  const res = await apiPost(page, '/api/reports/' + reportId + '/items', data);
+  expect(res.ok(), '添加报告明细失败: ' + res.status() + ' ' + (await res.text())).toBeTruthy();
+  return (await res.json()).item as { id: number };
+}
+
+/** 上传一份课程目录 Excel（走真实导入接口），返回导入结果 */
+export async function importCatalog(page: Page, file: { name: string; buffer: Buffer }, band = '小初') {
+  const token = await getToken(page);
+  const res = await page.request.post('/api/catalog/import', {
+    headers: { Authorization: 'Bearer ' + token },
+    multipart: {
+      file: {
+        name: file.name,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        buffer: file.buffer,
+      },
+      band,
+    },
+  });
+  expect(res.ok(), '导入课程目录失败: ' + res.status() + ' ' + (await res.text())).toBeTruthy();
+  return (await res.json()) as Record<string, unknown>;
+}
+

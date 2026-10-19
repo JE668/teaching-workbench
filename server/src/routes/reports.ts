@@ -233,8 +233,10 @@ router.get('/:id/xlsx', async (req: AuthenticatedRequest, res) => {
       // 月份标题以报告自己的 year_month 为准。不要从明细取首条日期：
       // 明细排序可手动上移（PATCH /:id/items/move），把一条跨月的课挪到最前面
       // 就会把「9月总结」变成「10月总结」，导出的 Excel 与报告文字会一起错。
-      summaryMonth: monthLabel(report.year_month),
-      planMonth: monthLabel(nextYearMonth(report.year_month)),
+      // 关掉哪个开关就不出哪个区块，月份也得一起省掉 —— 否则文件名会承诺
+      // 一个并不存在的规划区块（「6月总结与7月规划.xlsx」里根本没有规划）。
+      summaryMonth: report.summary_enabled ? monthLabel(report.year_month) : '',
+      planMonth: report.plan_enabled ? monthLabel(nextYearMonth(report.year_month)) : '',
       summaryEnabled: !!report.summary_enabled,
       planEnabled: !!report.plan_enabled,
       summaryIntro: report.summary_intro,

@@ -467,6 +467,11 @@ describe('导出 Excel', () => {
 
     const res = await downloadXlsx(fresh.id, token);
     assert.equal(res.status, 200);
+    // 规划开关关了，文件名也不能再提规划区块
+    assert.equal(
+      decodeURIComponent((res.headers.get('content-disposition') || '').split("''")[1]),
+      '一可 秋季初二物理 12月总结.xlsx'
+    );
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(res.buf as unknown as ArrayBuffer);
     const ws = wb.getWorksheet(1)!;
@@ -476,5 +481,21 @@ describe('导出 Excel', () => {
     assert.equal(ws.getCell(4, 6).text, '12月5日');
     // 只剩总结块 4 行
     assert.equal(ws.rowCount, 4);
+  });
+
+  test('两个开关都关掉时文件名退化成「总结与规划.xlsx」', async () => {
+    const fresh = await makeReport({ yearMonth: '2027-01', term: '寒假' });
+    await req('PATCH', `/api/reports/${fresh.id}`, { token, body: { summaryEnabled: false, planEnabled: false } });
+    await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'summary', content: '寒假的课', scheduledAt: '2027-01-05' },
+    });
+
+    const res = await downloadXlsx(fresh.id, token);
+    assert.equal(res.status, 200);
+    assert.equal(
+      decodeURIComponent((res.headers.get('content-disposition') || '').split("''")[1]),
+      '一可 寒假初二物理 总结与规划.xlsx'
+    );
   });
 });

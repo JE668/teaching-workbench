@@ -72,15 +72,19 @@ export default function Reports() {
 
   const loadReports = useCallback(async (stu = '') => {
     const query = stu ? '?studentId=' + encodeURIComponent(stu) : '';
-    const res = await api.request<MonthlyReport[]>('/reports' + query);
-    setReports(res);
+    // 接口返回的是 { reports: [...] } 包一层 —— 直接当数组用会让
+    // reports.map 抛错，整页渲染崩成白屏
+    const res = await api.request<{ reports: MonthlyReport[] }>('/reports' + query);
+    setReports(res.reports);
   }, []);
 
   useEffect(() => {
     void loadReports()
       .catch((e) => toast.error(e.message || '加载报告失败'))
       .finally(() => setLoading(false));
-    api.request<Student[]>('/students').then((r) => setStudents(r)).catch(() => {});
+    api.request<{ students: Student[] }>('/students')
+      .then((r) => setStudents(r.students))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

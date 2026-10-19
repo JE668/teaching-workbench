@@ -64,7 +64,9 @@ function mockApi(list: any[] = []) {
       let data = list;
       const stu = path.split('studentId=')[1];
       if (stu) data = data.filter((r) => String(r.student_id) === stu);
-      return Promise.resolve(data);
+      // 接口真的返回 { reports: [...] }。这里必须保持同样的形状 ——
+      // 早先 mock 直接返回数组，页面里 reports.map 崩了整页白屏也没被测出来。
+      return Promise.resolve({ reports: data });
     }
     if (/^\/reports\/\d+$/.test(path) && init?.method === 'DELETE') {
       const before = list.length;
@@ -72,7 +74,7 @@ function mockApi(list: any[] = []) {
       if (idx >= 0) list.splice(idx, 1);
       return Promise.resolve({ deleted: list.length !== before ? 1 : 0, itemsDeleted: 0 });
     }
-    if (path === '/students') return Promise.resolve(STUDENTS);
+    if (path === '/students') return Promise.resolve({ students: STUDENTS });
     return Promise.reject(new Error('unexpected ' + path));
   });
 }
