@@ -12,6 +12,8 @@ import {
   Loader2,
   X,
   UserCheck,
+  Download,
+  Printer,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -23,7 +25,7 @@ import EmptyState from '../components/ui/EmptyState';
 import { Input, Select } from '../components/ui/Field';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
-import { cn } from '../lib/utils';
+import { cn, saveBlob } from '../lib/utils';
 
 /**
  * 课程目录。
@@ -279,6 +281,7 @@ function CourseGroupCard({
   onPickStar,
   onShowUsage,
   studentId,
+  printing = false,
 }: {
   name: string;
   list: CatalogCourse[];
@@ -288,9 +291,12 @@ function CourseGroupCard({
   onShowUsage: (course: CatalogCourse) => void;
   /** 非空时是「按学生看进度」模式，行内显示这个学生上过没有 */
   studentId: string;
+  /** 打印时全量展开，不分页 */
+  printing?: boolean;
 }) {
   const [visible, setVisible] = useState(GROUP_PAGE_SIZE);
-  const rest = Math.max(0, list.length - visible);
+  const shown = printing ? list.length : visible;
+  const rest = Math.max(0, list.length - shown);
   const inProgressMode = studentId !== '';
 
   return (
@@ -298,7 +304,7 @@ function CourseGroupCard({
       <div className="border-b border-slate-100 bg-slate-50/60 px-4 py-2 text-sm font-medium text-slate-600">
         {name}
         <span className="ml-2 text-xs font-normal text-slate-400">
-          {list.length} 条{visible < list.length ? ' · 已显示 ' + visible : ''}
+          {list.length} 条{visible < list.length ? ' · 已显示 ' + shown : ''}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -315,7 +321,7 @@ function CourseGroupCard({
             </tr>
           </thead>
           <tbody>
-            {list.slice(0, visible).map((c) => (
+            {list.slice(0, shown).map((c) => (
               <tr key={c.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
                 <td className="hidden px-3 py-2 text-slate-400 sm:table-cell">{c.seq}</td>
                 <td className="px-3 py-2">
@@ -347,7 +353,7 @@ function CourseGroupCard({
           </tbody>
         </table>
       </div>
-      {rest > 0 ? (
+      {printing ? null : rest > 0 ? (
         <div className="border-t border-slate-100 px-4 py-2">
           <Button
             variant="ghost"
@@ -640,9 +646,67 @@ export default function Catalog() {
 
   const anyImported = imports.length > 0;
 
+  // —— 导出 / 打印 ——
+  const [exporting, setExporting] = useState(false);
+  const [printing, setPrinting] = useState(false);
+
+  /** 导出当前筛选范围。筛选条件跟页面同源（都在地址栏里），导出的就是屏幕上的那一屏 */
+  async function downloadExcel() {
+    const keep = ['grade', 'subject', 'term', 'type', 'track', 'textbook', 'q'];
+    const qs = new URLSearchParams();
+    for (const k of keep) {
+      const v = params.get(k);
+      if (v) qs.set(k, v);
+    }
+    const suffix = qs.toString() ? '?' + qs.toString() : '';
+    setExporting(true);
+    try {
+      const { blob, filename } = await api.downloadFile('/catalog/xlsx' + suffix);
+      saveBlob(blob, filename);
+      toast.success('已导出 ' + filtered.length + ' 门课');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导出目录失败');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  /** 打开系统打印对话框：先切到打印模式把筛选和分页收掉，渲染完再打印 */
+  function handlePrint() {
+    setPrinting(true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+        setPrinting(false);
+      });
+    });
+  }
+
+  /** 打印页头用的范围描述：跟导出文件名的口径一致 */
+  const scopeText = [grade, subject, term, textbook].filter(Boolean).join(' ');
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <style>{`
+        @media print {
+          .print-hide { display: none !important; }
+          .print-show { display: block !important; }
+          body { background: #fff !important; }
+          .print-page { padding: 0 !important; margin: 0 !important; }
+          table { font-size: 11px !important; }
+          td, th { padding: 4px 8px !important; }
+          thead { display: table-header-group; }
+          tr { break-inside: avoid; }
+        }
+      `}</style>
+
+      {/* 打印页头：屏幕上看不到 */}
+      <div className="print-show hidden border-b-2 border-slate-800 pb-2">
+        <div className="text-lg font-bold text-slate-900">课程目录{scopeText ? ' · ' + scopeText : ''}</div>
+        <div className="mt-0.5 text-xs text-slate-500">共 {filtered.length} 课</div>
+      </div>
+
+      <div className="print-hide flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold text-slate-800">
             <BookOpen className="text-brand-500" size={22} />
@@ -652,14 +716,24 @@ export default function Catalog() {
             从「全年课程体系目录」Excel 批量导入，供课程总结与课程规划取数
           </p>
         </div>
-        <Button onClick={() => { setImportOpen(true); setImportResult(null); setPickedFile(null); }}>
-          <Upload size={16} />
-          导入目录
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handlePrint} disabled={!anyImported}>
+            <Printer size={15} />
+            打印
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void downloadExcel()} disabled={exporting || filtered.length === 0}>
+            {exporting ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+            {exporting ? '导出中' : '导出 Excel'}
+          </Button>
+          <Button onClick={() => { setImportOpen(true); setImportResult(null); setPickedFile(null); }}>
+            <Upload size={16} />
+            导入目录
+          </Button>
+        </div>
       </div>
 
       {/* 统计 */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="print-hide grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           { label: '课程条目', value: courses.length, icon: <FileSpreadsheet size={15} /> },
           { label: '学科', value: facets.subjects.length, icon: <BookOpen size={15} /> },
@@ -677,7 +751,7 @@ export default function Catalog() {
       </div>
 
       {anyImported && (
-        <Card>
+        <Card className="print-hide">
           <CardHeader
             title="筛选"
             description="全部本地过滤，不用来回请求；条件存在地址栏里，刷新不丢也能分享"
@@ -779,7 +853,7 @@ export default function Catalog() {
           />
         </Card>
       ) : filtered.length === 0 ? (
-        <Card>
+        <Card className="print-hide">
           <EmptyState
             icon={<Search size={28} />}
             title="没有匹配的课程"
@@ -794,7 +868,7 @@ export default function Catalog() {
         </Card>
       ) : (
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="print-hide flex flex-wrap items-center justify-between gap-2 px-1">
             <p className="text-xs text-slate-400">
               共 {filtered.length} 条 · 待定档 <span className="font-medium text-amber-600">{pendingStars}</span> 条
               · 点击星星可直接设掌握星级
@@ -818,7 +892,7 @@ export default function Catalog() {
           </div>
 
           {suggestInfo && suggestInfo.total > 0 && (
-            <Card className="px-4 py-3">
+            <Card className="print-hide px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm text-slate-600">
                   <Loader2 size={15} className="animate-spin text-brand-500" />
@@ -853,6 +927,7 @@ export default function Catalog() {
               onPickStar={pickStar}
               onShowUsage={setUsageCourse}
               studentId={student}
+              printing={printing}
             />
           ))}
         </div>
@@ -867,7 +942,7 @@ export default function Catalog() {
 
       {/* 导入历史 */}
       {anyImported && (
-        <Card>
+        <Card className="print-hide">
           <CardHeader title="导入历史" description="同一份文件重复上传不会重复灌库" />
           <div className="divide-y divide-slate-100">
             {imports.map((im) => (
