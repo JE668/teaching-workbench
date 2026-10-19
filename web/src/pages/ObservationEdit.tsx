@@ -11,6 +11,7 @@ import {
   Plus,
   GraduationCap,
   Star,
+  Search,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -34,10 +35,113 @@ import { downloadObservationCard } from '../lib/observationCard';
 
 const NEW = '__new__';
 
+interface CourseOption {
+  id: number;
+  content: string;
+  section: string;
+  grade: string;
+  subject: string;
+  term: string;
+  type: string;
+}
+
+/**
+ * 关联目录课时。
+ *
+ * 目录上千门课，光给个下拉没法找，所以自己做搜索 + 点选。
+ * 课题手输、目录里没有对应条目时就留空 —— 不强求关联。
+ */
+function CourseLinkField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [courses, setCourses] = useState<CourseOption[]>([]);
+  const [q, setQ] = useState('');
+  const selected = courses.find((c) => String(c.id) === value);
+
+  useEffect(() => {
+    api
+      .get('/catalog/courses?limit=5000')
+      .then((r: any) => setCourses(r?.courses || []))
+      .catch(() => {
+        /* 没有目录课时这一栏就留空，不影响填评课 */
+      });
+  }, []);
+
+  if (!courses.length) return null;
+
+  const kw = q.trim();
+  const hit = (s: string) => !kw || s.includes(kw);
+  const shown = courses.filter(
+    (c) => hit(c.content) || hit(c.section) || hit(c.grade) || hit(c.subject) || hit(c.term) || hit(c.type)
+  );
+
+  return (
+    <div>
+      <label className="mb-1.5 block text-sm font-medium text-slate-700">关联目录课时</label>
+      {selected ? (
+        <div className="flex items-center justify-between gap-2 rounded-xl border border-brand-200 bg-brand-50/50 px-3 py-2">
+          <span className="min-w-0 truncate text-sm text-brand-700">
+            <span className="font-medium">{selected.content}</span>
+            {(selected.section || selected.grade || selected.subject || selected.term) && (
+              <span className="ml-1.5 text-xs text-brand-500/80">
+                {[selected.section && '「' + selected.section + '」', selected.grade, selected.subject, selected.term]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="shrink-0 text-xs text-slate-400 hover:text-slate-600"
+          >
+            清除
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="搜课程内容 / 章节 / 年级学科"
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100"
+            />
+          </div>
+          {shown.length > 0 && shown.length <= 50 && (
+            <ul className="mt-1.5 max-h-44 overflow-y-auto rounded-xl border border-slate-100">
+              {shown.map((c) => (
+                <li key={c.id} className="border-b border-slate-50 last:border-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange(String(c.id));
+                      setQ('');
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                  >
+                    <span className="min-w-0 truncate text-slate-700">{c.content}</span>
+                    <span className="shrink-0 text-xs text-slate-400">
+                      {[c.grade, c.subject, c.term, c.type].filter(Boolean).join(' · ')}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {shown.length > 50 ? (
+            <p className="mt-1.5 text-xs text-slate-400">匹配 {shown.length} 门，继续输入缩小范围</p>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
 const emptyForm = {
   teacherSel: '',
   newTeacherName: '',
   topic: '',
+  courseId: '',
   lessonType: 'new',
   observedAt: '',
   grade: '',
@@ -95,6 +199,7 @@ export default function ObservationEdit() {
           teacherSel: o.teacherId ? String(o.teacherId) : '',
           newTeacherName: o.teacherName && o.teacherName !== '—' ? o.teacherName : '',
           topic: o.topic,
+          courseId: o.courseId ? String(o.courseId) : '',
           lessonType: o.lessonType,
           observedAt: o.observedAt || '',
           grade: o.grade || '',
@@ -131,6 +236,8 @@ export default function ObservationEdit() {
     const payload = {
       teacherId,
       topic: form.topic.trim(),
+      // 清空即解绑，显式传 null 让后端把关联清掉
+      courseId: form.courseId ? Number(form.courseId) : null,
       lessonType: form.lessonType,
       observedAt: form.observedAt || null,
       grade: form.grade || null,
@@ -334,6 +441,9 @@ export default function ObservationEdit() {
                 onChange={(e) => set('lessonType', e.target.value)}
                 options={LESSON_TYPES.map((t) => ({ value: t.value, label: t.label }))}
               />
+              <div className="sm:col-span-2">
+                <CourseLinkField value={form.courseId} onChange={(v) => set('courseId', v)} />
+              </div>
             </div>
           </Card>
 

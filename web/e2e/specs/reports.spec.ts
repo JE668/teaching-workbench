@@ -169,7 +169,9 @@ test.describe('月度总结与课程规划', () => {
     // 弹窗断言要圈在弹窗里：页面上的「看谁进度」下拉也有同名 <option>，会撞 strict mode
     const usageDlg = page.locator('div.fixed.inset-0.z-50').last();
     await expect(usageDlg.getByText('「空气的成分」上过哪些课')).toBeVisible();
-    await expect(usageDlg.getByText('已上 1 次 · 计划 0 次')).toBeVisible();
+    // 汇总只列非零项：没规划就不占位「计划 0 次」（跟行内标签口径一致）
+    await expect(usageDlg.getByText('已上 1 次', { exact: true })).toBeVisible();
+    await expect(usageDlg.getByText(/计划 0 次/)).toHaveCount(0);
     await expect(usageDlg.getByText('报告同学')).toBeVisible();
     await expect(usageDlg.getByText('2026-09')).toBeVisible();
     await page.keyboard.press('Escape');

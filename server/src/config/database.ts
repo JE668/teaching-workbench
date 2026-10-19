@@ -365,6 +365,8 @@ export function initDatabase() {
   // 于是目录里能看出「这门课已经给几个学生上过了 / 计划给几个学生上」。
   // 允许为空 —— 手输的课程内容没有对应目录条目。
   ensureColumn('report_items', 'course_id', 'INTEGER');
+  // 听评课记录关联到的目录课时（可空：课题手输、目录里查不到时留空）
+  ensureColumn('observations', 'course_id', 'INTEGER');
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');
@@ -389,4 +391,5 @@ export function initDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id, sort)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_report_items_user ON report_items(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_report_items_course ON report_items(user_id, course_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_observations_course ON observations(user_id, course_id)');
 }

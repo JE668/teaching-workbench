@@ -133,6 +133,8 @@ export interface Observation {
   teacherName: string;
   /** 课题 */
   topic: string;
+  /** 关联的目录课时（课题手输、目录里查不到时为 null） */
+  courseId: number | null;
   lessonType: LessonType;
   /** 听课时间 */
   observedAt: string | null;

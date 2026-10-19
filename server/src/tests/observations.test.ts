@@ -198,3 +198,45 @@ describe('听评课数据隔离', () => {
     assert.ok(!b.body.teachers.some((t: any) => t.id === a.body.teacher.id));
   });
 });
+
+describe('听评课 ↔ 目录（course_id 关联）', () => {
+  test('建记录带 courseId → 回显；非法值落 null；PUT 能改能解绑', async () => {
+    // course_id 是软关联（课题手输、目录里查不到时留空），所以不强校验课程存在
+    const ok = await req('POST', '/api/observations', {
+      token,
+      body: { topic: '带目录的课', courseId: 42, lessonType: 'new' },
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.observation.courseId, 42);
+
+    // 不传 courseId → null
+    const plain = await req('POST', '/api/observations', { token, body: { topic: '手输课题' } });
+    assert.equal(plain.body.observation.courseId, null);
+
+    // 非法值一律落 null：不是正整数就当没关联，不让脏 id 进库
+    for (const bad of [0, -5, 1.5, 'abc', '', null]) {
+      const r = await req('POST', '/api/observations', {
+        token,
+        body: { topic: '非法 id', courseId: bad },
+      });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.observation.courseId, null, 'courseId=' + JSON.stringify(bad));
+    }
+
+    const id = ok.body.observation.id;
+
+    // PUT 更新关联
+    const upd = await req('PUT', '/api/observations/' + id, { token, body: { courseId: 99 } });
+    assert.equal(upd.body.observation.courseId, 99);
+
+    // 显式传 null = 解绑
+    const clear = await req('PUT', '/api/observations/' + id, { token, body: { courseId: null } });
+    assert.equal(clear.body.observation.courseId, null);
+
+    // body 里根本没带 courseId → 保留原值（漏传不该把关联清掉）
+    await req('PUT', '/api/observations/' + id, { token, body: { courseId: 7 } });
+    const keep = await req('PUT', '/api/observations/' + id, { token, body: { topic: '改个题目' } });
+    assert.equal(keep.body.observation.topic, '改个题目');
+    assert.equal(keep.body.observation.courseId, 7);
+  });
+});

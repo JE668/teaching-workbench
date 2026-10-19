@@ -587,6 +587,41 @@ describe('目录 ↔ 报告打通', () => {
     expect(screen.getAllByText('计划').length).toBe(1);
   });
 
+  it('老师旁听过的课显示听课数，明细里标出（听课）', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      courses: [makeCourse({ id: 8, content: '光的反射' })],
+      imports: [makeImport()],
+      usage: {
+        '8': {
+          course_id: 8,
+          taught: 1,
+          planned: 0,
+          observed: 2,
+          entries: [
+            { report_id: 21, student_id: 1, student_name: '李小明', year_month: '2026-09', kind: 'summary', source: 'report' },
+            { report_id: 31, student_id: null, student_name: '听课同学', year_month: '2026-10', kind: 'summary', source: 'observation' },
+            { report_id: 32, student_id: null, student_name: '', year_month: '2026-10', kind: 'summary', source: 'observation' },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<Catalog />);
+    await screen.findByText('光的反射');
+
+    // 听课数跟已上/计划分开列，计划为 0 时不占位
+    const chip = await screen.findByRole('button', { name: /已上1 · 听课2/ });
+    expect(chip).toBeInTheDocument();
+
+    await user.click(chip);
+    expect(await screen.findByText('「光的反射」上过哪些课')).toBeInTheDocument();
+    expect(screen.getByText('已上 1 次 · 听课 2 次')).toBeInTheDocument();
+    // 两条旁听都标出（听课），没记学生姓名的回退成「未填姓名」
+    expect(screen.getAllByText('（听课）').length).toBe(2);
+    expect(screen.getByText('未填姓名')).toBeInTheDocument();
+    expect(screen.getAllByText('听课').length).toBe(2);
+  });
+
   it('没有学生上过课时不显示标签', async () => {
     mockApi({ courses: [makeCourse({ content: '声现象' })], imports: [makeImport()], usage: {} });
     renderWithProviders(<Catalog />);

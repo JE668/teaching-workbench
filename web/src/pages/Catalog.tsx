@@ -67,13 +67,15 @@ interface CatalogImport {
   created_at: string;
 }
 
-/** 目录 ↔ 报告打通：一门课在月度报告里被用过几次 */
+/** 目录 ↔ 报告 / 听评课打通：一门课被用过几次 */
 interface CourseUsageEntry {
   report_id: number;
-  student_id: number;
+  student_id: number | null;
   student_name: string;
   year_month: string;
   kind: 'summary' | 'plan';
+  /** 记录来自月度报告还是听评课 */
+  source: 'report' | 'observation';
 }
 
 interface CourseUsage {
@@ -82,6 +84,8 @@ interface CourseUsage {
   taught: number;
   /** 记在「下月要上的课」里的次数 */
   planned: number;
+  /** 有老师旁听过几节课（听评课） */
+  observed: number;
   entries: CourseUsageEntry[];
 }
 
@@ -157,7 +161,7 @@ function StarEditor({ value, onPick }: { value: number | null; onPick: (v: numbe
 /** 每个分组先展示的课程条数，其余按需展开 */
 const GROUP_PAGE_SIZE = 12;
 
-/** 「已上 3 · 计划 1」小标签：点一下看是哪些学生 */
+/** 「已上 3 · 计划 1 · 听课 1」小标签：点一下看是哪些学生 */
 function UsageChip({
   usage,
   onShow,
@@ -168,13 +172,14 @@ function UsageChip({
   const parts = [
     usage.taught > 0 ? '已上' + usage.taught : '',
     usage.planned > 0 ? '计划' + usage.planned : '',
+    usage.observed > 0 ? '听课' + usage.observed : '',
   ].filter(Boolean);
   if (!parts.length) return null;
   return (
     <button
       type="button"
       onClick={onShow}
-      title="点一下看是哪些学生"
+      title="点一下看是哪些学生、上过还是听课"
       className="mt-1 inline-flex shrink-0 items-center gap-1 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-600 hover:bg-brand-100"
     >
       <UserCheck size={11} />
@@ -183,13 +188,18 @@ function UsageChip({
   );
 }
 
-/** 一门课的使用明细：哪些学生、哪个月、已上还是计划 */
+/** 一门课的使用明细：哪些学生、哪个月、已上还是计划，还有谁听过这节 */
 function UsageDialog({ course, usage, onClose }: { course: CatalogCourse | null; usage: CourseUsage | undefined; onClose: () => void }) {
   if (!course) return null;
-  const u = usage || { course_id: course.id, taught: 0, planned: 0, entries: [] };
+  const u = usage || { course_id: course.id, taught: 0, planned: 0, observed: 0, entries: [] };
+  const parts = [
+    u.taught > 0 ? '已上 ' + u.taught + ' 次' : '',
+    u.planned > 0 ? '计划 ' + u.planned + ' 次' : '',
+    u.observed > 0 ? '听课 ' + u.observed + ' 次' : '',
+  ].filter(Boolean);
   return (
     <Modal open title={'「' + course.content + '」上过哪些课'} onClose={onClose} footer={null}>
-      <p className="text-sm text-slate-500">已上 {u.taught} 次 · 计划 {u.planned} 次</p>
+      <p className="text-sm text-slate-500">{parts.length ? parts.join(' · ') : '还没有记录'}</p>
       {u.entries.length ? (
         <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-100">
           {u.entries.map((e, i) => (
@@ -197,11 +207,14 @@ function UsageDialog({ course, usage, onClose }: { course: CatalogCourse | null;
               key={e.report_id + ':' + i}
               className="flex items-center justify-between gap-2 border-b border-slate-50 px-3 py-2 text-sm last:border-0"
             >
-              <span className="font-medium text-slate-700">{e.student_name || '未填姓名'}</span>
+              <span className="font-medium text-slate-700">
+                {e.student_name || '未填姓名'}
+                {e.source === 'observation' && <span className="ml-1.5 text-xs font-normal text-slate-400">（听课）</span>}
+              </span>
               <span className="flex items-center gap-2 text-xs text-slate-400">
                 {e.year_month}
-                <Badge tone={e.kind === 'summary' ? 'brand' : 'info'}>
-                  {e.kind === 'summary' ? '已上' : '计划'}
+                <Badge tone={e.source === 'observation' ? 'success' : e.kind === 'summary' ? 'brand' : 'info'}>
+                  {e.source === 'observation' ? '听课' : e.kind === 'summary' ? '已上' : '计划'}
                 </Badge>
               </span>
             </div>

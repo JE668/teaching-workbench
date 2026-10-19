@@ -125,6 +125,18 @@ export function mapTeachers(rows: any[]): Teacher[] {
   return rows.map(mapTeacher);
 }
 
+/**
+ * 可空 id 入参 → 正整数或 null。
+ *
+ * course_id 走这条口径：0 / 负数 / 小数 / 'abc' / '' / null 全落 null，
+ * 不把脏值写进库。目录课时的 id 是目录自己的主键，跨用户传同一个值也没意义，
+ * 所以只校验「是不是合法正整数」，不校验归属。
+ */
+export function numOrNull(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 export function mapObservation(row: any, teacherName?: string | null): Observation {
   return {
     id: row.id,
@@ -132,6 +144,7 @@ export function mapObservation(row: any, teacherName?: string | null): Observati
     teacherId: row.teacher_id ?? null,
     teacherName: teacherName ?? '—',
     topic: row.topic,
+    courseId: numOrNull(row.course_id),
     lessonType: normalizeLessonType(row.lesson_type),
     observedAt: row.observed_at ?? null,
     grade: row.grade ?? null,

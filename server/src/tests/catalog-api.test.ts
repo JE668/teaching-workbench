@@ -455,6 +455,39 @@ describe('目录 ↔ 报告打通：课程使用情况', () => {
     }
   });
 
+  test('听评课也算一次使用：observed 计数 + 明细带 source=observation', async () => {
+    // 老师旁听过这节课 → 目录这门课的「听课」数 +1，跟「已上」分开算
+    const obs = await req('POST', '/api/observations', {
+      token,
+      body: { topic: '旁听的课', courseId, observedAt: '2026-10-20', studentName: '听课同学' },
+    });
+    assert.equal(obs.status, 200);
+    await req('POST', '/api/observations', {
+      token,
+      body: { topic: '又听一节', courseId, observedAt: '2026-10-22' },
+    });
+    // 没关联目录的听评课不该进聚合
+    await req('POST', '/api/observations', { token, body: { topic: '没关联的课' } });
+
+    const res = await req('GET', '/api/catalog/usage', { token });
+    assert.equal(res.status, 200);
+    const u = res.body.usage[String(courseId)];
+    assert.equal(u.observed, 2, '两条旁听记两次');
+    // 已上 / 计划不该被听课数污染
+    assert.equal(u.taught, 2);
+    assert.equal(u.planned, 2);
+
+    const obsEntries = u.entries.filter((e: any) => e.source === 'observation');
+    assert.equal(obsEntries.length, 2);
+    for (const e of obsEntries) {
+      assert.equal(e.kind, 'summary');
+      assert.equal(e.year_month, '2026-10', '听课月份从 observed_at 取');
+      assert.equal(e.student_id, null, '听评课没有学生外键');
+    }
+    // 记了学生姓名的那条要能带出来
+    assert.ok(obsEntries.some((e: any) => e.student_name === '听课同学'));
+  });
+
   test('别人的报告里的用量看不到', async () => {
     // 另一个账号拿同一个 courseId 造一条明细（外键不校验，正好测隔离）
     const otherStudent = await createStudent(otherToken, { name: '隔壁班同学' });
@@ -469,11 +502,17 @@ describe('目录 ↔ 报告打通：课程使用情况', () => {
 
     const res = await req('GET', '/api/catalog/usage', { token });
     const u = res.body.usage[String(courseId)];
-    for (const e of u.entries) assert.equal(e.student_name, '打通小明');
+    // 只看报告口径的明细（听评课是同账号自己的旁听记录，学生名可以不一样）
+    const reportEntries = u.entries.filter((e: any) => e.source === 'report');
+    assert.ok(reportEntries.length > 0);
+    for (const e of reportEntries) assert.equal(e.student_name, '打通小明');
 
     const otherView = await req('GET', '/api/catalog/usage', { token: otherToken });
-    assert.equal(otherView.body.usage[String(courseId)].taught, 1);
-    assert.equal(otherView.body.usage[String(courseId)].entries[0].student_name, '隔壁班同学');
+    const otherCourse = otherView.body.usage[String(courseId)];
+    const otherReports = otherCourse.entries.filter((e: any) => e.source === 'report');
+    assert.equal(otherReports.length, 1);
+    assert.equal(otherReports[0].student_name, '隔壁班同学');
+    assert.equal(otherCourse.observed, 0, '听评课也按账号隔离');
   });
 
   test('传 student_id 只算这个学生的进度，非法值回退全量聚合', async () => {
@@ -502,6 +541,7 @@ describe('目录 ↔ 报告打通：课程使用情况', () => {
       assert.equal(e.student_id, second.id);
       assert.equal(e.student_name, '进度小红');
       assert.equal(e.year_month, '2026-11');
+      assert.equal(e.source, 'report', '按学生看进度不带听评课（它没有学生外键）');
     }
 
     // 另一个学生的口径里看不到小红那两个月

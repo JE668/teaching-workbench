@@ -8,6 +8,7 @@ import {
   mapObservations,
   normalizeLessonType,
   normalizeOverallGrade,
+  numOrNull,
   LESSON_TYPE_LABELS,
 } from '../utils/mappers.js';
 import {
@@ -72,6 +73,9 @@ function readFields(body: any, userId: number): Record<string, any> {
   return {
     teacherId: ownedTeacherId(userId, body?.teacherId),
     topic: str(body?.topic, 60) || '',
+    // 关联的目录课时。body 里没带这个键时返回 undefined（让 PUT 保留原值），
+    // 带了但非法（0 / 负数 / 小数 / 非数字 / 空串）才落 null = 解绑
+    courseId: body?.courseId === undefined ? undefined : numOrNull(body?.courseId),
     lessonType: normalizeLessonType(body?.lessonType),
     observedAt: body?.observedAt ? str(body.observedAt, 32) : null,
     grade: str(body?.grade, 30) || null,
@@ -144,14 +148,15 @@ router.post('/', validateBody(observationCreateSchema), (req: AuthenticatedReque
     const result = db
       .prepare(
         `INSERT INTO observations
-         (user_id, teacher_id, topic, lesson_type, observed_at, grade, subject, level,
+         (user_id, teacher_id, topic, course_id, lesson_type, observed_at, grade, subject, level,
           student_name, class_notes, overall_grade, status, teacher_reply)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         userId,
         f.teacherId,
         f.topic,
+        f.courseId,
         f.lessonType,
         f.observedAt,
         f.grade,
@@ -360,6 +365,8 @@ router.put('/:id', validateBody(observationUpdateSchema), (req: AuthenticatedReq
     const next = {
       teacher_id: f.teacherId ?? existing.teacher_id,
       topic: f.topic || existing.topic,
+      // 显式传 courseId（哪怕是 null 表示解绑）才改；没传就保留原值
+      course_id: f.courseId !== undefined ? f.courseId : existing.course_id,
       lesson_type: req.body?.lessonType != null ? f.lessonType : existing.lesson_type,
       observed_at: req.body?.observedAt !== undefined ? f.observedAt : existing.observed_at,
       grade: req.body?.grade !== undefined ? f.grade : existing.grade,
@@ -374,13 +381,13 @@ router.put('/:id', validateBody(observationUpdateSchema), (req: AuthenticatedReq
 
     db.prepare(
       `UPDATE observations SET
-        teacher_id = ?, topic = ?, lesson_type = ?, observed_at = ?,
+        teacher_id = ?, topic = ?, course_id = ?, lesson_type = ?, observed_at = ?,
         grade = ?, subject = ?, level = ?, student_name = ?,
         class_notes = ?, overall_grade = ?, status = ?, teacher_reply = ?,
         updated_at = datetime('now','+8 hours')
        WHERE id = ? AND user_id = ?`
     ).run(
-      next.teacher_id, next.topic, next.lesson_type, next.observed_at,
+      next.teacher_id, next.topic, next.course_id, next.lesson_type, next.observed_at,
       next.grade, next.subject, next.level, next.student_name,
       next.class_notes, next.overall_grade, next.status, next.teacher_reply,
       id, userId

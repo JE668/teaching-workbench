@@ -111,6 +111,8 @@ export interface Observation {
   teacherName: string;
   /** 课题（对应 Word 表"课题"栏） */
   topic: string;
+  /** 关联的目录课时（课题手输、目录里查不到时为 null） */
+  courseId: number | null;
   /** 课型（对应 Word 表"课型"栏） */
   lessonType: LessonType;
   /** 听课时间（对应 Word 表"听课时间"栏） */
