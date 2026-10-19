@@ -400,6 +400,48 @@ describe('导出 Excel', () => {
     assert.equal(name, '一可 春季初二物理 3月总结与4月规划.xlsx');
   });
 
+  test('月份标题以 year_month 为准，不会被手动上移的跨月明细带跑', async () => {
+    // 用独立的年月，避开共享报告被别的用例改过 term 的情况
+    const fresh = await makeReport({ yearMonth: '2026-04', term: '秋季' });
+    // 报告挂在 4 月名下。总结里既有 4 月的课也有 5 月的课，
+    // 把 5 月那条上移到最前面 —— 标题必须还是「4月总结」，不能变成「5月总结」。
+    await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'summary', content: '4月的课', scheduledAt: '2026-04-06', type: '同步' },
+    });
+    const may = await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'summary', content: '5月的课', scheduledAt: '2026-05-03', type: '同步' },
+    });
+    await req('POST', `/api/reports/${fresh.id}/items`, {
+      token,
+      body: { kind: 'plan', content: '5月规划课', scheduledAt: '2026-05-17' },
+    });
+
+    const moved = await req('POST', `/api/reports/${fresh.id}/items/move`, {
+      token,
+      body: { itemId: may.body.item.id, dir: 'up' },
+    });
+    assert.equal(moved.status, 200);
+    assert.equal(moved.body.moved, true, '必须先真的把 5 月的课上移，测试才有意义');
+
+    const res = await downloadXlsx(fresh.id, token);
+    assert.equal(res.status, 200);
+    const name = decodeURIComponent((res.headers.get('content-disposition') || '').split("''")[1]);
+    assert.equal(name, '一可 秋季初二物理 4月总结与5月规划.xlsx');
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.buf as unknown as ArrayBuffer);
+    const ws = wb.getWorksheet(1)!;
+
+    // 版式：总结标题在第 1 行；规划标题位置随总结条数浮动，按内容找
+    assert.equal(ws.getCell(1, 1).text, '一可 秋季初二物理 4月总结');
+    const titles: string[] = [];
+    for (let n = 1; n <= ws.rowCount; n++) titles.push((ws.getRow(n).getCell(1).text as string) || '');
+    assert.ok(titles.includes('一可 秋季初二物理 5月规划'), '规划块标题应为 5月规划，实际标题: ' + JSON.stringify(titles));
+    assert.ok(!titles.some((t) => /5月总结/.test(t)), '总结标题不应被上移的 5 月课带成 5月');
+  });
+
   test('未登录 401、非法 id 400、不存在 404', async () => {
     assert.equal((await downloadXlsx(report.id, '')).status, 401);
     assert.equal((await req('GET', '/api/reports/abc/xlsx', { token })).status, 400);
