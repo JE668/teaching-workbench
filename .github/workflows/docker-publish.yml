@@ -72,7 +72,7 @@ jobs:
   # 本地和测试环境模板都在，测试全绿，只有线上容器 ENOENT，Word 导出 500。
   # 这个 job 不依赖 docker 守护进程，纯静态校验。
   deploy-assets:
-    name: Docker Deploy Assets
+    name: Docker Deploy Assets & Runtime Guards
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -97,6 +97,39 @@ jobs:
           done
 
           echo "✅ 模板文件已纳入生产镜像"
+
+      # 事故复盘：容器默认时区是 UTC，曾导致整库时间戳慢 8 小时、待回访少算一天。
+      # 代码里已统一用显式 '+8 hours'，这里做静态巡检防止回退。
+      # 唯一例外是 timezone-migration.test.ts —— 它的用例就是在造 UTC 偏差数据。
+      - name: SQLite 时间戳必须是北京墙钟
+        run: |
+          set -euo pipefail
+
+          BAD=$(grep -rn "datetime('now'" server/src --include='*.ts' \
+                | grep -v '8 hours' \
+                | grep -v 'tests/timezone-migration.test.ts' \
+                | grep -vE '^[^:]+:[0-9]+:[[:space:]]*[*//]' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::发现未带 +8 hours 的 SQLite 时间戳（容器默认 UTC，会慢 8 小时）："
+            echo "$BAD"
+            exit 1
+          fi
+
+          grep -q "TZ=Asia/Shanghai" server/Dockerfile || {
+            echo "::error::server/Dockerfile 缺 ENV TZ=Asia/Shanghai"; exit 1; }
+          grep -q "TZ=Asia/Shanghai" docker-compose.yml || {
+            echo "::error::docker-compose.yml 缺 TZ=Asia/Shanghai"; exit 1; }
+
+          echo "✅ 时区守护通过"
+
+      - name: package.json 必须声明 Node 版本下限
+        run: |
+          set -euo pipefail
+          for f in server/package.json web/package.json; do
+            grep -q '"engines"' "$f" || { echo "::error::$f 缺 engines 字段"; exit 1; }
+            grep -q '"node":' "$f" || { echo "::error::$f 的 engines 缺 node"; exit 1; }
+          done
+          echo "✅ engines 声明齐全"
 
   e2e:
     name: E2E Tests
@@ -149,7 +182,8 @@ jobs:
     # PR 阶段只验证测试与 E2E，镜像发布留给 main / tag
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [test, e2e]
+    # deploy-assets 必须挡在镜像构建前：模板或时区守护一破就不能发镜像
+    needs: [test, deploy-assets, e2e]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -185,7 +219,7 @@ jobs:
     # 同上：PR 不发布镜像
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: [test-web, e2e]
+    needs: [test-web, deploy-assets, e2e]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
