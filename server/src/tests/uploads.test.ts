@@ -1,6 +1,8 @@
 import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import path from 'path';
 import { startServer, stopServer, req, url, createUserSession, tinyPngBuffer } from './helpers.js';
 import { env } from '../config/env.js';
 
@@ -127,16 +129,65 @@ describe('图片上传', () => {
     for (const attempt of [
       '/api/images/..%2F..%2Fetc/passwd',
       '/api/images/' + dir + '/..%2F..%2F..%2Fetc%2Fpasswd',
+      // filename 自己带 .. ：目录层级必须限定在自己目录内，不能靠上传根目录兜
+      '/api/images/' + dir + '/..',
+      // 双层目录同样不允许（参数只能是单层）
+      '/api/images/' + dir + '/sub%2Fdir%2Fevil.png',
     ]) {
       const res = await req('GET', attempt, { token });
-      assert.ok([400, 404].includes(res.status), '路径穿越必须被拒绝: ' + attempt + ' -> ' + res.status);
+      // 路径非法(400) / 不是自己的目录(403) / 路由未命中(404) 都算拒绝
+      assert.ok([400, 403, 404].includes(res.status), '路径穿越必须被拒绝: ' + attempt + ' -> ' + res.status);
       assert.ok(!String(JSON.stringify(res.body)).includes('root:'), '不得泄露系统文件');
     }
   });
 
-  test('读取不存在的图片返回 404', async () => {
-    const res = await req('GET', '/api/images/1/definitely-missing.png', { token });
+  test('读取自己目录下不存在的图片返回 404', async () => {
+    const me = (await req('GET', '/api/auth/me', { token })).body.user;
+    const res = await req('GET', `/api/images/${me.username}/definitely-missing.png`, { token });
     assert.equal(res.status, 404);
+  });
+
+  /**
+   * 【回归】这个兼容接口曾只校验路径穿越，不做归属校验 ——
+   * 任何登录用户只要猜到 userId（连续整数，完全可枚举）就能读别人学生的课堂照片。
+   * /uploads 主链路有 requireMediaAuth 把关，这条兜底链路必须同样把关。
+   */
+  test('用户 B 不能通过兼容接口读用户 A 的图片，A 自己能读', async () => {
+    const aSession = await createUserSession('legacy-media-a');
+    const bSession = await createUserSession('legacy-media-b');
+    const aMe = (await req('GET', '/api/auth/me', { token: aSession.token })).body.user;
+
+    // 直接在 A 的目录里放一张图，绕开上传流程，两种目录命名都要覆盖
+    for (const dirName of [aMe.username, String(aMe.id)]) {
+      const dir = path.join(env.UPLOAD_DIR, dirName);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'a-photo.png'), tinyPngBuffer());
+    }
+
+    for (const dirName of [aMe.username, String(aMe.id)]) {
+      const byB = await req('GET', `/api/images/${dirName}/a-photo.png`, { token: bSession.token });
+      assert.equal(byB.status, 403, 'B 不应能读 A 的图片（目录=' + dirName + '）');
+
+      const byA = await req('GET', `/api/images/${dirName}/a-photo.png`, { token: aSession.token });
+      assert.equal(byA.status, 200, 'A 应能读自己的图片（目录=' + dirName + '）');
+    }
+  });
+
+  test('兼容接口不做归属校验会被 ?t= 媒体令牌绕过', async () => {
+    const aSession = await createUserSession('legacy-media-a2');
+    const bSession = await createUserSession('legacy-media-b2');
+    const aMe = (await req('GET', '/api/auth/me', { token: aSession.token })).body.user;
+
+    const dir = path.join(env.UPLOAD_DIR, aMe.username);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a-photo.png'), tinyPngBuffer());
+
+    // B 用自己的媒体令牌 + 自己的 JWT，试图读 A 的图
+    const t = bSession.cookie.split('=')[1];
+    const res = await fetch(url(`/api/images/${aMe.username}/a-photo.png?t=` + encodeURIComponent(t)), {
+      headers: { Authorization: 'Bearer ' + bSession.token },
+    });
+    assert.equal(res.status, 403, '带 ?t= 也不应绕过归属校验');
   });
 });
 

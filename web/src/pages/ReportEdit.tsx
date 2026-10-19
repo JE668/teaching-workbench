@@ -93,15 +93,6 @@ function nextYearMonth(yearMonth: string): string {
   return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
 }
 
-/** 区块的月份标题：优先用明细里真实的上课日期，取不到用兜底年月 */
-function monthOfItems(dates: string[], fallbackYearMonth: string): string {
-  for (const d of dates) {
-    const m = /^(\d{4})-(\d{1,2})/.exec(String(d || ''));
-    if (m) return `${Number(m[2])}月`;
-  }
-  return monthLabel(fallbackYearMonth);
-}
-
 /** '2026-09' → '2026年9月' */
 function yearMonthText(yearMonth: string): string {
   const m = /^(\d{4})-(\d{1,2})/.exec(String(yearMonth || ''));
@@ -213,14 +204,15 @@ export default function ReportEdit() {
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
   const examItems = useMemo(() => items.filter((i) => i.kind === 'exam'), [items]);
 
-  /** 两个区块的月份标题，跟服务端导出 Excel 的算法保持一致 */
-  const summaryMonth = useMemo(
-    () => monthOfItems(summaryItems.map((i) => i.scheduled_at), report?.year_month ?? ''),
-    [summaryItems, report?.year_month]
-  );
+  /**
+   * 两个区块的月份标题，跟服务端导出 Excel 的算法保持一致。
+   * 都以报告自己的 year_month 为准，不从明细取日期 —— 明细排序可手动上移，
+   * 取首条会把「9月总结」变成「10月总结」，导出的 Excel 和报告文字会一起错。
+   */
+  const summaryMonth = useMemo(() => monthLabel(report?.year_month ?? ''), [report?.year_month]);
   const planMonth = useMemo(
-    () => monthOfItems(planItems.map((i) => i.scheduled_at), nextYearMonth(report?.year_month ?? '')),
-    [planItems, report?.year_month]
+    () => monthLabel(nextYearMonth(report?.year_month ?? '')),
+    [report?.year_month]
   );
 
   /** 图片卡片输入：关掉哪个开关就不出哪一块 */

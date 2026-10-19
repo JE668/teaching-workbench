@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { env } from '../config/env.js';
+import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import {
   stagingDirFor,
@@ -166,18 +167,46 @@ router.delete('/upload', (req: AuthenticatedRequest, res) => {
 });
 
 /**
- * 兼容旧的图片读取接口（带路径穿越防护）
- * 注意：常规图片访问走 index.ts 里的 /uploads 静态服务，此接口仅作兜底。
+ * 兼容旧的图片读取接口。
+ * 常规图片访问走 app.ts 里的 /uploads 路由（用 media cookie 鉴权），此接口仅作兜底。
+ *
+ * 归属校验用 JWT 里的 userId（此路由已挂在 authMiddleware 下），而不是再要一份
+ * media cookie —— 否则一个已经在 JWT 体系里的接口要人带两种凭证。
+ * 目录名可能是【数字 ID】（历史路径）或【账户名】（新路径），两者都要认。
+ *
+ * 以前这里只校验了路径穿越，而且校验基准是上传根目录而不是所属人目录 ——
+ * 任何登录用户只要猜到 userId（连续整数，可枚举）就能读别人学生的课堂照片。
  */
-router.get('/images/:userId/:filename', (req, res) => {
-  const { userId, filename } = req.params;
+router.get('/images/:userId/:filename', (req: AuthenticatedRequest, res) => {
+  const { userId: ownerParam, filename } = req.params;
   const baseDir = path.resolve(env.UPLOAD_DIR);
-  const target = path.resolve(baseDir, userId, filename);
 
-  // 防止 ../ 路径穿越
-  if (!target.startsWith(baseDir + path.sep)) {
+  // 两个参数都必须是【单层】路径：ownerParam 是 baseDir 下的一层目录，
+  // filename 是该目录下的一个文件。这样 ../ 和 a/b 都在入口就被挡掉，
+  // 不依赖 Express 恰好不把 / 放进 path param 这个实现细节。
+  const ownerDir = path.resolve(baseDir, ownerParam ?? '');
+  if (path.dirname(ownerDir) !== baseDir) {
     return res.status(400).json({ error: '非法路径' });
   }
+  const target = path.resolve(ownerDir, filename ?? '');
+  if (path.dirname(target) !== ownerDir) {
+    return res.status(400).json({ error: '非法路径' });
+  }
+
+  // 没有 JWT 身份就不谈归属
+  if (!req.userId) {
+    return res.status(403).json({ error: '无权访问该图片' });
+  }
+
+  // 关键：只能读自己目录下的文件，否则 B 能读 A 的学生照片
+  const myUsername = String(
+    ((db.prepare('SELECT username FROM users WHERE id = ?').get(req.userId) as any)?.username || '')
+  );
+  const mine = ownerParam === String(req.userId) || (myUsername !== '' && ownerParam === myUsername);
+  if (!mine) {
+    return res.status(403).json({ error: '无权访问该图片' });
+  }
+
   if (!fs.existsSync(target)) {
     return res.status(404).json({ error: '图片不存在' });
   }

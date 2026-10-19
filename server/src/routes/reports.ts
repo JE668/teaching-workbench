@@ -230,9 +230,11 @@ router.get('/:id/xlsx', async (req: AuthenticatedRequest, res) => {
       grade: report.grade,
       subject: report.subject,
       yearMonth: report.year_month,
-      // 月份标题优先取明细里真实的上课日期，这样「9月总结 + 10月规划」能自然对上
-      summaryMonth: monthOf(pick('summary'), report.year_month),
-      planMonth: monthOf(pick('plan'), nextYearMonth(report.year_month)),
+      // 月份标题以报告自己的 year_month 为准。不要从明细取首条日期：
+      // 明细排序可手动上移（PATCH /:id/items/move），把一条跨月的课挪到最前面
+      // 就会把「9月总结」变成「10月总结」，导出的 Excel 与报告文字会一起错。
+      summaryMonth: monthLabel(report.year_month),
+      planMonth: monthLabel(nextYearMonth(report.year_month)),
       summaryEnabled: !!report.summary_enabled,
       planEnabled: !!report.plan_enabled,
       summaryIntro: report.summary_intro,
@@ -549,15 +551,6 @@ function toExcelItem(row: any): ReportExcelItem {
     homeworkDone: str(row.homework_done),
     exam: str(row.exam),
   };
-}
-
-/** 区块的月份标题：优先取第一条明细里真实的上课日期，取不到用兜底年月 */
-function monthOf(items: ReportExcelItem[], fallbackYearMonth: string): string {
-  for (const item of items) {
-    const m = String(item.scheduledAt || '').match(/^(\d{4})-(\d{1,2})/);
-    if (m) return `${Number(m[2])}月`;
-  }
-  return monthLabel(fallbackYearMonth);
 }
 
 /** '2026-09' → '9月' */

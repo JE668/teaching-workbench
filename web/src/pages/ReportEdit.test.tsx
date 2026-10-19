@@ -575,7 +575,9 @@ describe('月度报告 · 导出', () => {
     expect(input.title).toBe('李小明');
     expect(input.meta).toBe('秋季初二物理 · 2026年10月');
     expect(input.blocks).toHaveLength(1);
-    expect(input.blocks[0].heading).toBe('9月总结');
+    // 明细里排的都是 9 月的课，但报告挂在 year_month=2026-10 名下 ——
+    // 区块标题必须跟 year_month 走（明细可被手动拖排序，不能靠它推月份）。
+    expect(input.blocks[0].heading).toBe('10月总结');
     expect(input.blocks[0].entries.map((e: any) => e.text)).toEqual(['凸透镜成像', '平面镜成像']);
     expect(downloadReportCardMock.mock.calls[0][1]).toBe('李小明 10月月度报告.png');
   });
@@ -598,7 +600,8 @@ describe('月度报告 · 导出', () => {
     const input = downloadReportCardMock.mock.calls[0][0];
     expect(input.blocks).toHaveLength(2);
     const plan = input.blocks[1];
-    expect(plan.heading).toBe('10月规划');
+    // 规划明细都是 10 月的课，但报告是 year_month=2026-10 → 规划块讲下月，标题应为 11月
+    expect(plan.heading).toBe('11月规划');
     expect(plan.entries.map((e: any) => e.text)).toEqual(['质量和体积', '秋季度第一次阶测安排：时间10月7日', '密度的测量']);
     expect(plan.entries.map((e: any) => !!e.highlight)).toEqual([false, true, false]);
   });

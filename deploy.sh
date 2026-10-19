@@ -27,11 +27,12 @@ log() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-DO_BACKUP=false
+DO_BACKUP=true
 DO_ROLLBACK=false
 for arg in "$@"; do
   case $arg in
     --backup) DO_BACKUP=true ;;
+    --no-backup) DO_BACKUP=false ;;
     --rollback) DO_ROLLBACK=true ;;
     *) error "未知参数: $arg" ;;
   esac
@@ -102,6 +103,8 @@ fi
 if [ "$DO_BACKUP" = true ]; then
   log "部署前备份数据..."
   BACKUP_DIR="$BACKUP_DIR" ./backup.sh
+else
+  log "已用 --no-backup 跳过部署前备份"
 fi
 
 log "拉取最新镜像..."
