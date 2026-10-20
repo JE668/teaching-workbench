@@ -203,9 +203,13 @@ jobs:
         with:
           context: ./server
           push: true
-          build-args:
-            # 烤进镜像的提交号，/health 和容器环境变量都能看到，用来确认线上是代码的哪一版
-            BUILD_SHA: ${{ github.sha }}
+          # 烤进镜像的提交号：/health 和容器环境变量都能看到，用来确认线上跑的是哪一版
+          # 坑：必须写成字符串，不能写成映射。build-push-action 的 action.yml 里 build-args
+          # 没声明 type，GitHub 平台默认按字符串校验，传映射直接报
+          # "A mapping was not expected"（本地 js-yaml/psych 只查语法、不查 action 输入类型，
+          # 所以本地全绿、只有 GitHub 的校验器报错）。格式是每行一个 KEY=VALUE
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
           # 标签策略：latest（部署用）+ 提交 SHA（回滚用，可精确定位）
           tags: |
             ghcr.io/je668/teaching-workbench-backend:latest
