@@ -2,6 +2,7 @@ import http from 'http';
 import { env } from './config/env.js';
 import { db } from './config/database.js';
 import { createApp } from './app.js';
+import { seedBuiltInCatalog } from './seed/builtinCatalog.js';
 import { repairAllUsers } from './services/linkOrphans.js';
 import {
   migrateLegacyFolders,
@@ -12,6 +13,23 @@ import { log } from './utils/logger.js';
 
 // ========== 初始化 ==========
 const app = createApp();
+
+// ========== 内置课程目录 ==========
+// 「全年课程体系目录」是机构级参考数据，随镜像一起发版：启动时幂等灌库，
+// 任何账号登录后目录就在那里，不用谁先去上传一份。
+// 放在 listen 之前——服务一就绪目录就已在库里，不会出现「刚部署完查不到课」。
+// 幂等：按文件 sha 判重，重启不会重复灌；测试环境自动跳过。
+try {
+  const seeded = await seedBuiltInCatalog();
+  if (seeded.imports > 0 || seeded.courses > 0) {
+    log.info(
+      { imports: seeded.imports, courses: seeded.courses },
+      '内置课程目录已就位'
+    );
+  }
+} catch (err: any) {
+  log.warn({ err: err.message }, '内置课程目录灌库失败（不影响启动）');
+}
 
 // 启动时做一次「孤儿回访」修复：把按姓名能唯一确定的未关联回访
 // 补挂到对应学生档案。历史遗留数据（先写回访、后建档案）靠这一步归位。

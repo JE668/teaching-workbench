@@ -216,10 +216,12 @@ describe('课程目录查询', () => {
     assert.deepEqual(res.body.tracks, []);
   });
 
-  test('不同用户的数据互不可见', async () => {
-    const res = await req('GET', '/api/catalog/courses', { token: otherToken });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.total, 0);
+  test('目录全局共享，任何账号看到同一份', async () => {
+    const mine = await req('GET', '/api/catalog/courses', { token });
+    const theirs = await req('GET', '/api/catalog/courses', { token: otherToken });
+    assert.equal(theirs.status, 200);
+    assert.equal(theirs.body.total, mine.body.total);
+    assert.equal(theirs.body.total, 2);
   });
 });
 
@@ -264,12 +266,13 @@ describe('掌握星级手改', () => {
     assert.equal(res.body.course.section, '秋季第一次阶段性测试');
   });
 
-  test('改别人的课程会 404', async () => {
+  test('改别人的课程也能成功，星级是共享注释', async () => {
     const list = await req('GET', '/api/catalog/courses', { token });
     const id = list.body.courses[0].id;
 
     const res = await req('PATCH', '/api/catalog/courses/' + id, { token: otherToken, body: { mastery_star: 3 } });
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.course.mastery_star, 3);
   });
 
   test('空 body 返回 400', async () => {
@@ -375,12 +378,12 @@ describe('掌握星级 AI 初评', () => {
     assert.equal(limited.events[0].data.limit, 1);
   });
 
-  test('别人的账号看不到别人的课程', async () => {
+  test('任何账号都能在共享目录上定档', async () => {
     await clearStars();
     setStarGenerator(async () => '{"results":[]}');
     const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, otherToken);
     assert.equal(sse.status, 200);
-    assert.equal(sse.events[0].data.total, 0);
+    assert.equal(sse.events[0].data.total, 2);
     assert.equal(sse.events[1].data.updated, 0);
   });
 
@@ -680,7 +683,7 @@ describe('目录导出 Excel', () => {
     const text = await sheetText(r.buf);
     assert.equal(list.body.courses.length, 3);
     assert.ok(text.includes('课程目录 · 共 3 课'));
-    for (const want of ['年级', '学科', '分节', '课程内容', '掌握星级', '声现象', '物态变化', '光现象', '沪科版（导出专用）']) {
+    for (const want of ['年级', '学科', '教案版本', '课程内容', '学习难度', '声现象', '物态变化', '光现象', '沪科版（导出专用）']) {
       assert.ok(text.includes(want), '缺少 ' + want);
     }
   });
@@ -698,50 +701,46 @@ describe('目录导出 Excel', () => {
     );
   });
 
-  test('分节行导出成整行合并的分区标题，并跟着课程一起筛选', async () => {
+  test('导出是扁平表：不加分节标题行，也不导出掌握星级', async () => {
     const r = await downloadXlsx('?grade=初二&subject=物理&term=秋季');
     assert.equal(r.status, 200);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(r.buf as any);
     const ws = wb.getWorksheet('课程目录')!;
     const text = await sheetText(r.buf);
-    assert.ok(text.includes('秋季第一次阶段性测试'));
 
-    // 定位分节标题落在第几行（前面是标题行和表头，行号不该写死）
-    let sectionRow = 0;
-    ws.eachRow((row, n) => {
-      if (String(row.getCell(1).value ?? '') === '秋季第一次阶段性测试') sectionRow = n;
-    });
-    assert.ok(sectionRow > 0, '分节标题行应出现在导出里');
+    // 分节标记（秋季第一次阶段性测试）和掌握星级档位都不该再出现在导出里
+    assert.ok(!text.includes('秋季第一次阶段性测试'), '分节标题行应该已经去掉');
+    assert.ok(!text.includes('掌握星级'), '掌握星级列表头应该已经去掉');
+    assert.ok(!text.includes('常规掌握'), '掌握星级档位应该已经去掉');
 
-    // 分节标题整行合并：占满 12 列（最后一列 L），不是只并了前几列
-    const merged = new Set<string>(ws.model.merges || []);
-    assert.ok(
-      [...merged].includes('A' + sectionRow + ':L' + sectionRow),
-      '分节标题应整行合并到最后一列，实际：' + [...merged].join(',')
-    );
+    // 表头 10 列，「轨」这个内部叫法在文件里也改成教案版本
+    const headers: string[] = [];
+    ws.getRow(2).eachCell({ includeEmpty: false }, (cell) => headers.push(String(cell.value ?? '')));
+    assert.deepEqual(headers, [
+      '年级',
+      '学科',
+      '学期',
+      '教案版本',
+      '序号',
+      '课程内容',
+      '课程类型',
+      '期末考\n分值占比',
+      '学习难度',
+      '教材版本',
+    ]);
+
+    // 标题 1 行 + 表头 1 行 + 课程 3 行，中间不再插分区标题行
+    assert.equal(ws.rowCount, 5);
   });
 
-  test('掌握星级导出成中文档位，未定档留空', async () => {
-    const list = await req('GET', '/api/catalog/courses?grade=初二&subject=物理&term=秋季', { token });
-    await req('PATCH', '/api/catalog/courses/' + list.body.courses[0].id, {
-      token,
-      body: { mastery_star: 3 },
-    });
-
-    const r = await downloadXlsx('?grade=初二&subject=物理&term=秋季');
-    assert.equal(r.status, 200);
-    const text = await sheetText(r.buf);
-    assert.ok(text.includes('常规掌握'));
-  });
-
-  test('导出只带自己的目录，别人账号的课混不进来', async () => {
+  test('导出的是共享目录，任何账号导出一样的内容', async () => {
     const foreign = await fetch(url('/api/catalog/xlsx?grade=初二&subject=物理&term=秋季'), {
       headers: { Authorization: 'Bearer ' + otherToken },
     });
     assert.equal(foreign.status, 200);
     const buf = Buffer.from(await foreign.arrayBuffer());
     const text = await sheetText(buf);
-    assert.ok(!text.includes('声现象'), '别人账号的目录不该出现在导出里');
+    assert.ok(text.includes('声现象'), '共享目录应该出现在任何账号的导出里');
   });
 });

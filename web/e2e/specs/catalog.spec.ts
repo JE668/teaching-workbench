@@ -4,8 +4,9 @@ import { buildCatalogFixture } from './catalog-fixture';
 
 /**
  * 课程目录这条链路的端到端验证：
- * 上传真实版式的 Excel → 仅预览不落库 → 正式导入 → 列表展示 → 就地设掌握星级
- * → 重复上传不重复灌库。
+ * 上传真实版式的 Excel → 仅预览不落库 → 正式导入 → 列表展示 → 重复上传不重复灌库。
+ * 目录页只做筛选 / 展示 / 打印 / 导出，所以顺带验一下：
+ * 掌握星级、AI 定档、分节标记这些辅助信息都不再出现在页面上。
  *
  * 目录数据是「月度总结/课程规划」的上游取数来源，这条链断了后面两个页面都空。
  */
@@ -31,7 +32,7 @@ const FIXTURE = {
 const dialog = (page: any) => page.locator('div.fixed.inset-0.z-50').last();
 
 test.describe('课程目录导入', () => {
-  test('上传 Excel → 仅预览不落库 → 导入 → 列表展示 → 就地设掌握星级', async ({ page }) => {
+  test('上传 Excel → 仅预览不落库 → 导入 → 列表展示（页面上没有掌握星级 / 分节标记）', async ({ page }) => {
     const fixture = await buildCatalogFixture({ ...FIXTURE });
     await loginViaApi(page);
     const token = await getToken(page);
@@ -43,7 +44,6 @@ test.describe('课程目录导入', () => {
         content: c.content as string,
         grade: c.grade as string,
         subject: c.subject as string,
-        mastery_star: c.mastery_star as number,
       }));
     };
     const titlesOf = (rows: { content: string }[]) => rows.map((r) => r.content);
@@ -92,18 +92,15 @@ test.describe('课程目录导入', () => {
     // 限定在表格里找：「全部教材版本」下拉里也有同名 option，是隐藏元素。
     await expect(page.getByRole('table').getByText('人教版').first()).toBeVisible();
 
-    // —— 就地设掌握星级（保存是静默乐观更新，成功不弹 toast，所以验 UI 态 + 接口值）——
+    // —— 目录页只做筛选 / 展示 / 打印 / 导出 ——
+    // 掌握星级编辑器、AI 定档入口、分节标记（秋季第一次阶段性测试）这一批辅助信息都已拿掉；
+    // 「轨」这个内部叫法在界面上叫教案版本
     const row = page.locator('tr', { hasText: '声现象' }).first();
-    const editor = row.locator('[data-testid="star-editor"]');
-    await expect(editor.locator('button[title="点击设为 4 星"] svg')).toHaveAttribute('fill', 'none');
-    await editor.locator('button[title="点击设为 4 星"]').click();
-    // 设成 4 星后，前 4 颗都要是实心
-    await expect(editor.locator('button[title="点击设为 4 星"] svg')).toHaveAttribute('fill', 'currentColor');
-    await expect(editor.locator('button[title="点击设为 1 星"] svg')).toHaveAttribute('fill', 'currentColor');
-
-    const starred = (await courses()).filter((c) => c.content === '声现象');
-    expect(starred.length).toBeGreaterThan(0);
-    expect(starred[0].mastery_star).toBe(4);
+    await expect(row.locator('[data-testid="star-editor"]')).toHaveCount(0);
+    await expect(page.getByText(/阶段性测试/)).toHaveCount(0);
+    await expect(page.getByRole('columnheader', { name: '掌握' })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: '按教案版本筛选' })).toBeVisible();
+    await expect(page.getByText('全部轨')).toHaveCount(0);
   });
 
   test('教材版本可以搜，筛选条件同步地址栏，分组可分页', async ({ page }) => {
@@ -184,5 +181,69 @@ test.describe('课程目录导入', () => {
       fixture.titles.includes(c.content) && c.grade === '初二' && c.subject === '物理'
     );
     expect(hits.length).toBe(5);
+  });
+});
+
+test.describe('批量删除导入', () => {
+  test('勾选两份用户目录一次清空，不影响别的导入', async ({ page }) => {
+    await loginViaApi(page);
+
+    const a = await buildCatalogFixture({
+      sheet: '初二物理',
+      term: '秋季',
+      courses: [
+        [1, '批量删除甲课', '同步', '★★'],
+        [2, '批量删除甲课二', '专题', '★★★'],
+      ] as [number, string, string, string][],
+      filename: '批量删除甲.xlsx',
+    });
+    const b = await buildCatalogFixture({
+      sheet: '初二物理',
+      term: '秋季',
+      courses: [
+        [1, '批量删除乙课', '同步', '★★'],
+        [2, '批量删除乙课二', '专题', '★★★'],
+      ] as [number, string, string, string][],
+      filename: '批量删除乙.xlsx',
+    });
+    expect((await importCatalog(page, { name: a.filename, buffer: a.buffer })).coursesImported).toBe(2);
+    expect((await importCatalog(page, { name: b.filename, buffer: b.buffer })).coursesImported).toBe(2);
+
+    const token = await getToken(page);
+    const importsOf = async () => {
+      const res = await page.request.get('/api/catalog/imports', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      return ((await res.json()) as any).imports as any[];
+    };
+
+    const mine = (await importsOf()).filter((i) => i.filename === a.filename || i.filename === b.filename);
+    expect(mine.length).toBe(2);
+    const ids = mine.map((i) => i.id);
+
+    await page.goto('/catalog');
+
+    // 不点「全选」：用例之间共享同一个库，全选会把别的用例导的目录一起删掉
+    await page.getByTestId('pick-import-' + ids[0]).check();
+    await page.getByTestId('pick-import-' + ids[1]).check();
+    await expect(page.getByRole('button', { name: '删除选中（2）' })).toBeEnabled();
+
+    await page.getByRole('button', { name: '删除选中（2）' }).click();
+    await expect(page.getByText('删除选中的导入？')).toBeVisible();
+    await expect(page.getByText(/将删除选中的 2 次导入、共 4 条课程/)).toBeVisible();
+
+    await page.getByRole('button', { name: '全部删除' }).click();
+    await expect(page.getByText(/已删除 2 次导入、4 条课程/)).toBeVisible();
+
+    // 两条导入记录都没了
+    const left = (await importsOf()).filter((i) => i.id === ids[0] || i.id === ids[1]);
+    expect(left.length).toBe(0);
+
+    // 课程也真的清掉了，不只是历史记录消失
+    const res = await page.request.get('/api/catalog/courses?limit=20000', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    const titles = ((await res.json()) as any).courses.map((c: any) => c.content);
+    for (const t of [...a.titles, ...b.titles]) expect(titles).not.toContain(t);
   });
 });

@@ -42,6 +42,9 @@ COPY --from=build /app/dist ./dist
 # 听评课 Word 导出依赖的模板。必须在 dist 之外单独 COPY ——
 # 漏掉这一步生产环境会 ENOENT，Word 导出直接 500，而本地测试全绿。
 COPY --from=build /app/templates ./templates
+# 内置课程目录（随镜像发版的机构级参考数据），启动时由 seedBuiltInCatalog 灌库。
+# 同样必须在 dist 之外单独 COPY，路径口径见 seed/builtinCatalog.ts 的 seedDir()。
+COPY --from=build /app/seed ./seed
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 
