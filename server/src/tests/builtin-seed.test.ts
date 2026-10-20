@@ -12,6 +12,7 @@ import {
   CATALOG_SYSTEM_USER,
   type SeedResult,
 } from '../seed/builtinCatalog.js';
+import { GRADE_ORDER } from '../utils/catalogOrder.js';
 
 let token = '';
 let otherToken = '';
@@ -147,9 +148,16 @@ describe('目录排序口径', () => {
     assert.deepEqual(res.body.grades, ['四年级', '五年级', '六年级', '初一', '初二', '初三', '高一', '高二', '高三']);
     assert.deepEqual(res.body.terms, ['暑假', '秋季', '寒假', '春季', '一轮复习', '二轮复习', '三轮复习']);
     assert.deepEqual(res.body.tracks, ['基础', '进阶', '拓展拔尖']);
+
+    // 前端年级下拉直接照抄这份顺序，所以「一年级 → 高三」的教学顺序必须由服务端保证：
+    // 返回结果应该是 GRADE_ORDER 的子序列，且不含排序表之外的年级
+    assert.deepEqual(res.body.grades, GRADE_ORDER.filter((g) => res.body.grades.includes(g)));
+    for (const g of res.body.grades) {
+      assert.ok(GRADE_ORDER.includes(g), '年级不在教学排序表里: ' + g);
+    }
   });
 
-  test('课程清单按年级→学科→学期→轨→序号排', async () => {
+  test('课程清单按年级→学科→学期→教案版本→序号排', async () => {
     const res = await req('GET', '/api/catalog/courses', { token });
     const courses = res.body.courses;
     assert.ok(courses.length > 3000);
@@ -161,7 +169,7 @@ describe('目录排序口径', () => {
     const idxJunior1 = courses.findIndex((c: any) => c.grade === '初一');
     assert.ok(idxSixth < idxJunior1, '六年级应在初一之前');
 
-    // 同一 (年级, 学科, 学期, 轨) 分组内按序号升序
+    // 同一 (年级, 学科, 学期, 教案版本) 分组内按序号升序
     const group = courses.filter(
       (c: any) => c.grade === '初一' && c.subject === '数学' && c.term === '暑假' && c.track === '基础'
     );

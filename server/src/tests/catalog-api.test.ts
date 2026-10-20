@@ -683,7 +683,7 @@ describe('目录导出 Excel', () => {
     const text = await sheetText(r.buf);
     assert.equal(list.body.courses.length, 3);
     assert.ok(text.includes('课程目录 · 共 3 课'));
-    for (const want of ['年级', '学科', '分节', '课程内容', '掌握星级', '声现象', '物态变化', '光现象', '沪科版（导出专用）']) {
+    for (const want of ['年级', '学科', '教案版本', '课程内容', '学习难度', '声现象', '物态变化', '光现象', '沪科版（导出专用）']) {
       assert.ok(text.includes(want), '缺少 ' + want);
     }
   });
@@ -701,41 +701,37 @@ describe('目录导出 Excel', () => {
     );
   });
 
-  test('分节行导出成整行合并的分区标题，并跟着课程一起筛选', async () => {
+  test('导出是扁平表：不加分节标题行，也不导出掌握星级', async () => {
     const r = await downloadXlsx('?grade=初二&subject=物理&term=秋季');
     assert.equal(r.status, 200);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(r.buf as any);
     const ws = wb.getWorksheet('课程目录')!;
     const text = await sheetText(r.buf);
-    assert.ok(text.includes('秋季第一次阶段性测试'));
 
-    // 定位分节标题落在第几行（前面是标题行和表头，行号不该写死）
-    let sectionRow = 0;
-    ws.eachRow((row, n) => {
-      if (String(row.getCell(1).value ?? '') === '秋季第一次阶段性测试') sectionRow = n;
-    });
-    assert.ok(sectionRow > 0, '分节标题行应出现在导出里');
+    // 分节标记（秋季第一次阶段性测试）和掌握星级档位都不该再出现在导出里
+    assert.ok(!text.includes('秋季第一次阶段性测试'), '分节标题行应该已经去掉');
+    assert.ok(!text.includes('掌握星级'), '掌握星级列表头应该已经去掉');
+    assert.ok(!text.includes('常规掌握'), '掌握星级档位应该已经去掉');
 
-    // 分节标题整行合并：占满 12 列（最后一列 L），不是只并了前几列
-    const merged = new Set<string>(ws.model.merges || []);
-    assert.ok(
-      [...merged].includes('A' + sectionRow + ':L' + sectionRow),
-      '分节标题应整行合并到最后一列，实际：' + [...merged].join(',')
-    );
-  });
+    // 表头 10 列，「轨」这个内部叫法在文件里也改成教案版本
+    const headers: string[] = [];
+    ws.getRow(2).eachCell({ includeEmpty: false }, (cell) => headers.push(String(cell.value ?? '')));
+    assert.deepEqual(headers, [
+      '年级',
+      '学科',
+      '学期',
+      '教案版本',
+      '序号',
+      '课程内容',
+      '课程类型',
+      '期末考\n分值占比',
+      '学习难度',
+      '教材版本',
+    ]);
 
-  test('掌握星级导出成中文档位，未定档留空', async () => {
-    const list = await req('GET', '/api/catalog/courses?grade=初二&subject=物理&term=秋季', { token });
-    await req('PATCH', '/api/catalog/courses/' + list.body.courses[0].id, {
-      token,
-      body: { mastery_star: 3 },
-    });
-
-    const r = await downloadXlsx('?grade=初二&subject=物理&term=秋季');
-    assert.equal(r.status, 200);
-    const text = await sheetText(r.buf);
-    assert.ok(text.includes('常规掌握'));
+    // 标题 1 行 + 表头 1 行 + 课程 3 行，中间不再插分区标题行
+    assert.equal(ws.rowCount, 5);
   });
 
   test('导出的是共享目录，任何账号导出一样的内容', async () => {

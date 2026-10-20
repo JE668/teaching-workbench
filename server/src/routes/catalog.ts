@@ -270,13 +270,11 @@ router.get('/xlsx', async (req: AuthenticatedRequest, res) => {
         term: r.term,
         track: r.track,
         seq: r.seq,
-        section: r.section,
         content: r.content,
         type: r.type,
         score: r.score,
         difficulty: r.difficulty,
         textbook: r.textbook,
-        mastery_star: r.mastery_star == null ? null : Number(r.mastery_star),
       })),
     };
 

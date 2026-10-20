@@ -6,11 +6,8 @@ import {
   FileSpreadsheet,
   Trash2,
   RotateCcw,
-  Star,
   Search,
-  Sparkles,
   Loader2,
-  X,
   UserCheck,
   Download,
   Printer,
@@ -112,14 +109,6 @@ interface SheetSummary {
   error?: string;
 }
 
-/** AI 批量定档的进度 */
-interface SuggestProgress {
-  batch: number;
-  totalBatches: number;
-  done: number;
-  total: number;
-}
-
 type ImportResult = {
   dryRun?: boolean;
   importId?: number;
@@ -136,33 +125,6 @@ const BANDS = [
   { value: '高中', label: '高中' },
   { value: '小初', label: '小初' },
 ];
-
-const trackTone = (track: string) =>
-  track === '拓展拔尖' ? 'violet' : track === '进阶' ? 'info' : 'neutral';
-
-const STAR_OPTIONS = [1, 2, 3, 4, 5];
-
-/** 掌握星级就地编辑：点 ★ 设置，点当前值取消 */
-function StarEditor({ value, onPick }: { value: number | null; onPick: (v: number | null) => void }) {
-  return (
-    <div className="flex items-center gap-0.5" data-testid="star-editor">
-      {STAR_OPTIONS.map((n) => (
-        <button
-          key={n}
-          type="button"
-          title={'点击设为 ' + n + ' 星'}
-          onClick={() => onPick(value === n ? null : n)}
-          className={cn(
-            'rounded p-0.5 transition-colors',
-            value !== null && n <= value ? 'text-amber-400' : 'text-slate-300 hover:text-amber-400'
-          )}
-        >
-          <Star size={13} fill={value !== null && n <= value ? 'currentColor' : 'none'} />
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /** 每个分组先展示的课程条数，其余按需展开 */
 const GROUP_PAGE_SIZE = 12;
@@ -273,16 +235,15 @@ function ProgressBadge({ progress }: { progress: CourseProgress }) {
   );
 }
 
-/** 一个分组（年级+学科 · 学期 · 轨）的课程表。
+/** 一个分组（年级+学科 · 学期 · 教案版本）的课程表。
  *
  * 分组内分页，几百门课不会一次性铺满整个页面；
- * 窄屏隐藏序号 / 分值占比 / 教材，手机上留辅导内容、课程类型、难度、掌握四列。
+ * 窄屏隐藏序号 / 分值占比 / 教材，手机上留辅导内容、课程类型、难度三列。
  */
 function CourseGroupCard({
   name,
   list,
   usage,
-  onPickStar,
   onShowUsage,
   studentId,
   printing = false,
@@ -291,7 +252,6 @@ function CourseGroupCard({
   list: CatalogCourse[];
   /** course_id → 已上/计划次数 */
   usage: Record<string, CourseUsage>;
-  onPickStar: (course: CatalogCourse, value: number | null) => void;
   onShowUsage: (course: CatalogCourse) => void;
   /** 非空时是「按学生看进度」模式，行内显示这个学生上过没有 */
   studentId: string;
@@ -321,7 +281,6 @@ function CourseGroupCard({
               <th className="hidden px-3 py-2 font-medium md:table-cell">分值占比</th>
               <th className="px-3 py-2 font-medium">难度</th>
               <th className="hidden px-3 py-2 font-medium md:table-cell">教材</th>
-              <th className="px-3 py-2 font-medium">掌握</th>
             </tr>
           </thead>
           <tbody>
@@ -330,11 +289,6 @@ function CourseGroupCard({
                 <td className="hidden px-3 py-2 text-slate-400 sm:table-cell">{c.seq}</td>
                 <td className="px-3 py-2">
                   <span className="font-medium text-slate-700">{c.content}</span>
-                  {c.section && (
-                    <span className="ml-1.5 inline-block align-middle text-[11px] text-amber-600">
-                      「{c.section}」
-                    </span>
-                  )}
                   {inProgressMode ? (
                     <ProgressBadge progress={progressOf(usage, c.id)} />
                   ) : (
@@ -349,9 +303,6 @@ function CourseGroupCard({
                 <td className="hidden px-3 py-2 text-slate-500 md:table-cell">{c.score || '—'}</td>
                 <td className="px-3 py-2 text-amber-500">{c.difficulty || '—'}</td>
                 <td className="hidden px-3 py-2 text-slate-500 md:table-cell">{c.textbook || '—'}</td>
-                <td className="px-3 py-1.5">
-                  <StarEditor value={c.mastery_star} onPick={(v) => onPickStar(c, v)} />
-                </td>
               </tr>
             ))}
           </tbody>
@@ -520,20 +471,6 @@ export default function Catalog() {
     }
   };
 
-  const pickStar = async (course: CatalogCourse, value: number | null) => {
-    const prev = course.mastery_star;
-    setCourses((list) => list.map((c) => (c.id === course.id ? { ...c, mastery_star: value } : c)));
-    try {
-      await api.request('/catalog/courses/' + course.id, {
-        method: 'PATCH',
-        body: JSON.stringify({ mastery_star: value }),
-      });
-    } catch (e: any) {
-      setCourses((list) => list.map((c) => (c.id === course.id ? { ...c, mastery_star: prev } : c)));
-      toast.error(e.message || '保存星级失败');
-    }
-  };
-
   const confirmDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -578,69 +515,7 @@ export default function Catalog() {
     }
   };
 
-  // AI 批量定掌握星级
-  const [suggesting, setSuggesting] = useState(false);
-  const [suggestInfo, setSuggestInfo] = useState<SuggestProgress | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  /**
-   * 按当前筛选范围让 AI 给未定档的课程定档。
-   * 走 SSE 拿进度；中途断了再点一次只补剩下的，不会重复定档。
-   */
-  const runSuggest = async () => {
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setSuggesting(true);
-    setSuggestInfo(null);
-    let updated = 0;
-    let total = 0;
-    let failed = false;
-
-    try {
-      await api.streamPostRaw(
-        '/catalog/courses/suggest-stars',
-        { grade, subject, term, track, type },
-        {
-          onEvent: (event, data) => {
-            if (event === 'start') {
-              total = Number(data.total || 0);
-              setSuggestInfo({ batch: 0, totalBatches: 0, done: 0, total });
-            } else if (event === 'progress') {
-              updated = Number(data.updated || 0);
-              setSuggestInfo({
-                batch: Number(data.batch || 0),
-                totalBatches: Number(data.totalBatches || 0),
-                done: updated,
-                total: Number(data.total || total),
-              });
-            } else if (event === 'error') {
-              failed = true;
-              toast.error(data.error || 'AI 定档失败');
-            } else if (event === 'done') {
-              updated = Number(data.updated || 0);
-            }
-          },
-        },
-        controller.signal
-      );
-      await reload();
-      if (!failed) {
-        toast.success(total ? 'AI 已定档 ' + updated + ' 门，点星星可以修改' : '没有待定档的课程');
-      }
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') toast.error(e.message || 'AI 定档失败');
-    } finally {
-      abortRef.current = null;
-      setSuggesting(false);
-      setSuggestInfo(null);
-    }
-  };
-
-  const cancelSuggest = () => {
-    abortRef.current?.abort();
-  };
-
-  // 关键词命中辅导内容 / 分节 / 教材 / 课程类型 / 难度——教材和难度之前搜不到
+  // 关键词命中辅导内容 / 教材 / 课程类型 / 难度——教材和难度之前搜不到
   const filtered = courses.filter((c) => {
     if (grade && c.grade !== grade) return false;
     if (subject && c.subject !== subject) return false;
@@ -649,7 +524,7 @@ export default function Catalog() {
     if (track && c.track !== track) return false;
     if (textbook && c.textbook !== textbook) return false;
     if (!q) return true;
-    return [c.content, c.section, c.textbook, c.type, c.difficulty].some((f) => f.includes(q));
+    return [c.content, c.textbook, c.type, c.difficulty].some((f) => f.includes(q));
   });
 
   const byGroup = new Map<string, CatalogCourse[]>();
@@ -658,9 +533,6 @@ export default function Catalog() {
     if (!byGroup.has(key)) byGroup.set(key, []);
     byGroup.get(key)!.push(c);
   }
-
-  /** 当前筛选范围内还没有掌握星期的课程数 */
-  const pendingStars = filtered.filter((c) => c.mastery_star == null).length;
 
   // 进度模式的汇总：当前筛选范围内，这个学生已上 / 计划 / 还没上各多少门
   const progressCounts = (() => {
@@ -854,11 +726,11 @@ export default function Catalog() {
               placeholder="全部类型"
             />
             <Select
-              aria-label="按轨筛选"
+              aria-label="按教案版本筛选"
               value={track}
               onChange={(e) => setFilter('track', e.target.value)}
               options={facets.tracks.map((v) => ({ value: v, label: v }))}
-              placeholder="全部轨"
+              placeholder="全部教案版本"
             />
             <Select
               aria-label="按教材版本筛选"
@@ -917,10 +789,9 @@ export default function Catalog() {
         </Card>
       ) : (
         <div className="space-y-3">
-          <div className="print-hide flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="print-hide px-1">
             <p className="text-xs text-slate-400">
-              共 {filtered.length} 条 · 待定档 <span className="font-medium text-amber-600">{pendingStars}</span> 条
-              · 点击星星可直接设掌握星级
+              共 {filtered.length} 条
               {progressCounts ? (
                 <span className="ml-1">
                   ·{' '}
@@ -932,40 +803,7 @@ export default function Catalog() {
                 </span>
               ) : null}
             </p>
-            {pendingStars > 0 && (
-              <Button size="sm" onClick={() => void runSuggest()} disabled={suggesting}>
-                {suggesting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                {suggesting ? 'AI 定档中' : 'AI 定档'}
-              </Button>
-            )}
           </div>
-
-          {suggestInfo && suggestInfo.total > 0 && (
-            <Card className="print-hide px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <Loader2 size={15} className="animate-spin text-brand-500" />
-                  <span>
-                    AI 正在定档
-                    {suggestInfo.totalBatches > 0
-                      ? ' · 第 ' + suggestInfo.batch + '/' + suggestInfo.totalBatches + ' 批'
-                      : ''}
-                    {' · 已定 ' + suggestInfo.done + ' 门'}
-                  </span>
-                </div>
-                <Button variant="ghost" size="sm" onClick={cancelSuggest}>
-                  <X size={14} />
-                  取消
-                </Button>
-              </div>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full bg-brand-500 transition-all duration-300"
-                  style={{ width: (suggestInfo.done / suggestInfo.total) * 100 + '%' }}
-                />
-              </div>
-            </Card>
-          )}
 
           {[...byGroup.entries()].map(([key, list]) => (
             <CourseGroupCard
@@ -973,7 +811,6 @@ export default function Catalog() {
               name={key}
               list={list}
               usage={usage}
-              onPickStar={pickStar}
               onShowUsage={setUsageCourse}
               studentId={student}
               printing={printing}

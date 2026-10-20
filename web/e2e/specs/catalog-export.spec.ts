@@ -57,9 +57,9 @@ test.describe('目录导出与打印', () => {
       '课程目录 · 共 3 课',
       '年级',
       '学科',
-      '分节',
+      '教案版本',
       '课程内容',
-      '掌握星级',
+      '学习难度',
       '静电现象',
       '热胀冷缩',
       '光的色散',
@@ -67,6 +67,9 @@ test.describe('目录导出与打印', () => {
     ]) {
       expect(text, '缺 ' + want).toContain(want);
     }
+    // 目录页只做筛选 / 展示 / 打印 / 导出，导出文件里也不该有掌握星级和分节列
+    expect(text, '不应有掌握星级列').not.toContain('掌握星级');
+    expect(text, '不应有分节列').not.toContain('分节');
 
     await expect(page.getByText('已导出 3 门课')).toBeVisible();
   });
