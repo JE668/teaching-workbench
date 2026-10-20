@@ -596,6 +596,63 @@ router.patch('/courses/:id', (req: AuthenticatedRequest, res) => {
 });
 
 /**
+ * 批量删除若干次导入及其全部课程。
+ *
+ * 必须声明在 DELETE /imports/:id 之前 —— 否则 "batch" 会被当成 :id 吃掉。
+ * 内置目录（is_builtin）和已经不存在的 id 一律跳过并在 skipped 里报回来，
+ * 绝不静默吞掉，否则用户以为删掉了其实还在。
+ */
+router.delete('/imports/batch', (req: AuthenticatedRequest, res) => {
+  try {
+    const raw = req.body?.ids;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 200) {
+      return res.status(400).json({ error: '请传 1-200 个导入 id 的数组' });
+    }
+    const ids = [
+      ...new Set(
+        raw
+          .map((v) => Number(v))
+          .filter((v) => Number.isInteger(v) && v > 0),
+      ),
+    ];
+    if (ids.length === 0) return res.status(400).json({ error: '没有有效的导入 id' });
+
+    const skipped: { id: number; reason: string }[] = [];
+    const removedIds: number[] = [];
+    for (const id of ids) {
+      const row = db
+        .prepare('SELECT is_builtin FROM catalog_imports WHERE id = ?')
+        .get(id) as { is_builtin: number } | undefined;
+      if (!row) {
+        skipped.push({ id, reason: '已不存在' });
+        continue;
+      }
+      if (Number(row.is_builtin) === 1) {
+        skipped.push({ id, reason: '内置目录不能删除' });
+        continue;
+      }
+      removedIds.push(id);
+    }
+
+    let deleted = 0;
+    db.transaction(() => {
+      for (const id of removedIds) {
+        deleted += db.prepare('DELETE FROM course_catalog WHERE import_id = ?').run(id).changes;
+      }
+      if (removedIds.length > 0) {
+        db.prepare(
+          'DELETE FROM catalog_imports WHERE id IN (' + removedIds.map(() => '?').join(',') + ')',
+        ).run(...removedIds);
+      }
+    })();
+
+    res.json({ deleted, removed: removedIds, skipped });
+  } catch (error: any) {
+    res.status(500).json({ error: '批量删除失败', message: error.message });
+  }
+});
+
+/**
  * 删除一次导入及其全部课程。
  *
  * 内置课程目录是随镜像发版的机构级数据，删了就得重新灌库，直接禁止。

@@ -3,6 +3,7 @@ import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import ExcelJS from 'exceljs';
 import { startServer, stopServer, req, createUser } from './helpers.js';
 import {
   seedBuiltInCatalog,
@@ -168,5 +169,114 @@ describe('目录排序口径', () => {
     for (let i = 1; i < group.length; i++) {
       assert.ok(group[i].seq >= group[i - 1].seq, '分组内序号应递增');
     }
+  });
+});
+
+// ============ 批量删除导入 ============
+
+/** 造一份单轨两课的目录，sheet 名带标记好区分 */
+async function miniCatalog(worksheet: string, content: string): Promise<Uint8Array> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(worksheet);
+  const set = (r: number, c: number, v: string) => {
+    ws.getCell(r, c).value = v;
+  };
+  ws.mergeCells(1, 1, 1, 6);
+  set(1, 1, '星火教育个性化  高二数学  春季  课程目录');
+  ws.mergeCells(2, 1, 2, 6);
+  set(2, 1, '【XX月课程规划】……');
+  ws.mergeCells(3, 1, 4, 1);
+  ws.mergeCells(3, 2, 4, 2);
+  set(3, 1, '教材版本');
+  set(3, 2, '序号');
+  set(3, 3, '辅导内容');
+  set(3, 4, '课程类型');
+  set(3, 5, '学习难度');
+  set(3, 6, '对后续课程影响程度');
+  ws.mergeCells(5, 1, 6, 1);
+  set(5, 1, '人教版（2024）');
+  set(5, 2, '1');
+  set(5, 3, content + '（第 1 课）');
+  set(5, 4, '专题');
+  set(5, 5, '★★');
+  set(5, 6, '★★★');
+  set(6, 2, '2');
+  set(6, 3, content + '（第 2 课）');
+  set(6, 4, '专题');
+  set(6, 5, '★★★');
+  set(6, 6, '★★★★');
+  return await wb.xlsx.writeBuffer() as any;
+}
+
+async function uploadMini(tokenStr: string, worksheet: string, content: string): Promise<{ id: number; courses: number }> {
+  const fd = new FormData();
+  fd.append(
+    'file',
+    new Blob([await miniCatalog(worksheet, content) as any], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }),
+    'mini.xlsx'
+  );
+  fd.append('band', '高中');
+  const res = await req('POST', '/api/catalog/import', { token: tokenStr, raw: fd });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  return { id: res.body.importId, courses: res.body.coursesImported };
+}
+
+describe('批量删除导入', () => {
+  test('非法入参直接 400', async () => {
+    for (const body of [{}, { ids: [] }, { ids: 'x' }, { ids: [0, -1] }, { ids: ['abc'] }]) {
+      const res = await req('DELETE', '/api/catalog/imports/batch', { token, body });
+      assert.equal(res.status, 400, JSON.stringify(body) + ' -> ' + JSON.stringify(res.body));
+      assert.equal(typeof res.body.error, 'string');
+    }
+  });
+
+  test('batch 不会被当成 :id 吃掉', async () => {
+    // 如果路由顺序写反了，这里会走 DELETE /imports/:id 报「非法的导入 id」
+    const res = await req('DELETE', '/api/catalog/imports/batch', { token, body: { ids: [9999999] } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.deleted, 0);
+    assert.equal(res.body.removed.length, 0);
+    assert.equal(res.body.skipped.length, 1);
+    assert.equal(res.body.skipped[0].reason, '已不存在');
+  });
+
+  test('一次删掉多条用户导入，内置目录和已不存在的 id 被跳过并上报', async () => {
+    const a = await uploadMini(token, '高二数学春季甲', '甲题');
+    const b = await uploadMini(otherToken, '高二数学春季乙', '乙题');
+    assert.equal(a.courses, 2);
+    assert.equal(b.courses, 2);
+    const before = await courseCount(token);
+
+    const res = await req('DELETE', '/api/catalog/imports/batch', {
+      token,
+      body: { ids: [a.id, b.id, builtinIds[0], 9999999] },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.deleted, 4);
+    assert.deepEqual(res.body.removed, [a.id, b.id]);
+    assert.equal(res.body.skipped.length, 2);
+    const reasons = res.body.skipped.map((s: any) => s.reason).sort();
+    assert.deepEqual(reasons, ['内置目录不能删除', '已不存在']);
+
+    // 两份用户目录的课程都清掉了，内置的还在
+    assert.equal(await courseCount(token), before - 4);
+    const list = await req('GET', '/api/catalog/imports', { token });
+    assert.equal(list.body.imports.length, 2);
+    for (const im of list.body.imports) assert.equal(im.is_builtin, true);
+  });
+
+  test('全部 id 都是内置时不删任何东西', async () => {
+    const before = await courseCount(token);
+    const res = await req('DELETE', '/api/catalog/imports/batch', {
+      token,
+      body: { ids: builtinIds },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.deleted, 0);
+    assert.deepEqual(res.body.removed, []);
+    assert.equal(res.body.skipped.length, builtinIds.length);
+    assert.equal(await courseCount(token), before);
   });
 });

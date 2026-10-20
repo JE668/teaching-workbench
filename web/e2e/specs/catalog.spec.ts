@@ -186,3 +186,67 @@ test.describe('课程目录导入', () => {
     expect(hits.length).toBe(5);
   });
 });
+
+test.describe('批量删除导入', () => {
+  test('勾选两份用户目录一次清空，不影响别的导入', async ({ page }) => {
+    await loginViaApi(page);
+
+    const a = await buildCatalogFixture({
+      sheet: '初二物理',
+      term: '秋季',
+      courses: [
+        [1, '批量删除甲课', '同步', '★★'],
+        [2, '批量删除甲课二', '专题', '★★★'],
+      ] as [number, string, string, string][],
+      filename: '批量删除甲.xlsx',
+    });
+    const b = await buildCatalogFixture({
+      sheet: '初二物理',
+      term: '秋季',
+      courses: [
+        [1, '批量删除乙课', '同步', '★★'],
+        [2, '批量删除乙课二', '专题', '★★★'],
+      ] as [number, string, string, string][],
+      filename: '批量删除乙.xlsx',
+    });
+    expect((await importCatalog(page, { name: a.filename, buffer: a.buffer })).coursesImported).toBe(2);
+    expect((await importCatalog(page, { name: b.filename, buffer: b.buffer })).coursesImported).toBe(2);
+
+    const token = await getToken(page);
+    const importsOf = async () => {
+      const res = await page.request.get('/api/catalog/imports', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      return ((await res.json()) as any).imports as any[];
+    };
+
+    const mine = (await importsOf()).filter((i) => i.filename === a.filename || i.filename === b.filename);
+    expect(mine.length).toBe(2);
+    const ids = mine.map((i) => i.id);
+
+    await page.goto('/catalog');
+
+    // 不点「全选」：用例之间共享同一个库，全选会把别的用例导的目录一起删掉
+    await page.getByTestId('pick-import-' + ids[0]).check();
+    await page.getByTestId('pick-import-' + ids[1]).check();
+    await expect(page.getByRole('button', { name: '删除选中（2）' })).toBeEnabled();
+
+    await page.getByRole('button', { name: '删除选中（2）' }).click();
+    await expect(page.getByText('删除选中的导入？')).toBeVisible();
+    await expect(page.getByText(/将删除选中的 2 次导入、共 4 条课程/)).toBeVisible();
+
+    await page.getByRole('button', { name: '全部删除' }).click();
+    await expect(page.getByText(/已删除 2 次导入、4 条课程/)).toBeVisible();
+
+    // 两条导入记录都没了
+    const left = (await importsOf()).filter((i) => i.id === ids[0] || i.id === ids[1]);
+    expect(left.length).toBe(0);
+
+    // 课程也真的清掉了，不只是历史记录消失
+    const res = await page.request.get('/api/catalog/courses?limit=20000', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    const titles = ((await res.json()) as any).courses.map((c: any) => c.content);
+    for (const t of [...a.titles, ...b.titles]) expect(titles).not.toContain(t);
+  });
+});

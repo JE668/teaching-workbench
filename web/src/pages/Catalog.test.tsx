@@ -101,6 +101,10 @@ function mockApi(
       return Promise.resolve({ usage });
     }
     if (path.startsWith('/students')) return Promise.resolve({ students: opts.students || [] });
+    if (path === '/catalog/imports/batch' && init?.method === 'DELETE') {
+      const ids = JSON.parse(init.body).ids as number[];
+      return Promise.resolve({ deleted: ids.length * 16, removed: ids, skipped: [] });
+    }
     if (path.startsWith('/catalog/imports/') && init?.method === 'DELETE') {
       return Promise.resolve({ deleted: courses.length });
     }
@@ -427,6 +431,42 @@ describe('课程目录页', () => {
     expect(screen.getByTestId('delete-import-3')).toBeInTheDocument();
     expect(screen.queryByTestId('delete-import-2')).toBeNull();
   });
+
+  it('批量删除：内置不进勾选，全选后确认弹窗带课程数', async () => {
+    mockApi({
+      courses: [makeCourse()],
+      imports: [
+        { ...makeImport({ id: 2, is_builtin: true, importer: '__catalog__' }), courses_total: 1896, courses_imported: 1896 },
+        { ...makeImport({ id: 3, importer: '王老师' }), courses_total: 12, courses_imported: 12 },
+        { ...makeImport({ id: 4, importer: '李老师' }), courses_total: 20, courses_imported: 20 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<Catalog />);
+    await screen.findByText('李老师');
+
+    // 内置那条没有勾选框，只有用户导入的能勾
+    expect(screen.queryByTestId('pick-import-2')).toBeNull();
+    expect(screen.getByTestId('pick-import-3')).toBeInTheDocument();
+    expect(screen.getByTestId('select-all-imports')).toBeInTheDocument();
+    // 还没勾的时候批量删除按钮是灰的
+    expect(screen.getByTestId('bulk-delete-imports')).toBeDisabled();
+
+    await user.click(screen.getByTestId('select-all-imports'));
+    await user.click(screen.getByRole('button', { name: '删除选中（2）' }));
+
+    expect(screen.getByText('删除选中的导入？')).toBeInTheDocument();
+    expect(screen.getByText(/将删除选中的 2 次导入、共 32 条课程/)).toBeInTheDocument();
+    expect(screen.getByText(/系统内置目录不会受影响/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '全部删除' }));
+    await waitFor(() => {
+      const del = request.mock.calls.find(([, init]) => init?.method === 'DELETE');
+      expect(del?.[0]).toBe('/catalog/imports/batch');
+      expect(JSON.parse((del?.[1] as any).body).ids).toEqual([3, 4]);
+    });
+  });
+
 });
 
 describe('掌握星级 · AI 批量定档', () => {

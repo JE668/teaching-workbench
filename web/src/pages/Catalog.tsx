@@ -444,6 +444,11 @@ export default function Catalog() {
   const [deleteTarget, setDeleteTarget] = useState<CatalogImport | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  /** 批量删除：勾上的导入 id。系统内置的没勾选项，进不了这里。 */
+  const [pickedImports, setPickedImports] = useState<number[]>([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
   /** 拉一次使用情况。studentId 非空时只拉这个学生的（进度模式）。 */
   const loadUsage = useCallback((studentId: string) => {
     void api
@@ -541,6 +546,35 @@ export default function Catalog() {
       toast.error(e.message || '删除失败');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  /** 勾上的导入一共覆盖多少条课程，确认弹窗里给用户一个量级感知。 */
+  const pickedCourses = imports
+    .filter((i) => pickedImports.includes(i.id))
+    .reduce((sum, i) => sum + i.courses_imported, 0);
+
+  const confirmBulkDelete = async () => {
+    if (pickedImports.length === 0) return;
+    setBulkDeleting(true);
+    try {
+      const res = await api.request<{ deleted: number; removed: number[]; skipped: { id: number; reason: string }[] }>(
+        '/catalog/imports/batch',
+        { method: 'DELETE', body: JSON.stringify({ ids: pickedImports }) },
+      );
+      const removed = Array.isArray(res.removed) ? res.removed : [];
+      toast.success('已删除 ' + removed.length + ' 次导入、' + (res.deleted || 0) + ' 条课程');
+      const skipped = Array.isArray(res.skipped) ? res.skipped : [];
+      if (skipped.length > 0) {
+        toast.info('跳过 ' + skipped.length + ' 个：' + skipped.map((s) => '#' + s.id + ' ' + s.reason).join('、'));
+      }
+      setPickedImports([]);
+      setBulkDeleteOpen(false);
+      await reload();
+    } catch (e: any) {
+      toast.error(e.message || '批量删除失败');
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -649,6 +683,17 @@ export default function Catalog() {
   })();
 
   const anyImported = imports.length > 0;
+
+  /** 可删除的导入（系统内置没有勾选项，也进不了批量删除） */
+  const deletableImports = imports.filter((i) => !i.is_builtin);
+  const allImportsPicked = deletableImports.length > 0 && deletableImports.every((i) => pickedImports.includes(i.id));
+
+  const toggleImport = (id: number) => {
+    setPickedImports((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  };
+  const toggleAllImports = () => {
+    setPickedImports((p) => (p.length === deletableImports.length ? [] : deletableImports.map((i) => i.id)));
+  };
 
   // —— 导出 / 打印 ——
   const [exporting, setExporting] = useState(false);
@@ -948,10 +993,46 @@ export default function Catalog() {
       {anyImported && (
         <Card className="print-hide">
           <CardHeader title="导入历史" description="全账号共享 · 同一份文件重复上传不会重复灌库" />
+          {deletableImports.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-500">
+                <input
+                  type="checkbox"
+                  className="accent-brand-600"
+                  checked={allImportsPicked}
+                  onChange={toggleAllImports}
+                  data-testid="select-all-imports"
+                />
+                全选可删除（{deletableImports.length}）
+              </label>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={pickedImports.length === 0 || bulkDeleting}
+                onClick={() => setBulkDeleteOpen(true)}
+                data-testid="bulk-delete-imports"
+              >
+                <Trash2 size={14} />
+                删除选中（{pickedImports.length}）
+              </Button>
+            </div>
+          )}
           <div className="divide-y divide-slate-100">
             {imports.map((im) => (
               <div key={im.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
                 <div className="flex items-center gap-3">
+                  {im.is_builtin ? (
+                    <span className="w-4" aria-hidden />
+                  ) : (
+                    <input
+                      type="checkbox"
+                      className="accent-brand-600"
+                      checked={pickedImports.includes(im.id)}
+                      onChange={() => toggleImport(im.id)}
+                      aria-label={'选择 ' + im.filename}
+                      data-testid={'pick-import-' + im.id}
+                    />
+                  )}
                   <FileSpreadsheet size={18} className="text-emerald-500" />
                   <div>
                     <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700">
@@ -1113,6 +1194,23 @@ export default function Catalog() {
         loading={deleting}
         onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        title="删除选中的导入？"
+        description={
+          '将删除选中的 ' +
+          pickedImports.length +
+          ' 次导入、共 ' +
+          pickedCourses +
+          ' 条课程，删除后不可恢复。系统内置目录不会受影响。'
+        }
+        confirmText="全部删除"
+        danger
+        loading={bulkDeleting}
+        onConfirm={() => void confirmBulkDelete()}
+        onCancel={() => setBulkDeleteOpen(false)}
       />
     </div>
   );
