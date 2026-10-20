@@ -583,9 +583,9 @@ router.post('/dedupe', (_req: AuthenticatedRequest, res) => {
  * 的引用改指到内置同名课（有同名课才改指），已经写过的总结、观察不变孤儿。
  * 收尾会再跑一轮去重，内置那份内部的历史重复也顺手收掉。
  */
-router.post('/reset-to-builtin', (_req: AuthenticatedRequest, res) => {
+router.post('/reset-to-builtin', async (_req: AuthenticatedRequest, res) => {
   try {
-    res.json(resetCatalogToBuiltIn());
+    res.json(await resetCatalogToBuiltIn());
   } catch (error: any) {
     res.status(500).json({ error: '清理已导入课程失败', message: error.message });
   }

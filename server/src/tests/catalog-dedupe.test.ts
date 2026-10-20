@@ -234,6 +234,26 @@ describe('dedupeCourseCatalog', () => {
     });
     assert.equal(count('SELECT COUNT(*) AS n FROM course_catalog'), 1);
   });
+
+  test('内置的空导入记录不删：全判重复时归零但记录得留着', () => {
+    // 真实事故：老师先于内置灌库自己导了同一份文件 → 内置那份被 findExisting 判成
+    // 全重复、一行都没插、courses_imported 归零，课程全挂在老师那份名下。此时去重
+    // 没有可合并的组，但清理空导入那步会把内置记录也删掉 —— 导入历史里整个学段
+    // 凭空消失，后面按 is_builtin 做「只保留内置」时整段课就跟着被删了。
+    const mine = addImport('老师先导的那份.xlsx', 'p'.repeat(64));
+    const builtin = addImport('内置那份.xlsx', 'q'.repeat(64), 1);
+    addCourse(mine, { seq: 8, content: '光现象' });
+
+    const r = dedupeCourseCatalog({ force: true });
+    assert.equal(r.removed, 0, '没有重复可合并');
+    assert.equal(r.importsRemoved, 0, '内置那份即使归零也不能删');
+    const left = db
+      .prepare('SELECT id, courses_imported FROM catalog_imports ORDER BY id')
+      .all() as any[];
+    assert.deepEqual(left.map((x) => x.id), [mine, builtin]);
+    assert.equal(left.find((x) => x.id === builtin)!.courses_imported, 0);
+    assert.equal(count('SELECT COUNT(*) AS n FROM course_catalog'), 1, '课程本身还在');
+  });
 });
 
 describe('POST /api/catalog/dedupe', () => {
@@ -258,7 +278,7 @@ describe('POST /api/catalog/dedupe', () => {
  * 条目只会越堆越多。这里是更彻底的清除。
  */
 describe('resetCatalogToBuiltIn', () => {
-  test('删掉所有非内置的导入和课程，只留内置那份', () => {
+  test('删掉所有非内置的导入和课程，只留内置那份', async () => {
     const mine = addImport('我自己导的那套课表.xlsx', 'g'.repeat(64));
     const builtin = addImport('内置目录.xlsx', 'h'.repeat(64), 1);
 
@@ -267,7 +287,7 @@ describe('resetCatalogToBuiltIn', () => {
     const mineB = addCourse(mine, { seq: 2, content: '只在我这套课表里' });
     const builtinB = addCourse(builtin, { seq: 2, content: '光现象' });
 
-    const r = resetCatalogToBuiltIn();
+    const r = await resetCatalogToBuiltIn({ reseed: false });
     assert.equal(r.removed, 2, '用户那份的两条课都该删');
     assert.equal(r.importsRemoved, 1, '用户的导入记录该清掉');
     assert.equal(r.remaining, 2, '只剩内置两条');
@@ -290,7 +310,7 @@ describe('resetCatalogToBuiltIn', () => {
     }
   });
 
-  test('指向被删课程的月度总结和课堂观察改指到内置同名课', () => {
+  test('指向被删课程的月度总结和课堂观察改指到内置同名课', async () => {
     const mine = addImport('用户目录.xlsx', 'i'.repeat(64));
     const builtin = addImport('内置目录.xlsx', 'j'.repeat(64), 1);
     const mineRow = addCourse(mine, { seq: 3, content: '物态变化' });
@@ -299,7 +319,7 @@ describe('resetCatalogToBuiltIn', () => {
     const item = addReportItem(mineRow);
     const obs = addObservation(mineRow);
 
-    const r = resetCatalogToBuiltIn();
+    const r = await resetCatalogToBuiltIn({ reseed: false });
     assert.equal(r.reassigned, 2, '月度总结 + 课堂观察各改指一处');
     assert.equal(r.removed, 1);
 
@@ -313,13 +333,13 @@ describe('resetCatalogToBuiltIn', () => {
     );
   });
 
-  test('内置里没有同名课的不硬改引用，只删课', () => {
+  test('内置里没有同名课的不硬改引用，只删课', async () => {
     const mine = addImport('另一套课表.xlsx', 'k'.repeat(64));
     addImport('内置目录.xlsx', 'l'.repeat(64), 1);
     const mineRow = addCourse(mine, { seq: 4, content: '我自己编的课' });
     const item = addReportItem(mineRow);
 
-    const r = resetCatalogToBuiltIn();
+    const r = await resetCatalogToBuiltIn({ reseed: false });
     assert.equal(r.reassigned, 0, '没有内置同名课就不硬改');
     assert.equal(r.removed, 1);
     assert.equal(r.importsRemoved, 1);
@@ -331,20 +351,56 @@ describe('resetCatalogToBuiltIn', () => {
     assert.ok(db.prepare('SELECT id FROM monthly_reports WHERE id = (SELECT report_id FROM report_items WHERE id = ?)').get(item));
   });
 
-  test('幂等：已经只剩内置时再跑一次全 0', () => {
+  test('幂等：已经只剩内置时再跑一次全 0', async () => {
     const builtin = addImport('内置目录.xlsx', 'm'.repeat(64), 1);
     addCourse(builtin, { seq: 5, content: '电学入门' });
 
-    const r = resetCatalogToBuiltIn();
+    const r = await resetCatalogToBuiltIn({ reseed: false });
     assert.deepEqual(
-      { removed: r.removed, importsRemoved: r.importsRemoved, deduped: r.deduped, remaining: r.remaining },
-      { removed: 0, importsRemoved: 0, deduped: 0, remaining: 1 }
+      {
+        removed: r.removed,
+        importsRemoved: r.importsRemoved,
+        reseeded: r.reseeded,
+        deduped: r.deduped,
+        remaining: r.remaining,
+      },
+      { removed: 0, importsRemoved: 0, reseeded: 0, deduped: 0, remaining: 1 }
     );
+  });
+
+  test('删掉用户那份后重新灌库，把误挂到用户名下的内置学段补回来', async () => {
+    // 线上真实事故的复现：老师先于内置灌库自己导了同一份文件 → 内置那份被判全
+    // 重复、courses_imported 归零、导入记录被去重清掉 → 整段课程挂在用户名下。
+    // 此时按 is_builtin 清理会把那整段课删掉，必须靠收尾重新灌库补回来。
+    const mine = addImport('我自己先导的高中目录.xlsx', '9'.repeat(64));
+    addCourse(mine, { band: '高中', grade: '高一', seq: 1, content: '集合的含义' });
+
+    const r = await resetCatalogToBuiltIn();
+
+    assert.equal(r.removed, 1);
+    assert.equal(r.importsRemoved, 1);
+    assert.ok(r.reseeded > 1000, '两份内置目录应该灌进来几千条，实际 ' + r.reseeded);
+    assert.ok(r.remaining > 1000, '目录不该被清空，实际剩 ' + r.remaining);
+
+    const high = db
+      .prepare("SELECT COUNT(*) AS n FROM course_catalog WHERE band = '高中'")
+      .get() as { n: number };
+    assert.ok(high.n > 1000, '高中学段必须补回来，实际 ' + high.n);
+
+    // 而且这次课程挂在内置导入名下，不再有课程挂在一个非内置记录下
+    const orphaned = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM course_catalog c
+         LEFT JOIN catalog_imports ci ON ci.id = c.import_id
+         WHERE ci.is_builtin = 0`
+      )
+      .get() as { n: number };
+    assert.equal(orphaned.n, 0, '不该有任何课程挂在非内置的导入记录下');
   });
 });
 
 describe('POST /api/catalog/reset-to-builtin', () => {
-  test('手工入口能跑，把统计带回来', async () => {
+  test('手工入口能跑，把统计带回来，并且补回漏掉的内置学段', async () => {
     const mine = addImport('用户那份.xlsx', 'n'.repeat(64));
     const builtin = addImport('内置那份.xlsx', 'o'.repeat(64), 1);
     addCourse(mine, { seq: 6, content: '力的合成' });
@@ -355,8 +411,17 @@ describe('POST /api/catalog/reset-to-builtin', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.removed, 1);
     assert.equal(res.body.importsRemoved, 1);
-    assert.equal(res.body.remaining, 2);
-    assert.equal(count('SELECT COUNT(*) AS n FROM course_catalog'), 2);
+    // 线上入口永远顺带重新灌库，小初 + 高中两份全年目录都得回来
+    assert.ok(res.body.reseeded > 1000, '应该重新灌回内置目录，实际 ' + res.body.reseeded);
+    const builtinFiles = db
+      .prepare('SELECT filename FROM catalog_imports WHERE is_builtin = 1')
+      .all() as { filename: string }[];
+    for (const f of [
+      '2026-2027个性化小初全年课程体系目录.xlsx',
+      '2026-2027个性化高中全年课程体系目录.xlsx',
+    ]) {
+      assert.ok(builtinFiles.some((x) => x.filename === f), '导入历史里缺 ' + f);
+    }
   });
 
   test('未登录 401', async () => {

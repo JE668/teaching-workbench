@@ -1,4 +1,5 @@
 import { db } from '../config/database.js';
+import { seedBuiltInCatalog } from '../seed/builtinCatalog.js';
 import { log } from '../utils/logger.js';
 
 export const CATALOG_DEDUPE_VERSION = '2026_10_20_dedupe_course_catalog';
@@ -95,11 +96,17 @@ export function dedupeCourseCatalog(options: { force?: boolean } = {}): DedupeRe
       .all() as { import_id: number; n: number }[];
     const byImport = new Map(remaining.map((r) => [r.import_id, r.n]));
     const imports = db.prepare('SELECT id FROM catalog_imports').all() as { id: number }[];
+    const updateCount = db.prepare('UPDATE catalog_imports SET courses_imported = ? WHERE id = ?');
+    // 内置的空导入记录**不删**：老师先导入过同名文件时，内置那份会被全判为重复、
+    // courses_imported 归零，但课程其实好好地待在库里（挂在老师那份名下）。
+    // 这时删掉内置记录就等于在导入历史里把整个学段弄丢了 —— 后面按 is_builtin
+    // 做「只保留内置」的清理会误删掉这批课。
+    const deleteEmpty = db.prepare('DELETE FROM catalog_imports WHERE id = ? AND is_builtin = 0');
     let importsRemoved = 0;
     for (const im of imports) {
       const n = byImport.get(im.id) ?? 0;
-      db.prepare('UPDATE catalog_imports SET courses_imported = ? WHERE id = ?').run(n, im.id);
-      if (n === 0) importsRemoved += db.prepare('DELETE FROM catalog_imports WHERE id = ?').run(im.id).changes;
+      updateCount.run(n, im.id);
+      if (n === 0) importsRemoved += deleteEmpty.run(im.id).changes;
     }
 
     db.prepare(
@@ -138,6 +145,8 @@ export interface ResetReport {
   reassigned: number;
   /** 清掉的已导入记录条数 */
   importsRemoved: number;
+  /** 收尾重新灌库补回来的课程条数 */
+  reseeded: number;
   /** 收尾再跑一轮去重、又合并掉的条数 */
   deduped: number;
   /** 处理完后课程表还剩多少条（应等于内置条数） */
@@ -145,7 +154,7 @@ export interface ResetReport {
   appliedAt: string | null;
 }
 
-export function resetCatalogToBuiltIn(): ResetReport {
+export async function resetCatalogToBuiltIn(options: { reseed?: boolean } = {}): Promise<ResetReport> {
   let removed = 0;
   let reassigned = 0;
   let importsRemoved = 0;
@@ -207,13 +216,26 @@ export function resetCatalogToBuiltIn(): ResetReport {
   });
 
   const r = run();
-  // 收尾再来一轮去重：内置那份内部也可能有历史遗留的重复
+
+  // 收尾重新灌一遍内置目录，把漏掉的学段补回来。
+  //
+  // 必须做：老师如果**先于**内置灌库自己导入过同一份文件，内置那份会被全判为重复、
+  // courses_imported 归零，而课程记录挂在老师那份名下。上面已经把老师那份连同课程
+  // 一起删了 —— 那整段课程就真的没了。重新灌库按文件 sha 判重，缺哪份补哪份。
+  // reseed: false 只给单测用（隔离断言），线上入口不传、永远会重灌。
+  let reseeded = 0;
+  if (options.reseed !== false) {
+    reseeded = (await seedBuiltInCatalog({ force: true })).courses;
+  }
+
+  // 再跑一轮去重：重灌出来的行和库里剩下的可能有重合
   const dedupe = dedupeCourseCatalog({ force: true });
 
   return {
     removed: r.removed,
     reassigned: r.reassigned,
     importsRemoved: r.importsRemoved,
+    reseeded,
     deduped: dedupe.removed,
     remaining: (db.prepare('SELECT COUNT(*) AS n FROM course_catalog').get() as { n: number }).n,
     appliedAt: dedupe.appliedAt,

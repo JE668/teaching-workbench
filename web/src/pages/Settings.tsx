@@ -87,8 +87,11 @@ export default function Settings() {
       const r = await api.post('/catalog/reset-to-builtin', {});
       setResetOpen(false);
       toast.success(
-        `已清除 ${r.removed} 条已导入课程、${r.importsRemoved} 条导入记录，目录现在只剩 ${r.remaining} 条系统内置课程`
+        `已清除 ${r.removed} 条已导入课程、${r.importsRemoved} 条导入记录，目录现在剩 ${r.remaining} 条`
       );
+      if (r.reseeded > 0) {
+        toast.info(`重新灌库补回了 ${r.reseeded} 条系统内置课程`);
+      }
       if (r.reassigned > 0) {
         toast.info(`${r.reassigned} 处月度总结/课堂观察的课时来源已改指到内置同名课`);
       }
