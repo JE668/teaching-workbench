@@ -216,10 +216,12 @@ describe('课程目录查询', () => {
     assert.deepEqual(res.body.tracks, []);
   });
 
-  test('不同用户的数据互不可见', async () => {
-    const res = await req('GET', '/api/catalog/courses', { token: otherToken });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.total, 0);
+  test('目录全局共享，任何账号看到同一份', async () => {
+    const mine = await req('GET', '/api/catalog/courses', { token });
+    const theirs = await req('GET', '/api/catalog/courses', { token: otherToken });
+    assert.equal(theirs.status, 200);
+    assert.equal(theirs.body.total, mine.body.total);
+    assert.equal(theirs.body.total, 2);
   });
 });
 
@@ -264,12 +266,13 @@ describe('掌握星级手改', () => {
     assert.equal(res.body.course.section, '秋季第一次阶段性测试');
   });
 
-  test('改别人的课程会 404', async () => {
+  test('改别人的课程也能成功，星级是共享注释', async () => {
     const list = await req('GET', '/api/catalog/courses', { token });
     const id = list.body.courses[0].id;
 
     const res = await req('PATCH', '/api/catalog/courses/' + id, { token: otherToken, body: { mastery_star: 3 } });
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.course.mastery_star, 3);
   });
 
   test('空 body 返回 400', async () => {
@@ -375,12 +378,12 @@ describe('掌握星级 AI 初评', () => {
     assert.equal(limited.events[0].data.limit, 1);
   });
 
-  test('别人的账号看不到别人的课程', async () => {
+  test('任何账号都能在共享目录上定档', async () => {
     await clearStars();
     setStarGenerator(async () => '{"results":[]}');
     const sse = await collectSse('/api/catalog/courses/suggest-stars', {}, otherToken);
     assert.equal(sse.status, 200);
-    assert.equal(sse.events[0].data.total, 0);
+    assert.equal(sse.events[0].data.total, 2);
     assert.equal(sse.events[1].data.updated, 0);
   });
 
@@ -735,13 +738,13 @@ describe('目录导出 Excel', () => {
     assert.ok(text.includes('常规掌握'));
   });
 
-  test('导出只带自己的目录，别人账号的课混不进来', async () => {
+  test('导出的是共享目录，任何账号导出一样的内容', async () => {
     const foreign = await fetch(url('/api/catalog/xlsx?grade=初二&subject=物理&term=秋季'), {
       headers: { Authorization: 'Bearer ' + otherToken },
     });
     assert.equal(foreign.status, 200);
     const buf = Buffer.from(await foreign.arrayBuffer());
     const text = await sheetText(buf);
-    assert.ok(!text.includes('声现象'), '别人账号的目录不该出现在导出里');
+    assert.ok(text.includes('声现象'), '共享目录应该出现在任何账号的导出里');
   });
 });

@@ -408,6 +408,25 @@ describe('课程目录页', () => {
       expect(del?.[0]).toBe('/catalog/imports/1');
     });
   });
+
+  it('内置目录打系统内置标记且不能删，用户导入的显示导入人', async () => {
+    mockApi({
+      courses: [makeCourse()],
+      imports: [
+        { ...makeImport({ id: 2, is_builtin: true, importer: '__catalog__', filename: '2026-2027个性化小初全年课程体系目录.xlsx' }), courses_total: 1896, courses_imported: 1896 },
+        { ...makeImport({ id: 3, importer: '王老师' }) },
+      ],
+    });
+    renderWithProviders(<Catalog />);
+
+    await screen.findByText('2026-2027个性化小初全年课程体系目录.xlsx');
+    expect(screen.getByText('系统内置')).toBeInTheDocument();
+    expect(screen.getByText('王老师')).toBeInTheDocument();
+    expect(screen.getByText('随镜像发版，不能删除')).toBeInTheDocument();
+    // 内置那条没有删除按钮，只有用户自己导入的那条有
+    expect(screen.getByTestId('delete-import-3')).toBeInTheDocument();
+    expect(screen.queryByTestId('delete-import-2')).toBeNull();
+  });
 });
 
 describe('掌握星级 · AI 批量定档', () => {

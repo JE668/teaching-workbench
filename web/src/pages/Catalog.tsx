@@ -67,6 +67,10 @@ interface CatalogImport {
   courses_duplicated: number;
   failed_sheets: string[];
   created_at: string;
+  /** 随镜像发版的机构级目录：所有账号共享，不能删除 */
+  is_builtin?: boolean;
+  /** 谁导入的（内置目录是系统账号） */
+  importer?: string;
 }
 
 /** 目录 ↔ 报告 / 听评课打通：一门课被用过几次 */
@@ -943,16 +947,21 @@ export default function Catalog() {
       {/* 导入历史 */}
       {anyImported && (
         <Card className="print-hide">
-          <CardHeader title="导入历史" description="同一份文件重复上传不会重复灌库" />
+          <CardHeader title="导入历史" description="全账号共享 · 同一份文件重复上传不会重复灌库" />
           <div className="divide-y divide-slate-100">
             {imports.map((im) => (
               <div key={im.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
                 <div className="flex items-center gap-3">
                   <FileSpreadsheet size={18} className="text-emerald-500" />
                   <div>
-                    <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700">
                       {im.filename}
                       <Badge tone="neutral">{im.band}</Badge>
+                      {im.is_builtin ? (
+                        <Badge tone="brand">系统内置</Badge>
+                      ) : (
+                        im.importer && <Badge tone="neutral">{im.importer}</Badge>
+                      )}
                     </div>
                     <div className="mt-0.5 text-xs text-slate-400">
                       {im.created_at} · 解析 {im.courses_total} 条 · 新增 {im.courses_imported} 条
@@ -963,15 +972,19 @@ export default function Catalog() {
                     </div>
                   </div>
                 </div>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => setDeleteTarget(im)}
-                  data-testid={'delete-import-' + im.id}
-                >
-                  <Trash2 size={14} />
-                  删除
-                </Button>
+                {im.is_builtin ? (
+                  <span className="text-xs text-slate-400">随镜像发版，不能删除</span>
+                ) : (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => setDeleteTarget(im)}
+                    data-testid={'delete-import-' + im.id}
+                  >
+                    <Trash2 size={14} />
+                    删除
+                  </Button>
+                )}
               </div>
             ))}
           </div>

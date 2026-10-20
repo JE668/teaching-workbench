@@ -7,6 +7,14 @@ import ExcelJS from 'exceljs';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { parseCatalogWorkbook, type Band } from '../utils/catalogParse.js';
+import {
+  COURSE_ORDER,
+  compareGrade,
+  compareSubject,
+  compareTerm,
+  compareTrack,
+  compareZh,
+} from '../utils/catalogOrder.js';
 import { suggestMasteryStars } from '../services/catalogStar.js';
 import { STAR_SCOPE_LIMIT } from '../utils/catalogStar.js';
 import {
@@ -23,7 +31,11 @@ import {
  * 都从 course_catalog 取数。
  *
  * 导入是可重复的：同一个文件重复上传不会重复灌库，按
- * (user, band, grade, subject, track, term, seq, content) 判重。
+ * (band, grade, subject, track, term, seq, content) 判重。
+ *
+ * 目录是**全局共享**的：内置课程目录随镜像灌库，老师自己导入的目录也所有人可见。
+ * 所有读接口都不带 user_id 过滤；user_id 只留作「谁导入的」留痕。
+ * 去重同样是跨账号的——两个人导入同一份文件，第二个人得到「全部重复」。
  */
 const router = Router();
 
@@ -33,6 +45,22 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 function sha256(buffer: Uint8Array): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+/**
+ * 上传文件名的编码订正。
+ *
+ * multer 按 latin1 解码 multipart 的 filename，中文文件名会变成「ä¸ªæ...」这种乱码，
+ * 而文件名是要展示给老师看的。把 latin1 字节按 UTF-8 重新解一遍就对了；
+ * 本来就是 ASCII 的名字解完不变，替换字符说明不是这种乱码，原样返回。
+ */
+function safeFilename(raw: string): string {
+  try {
+    const fixed = Buffer.from(raw, 'latin1').toString('utf8');
+    return fixed === raw || fixed.includes('\uFFFD') ? raw : fixed;
+  } catch {
+    return raw;
+  }
 }
 
 async function loadWorkbook(buffer: Uint8Array): Promise<ExcelJS.Workbook> {
@@ -55,7 +83,8 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
       if (err) return res.status(400).json({ error: '文件读取失败', message: err.message });
       const file = req.file;
       if (!file) return res.status(400).json({ error: '请上传 Excel 文件' });
-      if (!/\.xlsx$/i.test(file.originalname)) {
+      const filename = safeFilename(file.originalname);
+      if (!/\.xlsx$/i.test(filename)) {
         return res.status(400).json({ error: '仅支持 .xlsx 格式' });
       }
 
@@ -81,7 +110,7 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
       if (dryRun) {
         return res.json({
           dryRun: true,
-          filename: file.originalname,
+          filename,
           band,
           coursesTotal: parsed.courses.length,
           failedSheets: parsed.failedSheets,
@@ -103,12 +132,12 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
           `INSERT INTO catalog_imports (user_id, band, filename, file_sha256, courses_total, courses_imported, courses_duplicated, failed_sheets)
            VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,
         )
-        .run(userId, band, file.originalname, digest, parsed.courses.length, JSON.stringify(parsed.failedSheets))
+        .run(userId, band, filename, digest, parsed.courses.length, JSON.stringify(parsed.failedSheets))
         .lastInsertRowid as number;
 
       const findExisting = db.prepare(`
         SELECT id FROM course_catalog
-        WHERE user_id = ? AND band = ? AND grade = ? AND subject = ? AND track = ? AND term = ? AND seq = ? AND content = ?
+        WHERE band = ? AND grade = ? AND subject = ? AND track = ? AND term = ? AND seq = ? AND content = ?
       `);
 
       let imported = 0;
@@ -124,7 +153,7 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
       `);
       const tx = db.transaction(() => {
         for (const c of parsed.courses) {
-          const exists = findExisting.get(userId, c.band, c.grade, c.subject, c.track, c.term, c.seq, c.content) as { id: number } | undefined;
+          const exists = findExisting.get(c.band, c.grade, c.subject, c.track, c.term, c.seq, c.content) as { id: number } | undefined;
           if (exists) {
             duplicated++;
             continue;
@@ -158,7 +187,7 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
 
       res.json({
         importId,
-        filename: file.originalname,
+        filename,
         band,
         sha256: digest,
         coursesTotal: parsed.courses.length,
@@ -177,16 +206,18 @@ function clean(v: unknown): string {
   return v == null ? '' : String(v);
 }
 
-/** 课程目录查询。筛选都是可选的，不传就按用户全量返回。 */
 /**
  * /courses 和 /xlsx 共用一套筛选口径。
  *
  * 目录页在前端本地过滤，导出走服务端；两边各写一份筛选逻辑，迟早会出现
  * 「导出的比页面上多 / 少几门」。所以收敛成这一个函数。
+ *
+ * 目录全局共享，不按 user_id 圈范围：任何账号看到的都是全量目录。
  */
-function courseFilter(req: AuthenticatedRequest, userId: number) {
-  const where: string[] = ['user_id = ?'];
-  const params: unknown[] = [userId];
+function courseFilter(req: AuthenticatedRequest) {
+  // 1=1 兜底：一个筛选都不传时 where 数组是空的，直接拼 WHERE 会变成非法 SQL
+  const where: string[] = ['1=1'];
+  const params: unknown[] = [];
 
   for (const key of ['grade', 'subject', 'term', 'type', 'track', 'textbook', 'sheet'] as const) {
     const v = clean(req.query[key]).trim();
@@ -204,12 +235,9 @@ function courseFilter(req: AuthenticatedRequest, userId: number) {
   return { clause: where.join(' AND '), params };
 }
 
-/** 目录清单的排序：同页分组顺序，导出出来也是这个顺序 */
-const COURSE_ORDER = 'ORDER BY grade, subject, term, track, seq, id';
-
 router.get('/courses', (req: AuthenticatedRequest, res) => {
   try {
-    const { clause, params } = courseFilter(req, req.userId!);
+    const { clause, params } = courseFilter(req);
     const limit = Math.min(Math.max(Number(req.query.limit) || 5000, 1), 20000);
     const sql = `SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER} LIMIT ?`;
     params.push(limit);
@@ -229,7 +257,7 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
  */
 router.get('/xlsx', async (req: AuthenticatedRequest, res) => {
   try {
-    const { clause, params } = courseFilter(req, req.userId!);
+    const { clause, params } = courseFilter(req);
     const rows = db
       .prepare(`SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER}`)
       .all(...params) as any[];
@@ -359,7 +387,6 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
 
   (async () => {
     try {
-      const userId = req.userId!;
       const body = req.body || {};
       // 默认只补未定档的：老师手改过的不会被 AI 覆盖
       const onlyEmpty = body.onlyEmpty !== false;
@@ -368,8 +395,10 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
         STAR_SCOPE_LIMIT
       );
 
-      const where = ['user_id = ?'];
-      const params: unknown[] = [userId];
+      // 目录全局共享，定档范围也是全量目录，不按 user_id 圈
+      // 1=1 兜底：一个筛选都不传时 where 是空的，直接拼 WHERE 会变成非法 SQL
+      const where: string[] = ['1=1'];
+      const params: unknown[] = [];
       for (const key of ['grade', 'subject', 'term', 'track', 'type'] as const) {
         const v = clean(body[key]).trim();
         if (v) {
@@ -384,7 +413,7 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
           `SELECT id, content, type, score, difficulty, impact, section, grade, subject, term, track
            FROM course_catalog
            WHERE ${where.join(' AND ')}
-           ORDER BY grade, subject, term, track, seq, id
+           ${COURSE_ORDER}
            LIMIT ?`
         )
         .all(...params, limit) as any[];
@@ -399,7 +428,7 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
       // 关了就重定全部，连已定档的一起换。
       const updateStar = db.prepare(
         `UPDATE course_catalog SET mastery_star = ?, updated_at = datetime('now', '+8 hours')
-         WHERE id = ? AND user_id = ?` +
+         WHERE id = ?` +
           (onlyEmpty ? ' AND mastery_star IS NULL' : '')
       );
 
@@ -419,7 +448,7 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
           const written = db.transaction(() => {
             let n = 0;
             for (const d of decisions) {
-              n += updateStar.run(d.star, d.id, userId).changes;
+              n += updateStar.run(d.star, d.id).changes;
             }
             return n;
           })();
@@ -468,36 +497,53 @@ export function mapCourse(row: any) {
   };
 }
 
-/** 筛选项取值：给前端的下拉框用 */
+/**
+ * 筛选项取值：给前端的下拉框用。
+ *
+ * 年级 / 学科 / 学期 / 轨 按教学口径排（不是字典序——字典序会把初一排到四年级前面），
+ * 其余按中文本地序。前端直接按返回顺序渲染，不用自己再排一遍。
+ */
 router.get('/facets', (req: AuthenticatedRequest, res) => {
   try {
-    const userId = req.userId!;
-    const one = (col: string) =>
-      (db.prepare(`SELECT DISTINCT ${col} AS v FROM course_catalog WHERE user_id = ? AND ${col} != '' ORDER BY v`).all(userId) as any[])
-        .map((r) => r.v);
+    const values = (col: string) =>
+      (db.prepare(`SELECT DISTINCT ${col} AS v FROM course_catalog`).all() as any[])
+        .map((r) => String(r.v ?? ''));
+
+    const distinct = (col: string, cmp: (a: string, b: string) => number) =>
+      values(col).filter((v) => v !== '').sort(cmp);
+
     res.json({
-      grades: one('grade'),
-      subjects: one('subject'),
-      terms: one('term'),
-      types: one('type'),
-      tracks: one('track'),
-      textbooks: one('textbook'),
-      sheets: (db.prepare(`SELECT DISTINCT sheet AS v FROM course_catalog WHERE user_id = ? ORDER BY sheet`).all(userId) as any[]).map((r) => r.v),
+      grades: distinct('grade', compareGrade),
+      subjects: distinct('subject', compareSubject),
+      terms: distinct('term', compareTerm),
+      types: distinct('type', compareZh),
+      tracks: distinct('track', compareTrack),
+      textbooks: distinct('textbook', compareZh),
+      sheets: values('sheet').filter((v) => v !== '').sort(compareZh),
     });
   } catch (error: any) {
     res.status(500).json({ error: '查询筛选项失败', message: error.message });
   }
 });
 
-/** 导入历史 */
+/**
+ * 导入历史。目录全局共享，所以这里列的是**所有人**的导入记录，
+ * 带上导入人账号，好知道哪份是谁传的。
+ */
 router.get('/imports', (req: AuthenticatedRequest, res) => {
   try {
     const rows = db
-      .prepare('SELECT * FROM catalog_imports WHERE user_id = ? ORDER BY id DESC')
-      .all(req.userId!) as any[];
+      .prepare(
+        `SELECT i.*, u.username AS importer
+         FROM catalog_imports i
+         LEFT JOIN users u ON u.id = i.user_id
+         ORDER BY i.id DESC`
+      )
+      .all() as any[];
     res.json({
       imports: rows.map((r) => ({
         ...r,
+        is_builtin: Number(r.is_builtin) === 1,
         failed_sheets: safeParse(r.failed_sheets),
       })),
     });
@@ -515,10 +561,9 @@ function safeParse(s: unknown): string[] {
   }
 }
 
-/** 掌握星级等字段的手改 */
+/** 掌握星级等字段的手改。目录全局共享，所以改的是共享数据 */
 router.patch('/courses/:id', (req: AuthenticatedRequest, res) => {
   try {
-    const userId = req.userId!;
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的课程 id' });
 
@@ -540,8 +585,8 @@ router.patch('/courses/:id', (req: AuthenticatedRequest, res) => {
     if (!sets.length) return res.status(400).json({ error: '没有可更新的字段' });
 
     sets.push("updated_at = datetime('now', '+8 hours')");
-    params.push(id, userId);
-    const r = db.prepare(`UPDATE course_catalog SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
+    params.push(id);
+    const r = db.prepare(`UPDATE course_catalog SET ${sets.join(', ')} WHERE id = ?`).run(...params);
     if (!r.changes) return res.status(404).json({ error: '课程不存在' });
 
     res.json({ course: mapCourse(db.prepare('SELECT * FROM course_catalog WHERE id = ?').get(id) as any) });
@@ -550,16 +595,26 @@ router.patch('/courses/:id', (req: AuthenticatedRequest, res) => {
   }
 });
 
-/** 删除一次导入及其全部课程 */
+/**
+ * 删除一次导入及其全部课程。
+ *
+ * 内置课程目录是随镜像发版的机构级数据，删了就得重新灌库，直接禁止。
+ */
 router.delete('/imports/:id', (req: AuthenticatedRequest, res) => {
   try {
-    const userId = req.userId!;
     const id = Number(req.params.id);
-    if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的导入 id' });
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的导入 id' });
+
+    const imp = db
+      .prepare('SELECT is_builtin FROM catalog_imports WHERE id = ?')
+      .get(id) as { is_builtin: number } | undefined;
+    if (imp && Number(imp.is_builtin) === 1) {
+      return res.status(403).json({ error: '内置课程目录随镜像发版，不能删除' });
+    }
 
     const removed = db.transaction(() => {
-      const n = db.prepare('DELETE FROM course_catalog WHERE import_id = ? AND user_id = ?').run(id, userId).changes;
-      db.prepare('DELETE FROM catalog_imports WHERE id = ? AND user_id = ?').run(id, userId);
+      const n = db.prepare('DELETE FROM course_catalog WHERE import_id = ?').run(id).changes;
+      db.prepare('DELETE FROM catalog_imports WHERE id = ?').run(id);
       return n;
     })();
     res.json({ deleted: removed });

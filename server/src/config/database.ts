@@ -368,6 +368,9 @@ export function initDatabase() {
   // 听评课记录关联到的目录课时（可空：课题手输、目录里查不到时留空）
   ensureColumn('observations', 'course_id', 'INTEGER');
 
+  // 内置课程目录标记：机构级参考数据随镜像发版，所有账号共享，不能被删除
+  ensureColumn('catalog_imports', 'is_builtin', 'INTEGER NOT NULL DEFAULT 0');
+
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');
 
@@ -386,6 +389,8 @@ export function initDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_user ON course_catalog(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_filter ON course_catalog(user_id, grade, subject, term)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_content ON course_catalog(user_id, band, grade, subject, track, term, seq)');
+  // 目录改为全局共享后，导入去重不再按 user_id 圈范围，单独建一个不带 user_id 的索引
+  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_dedupe ON course_catalog(band, grade, subject, track, term, seq, content)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_monthly_reports_user ON monthly_reports(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_monthly_reports_student ON monthly_reports(user_id, student_id, year_month DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_report_items_report ON report_items(report_id, sort)');
