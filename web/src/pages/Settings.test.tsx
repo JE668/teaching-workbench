@@ -19,6 +19,7 @@ vi.mock('../api/client', () => ({
 
 const get = api.get as Mock;
 const put = api.put as Mock;
+const post = api.post as Mock;
 
 /** 模型列表接口的默认 mock：当前模型在列表里（下拉模式） */
 const DEFAULT_MODELS = {
@@ -61,6 +62,7 @@ function mockSettings(
 beforeEach(() => {
   get.mockReset();
   put.mockReset();
+  post.mockReset();
 });
 
 describe('设置页 · AI 设置', () => {
@@ -390,5 +392,50 @@ describe('设置页 · 修改密码', () => {
     await user.click(screen.getByRole('button', { name: /修改密码/ }));
 
     expect(await screen.findByText(/修改密码失败：当前密码不正确/)).toBeInTheDocument();
+  });
+});
+
+describe('设置页 · 课程目录维护', () => {
+  it('清除已导入课程规划：确认后调接口，提示清了多少', async () => {
+    mockSettings();
+    post.mockResolvedValue({
+      removed: 3589,
+      reassigned: 7,
+      importsRemoved: 2,
+      deduped: 18,
+      remaining: 3589,
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await screen.findByLabelText('模型');
+
+    await user.click(screen.getByTestId('reset-catalog-to-builtin'));
+    expect(screen.getByText('清除已导入的课程规划？')).toBeInTheDocument();
+    expect(screen.getByText(/课时来源会被改指到内置同名课/)).toBeInTheDocument();
+    expect(screen.getByText(/不可撤销/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '清除，只保留系统内置' }));
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/catalog/reset-to-builtin', {}));
+    expect(
+      await screen.findByText(/已清除 3589 条已导入课程、2 条导入记录/)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/7 处月度总结\/课堂观察的课时来源已改指/)).toBeInTheDocument();
+    expect(screen.getByText(/收尾又合并掉 18 条重复课程/)).toBeInTheDocument();
+    // 确认框关掉了
+    expect(screen.queryByText('清除已导入的课程规划？')).not.toBeInTheDocument();
+  });
+
+  it('接口报错时给出提示，不静默失败', async () => {
+    mockSettings();
+    post.mockRejectedValue(new Error('清理失败'));
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await screen.findByLabelText('模型');
+
+    await user.click(screen.getByTestId('reset-catalog-to-builtin'));
+    await user.click(screen.getByRole('button', { name: '清除，只保留系统内置' }));
+
+    expect(await screen.findByText(/清理失败/)).toBeInTheDocument();
   });
 });

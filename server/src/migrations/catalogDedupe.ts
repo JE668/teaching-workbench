@@ -118,3 +118,104 @@ export function dedupeCourseCatalog(options: { force?: boolean } = {}): DedupeRe
   }
   return { groups, removed, reassigned, importsRemoved, fresh: previous === null, appliedAt: lastDedupeAt() };
 }
+
+// ===========================================================================
+// 「只保留系统内置」：把账号自己导入的课程规划整批清掉
+//
+// 去重只能合并「同一门课被灌进库里两次」，合不掉「用户导的是一套不一样的课表」——
+// 那种情况下条目只会越堆越多，去重永远收不拢。所以再给一把更彻底的刀：
+// 删掉所有非内置的导入记录及其课程，只留系统内置那份。
+//
+// 删之前先把月度总结 / 课堂观察里指向被删课程的引用改指到「内置同名课」，
+// 有内置同名课才改指；实在没有的不硬改（report_items.course_id 和
+// observations.course_id 都是裸 INTEGER、没有外键，删课不会连锁删数据）。
+// ===========================================================================
+
+export interface ResetReport {
+  /** 删掉的已导入课程条数 */
+  removed: number;
+  /** 改指的引用条数（月度总结明细 + 课堂观察） */
+  reassigned: number;
+  /** 清掉的已导入记录条数 */
+  importsRemoved: number;
+  /** 收尾再跑一轮去重、又合并掉的条数 */
+  deduped: number;
+  /** 处理完后课程表还剩多少条（应等于内置条数） */
+  remaining: number;
+  appliedAt: string | null;
+}
+
+export function resetCatalogToBuiltIn(): ResetReport {
+  let removed = 0;
+  let reassigned = 0;
+  let importsRemoved = 0;
+
+  const run = db.transaction(() => {
+    // 已导入课程里「有内置同名课」的那些键：先改指引用，再删掉已导入那份
+    const sharedKeys = db.prepare(
+      `SELECT DISTINCT c.band, c.grade, c.subject, c.track, c.term, c.seq, TRIM(c.content) AS content
+       FROM course_catalog c
+       JOIN catalog_imports ci ON ci.id = c.import_id
+       WHERE ci.is_builtin = 0
+         AND EXISTS (
+           SELECT 1 FROM course_catalog b
+           JOIN catalog_imports bi ON bi.id = b.import_id
+           WHERE bi.is_builtin = 1
+             AND b.band = c.band AND b.grade = c.grade AND b.subject = c.subject
+             AND b.track = c.track AND b.term = c.term AND b.seq = c.seq
+             AND TRIM(b.content) = TRIM(c.content))`
+    );
+
+    // 定位「同一个键下、非内置的那些行」——keeper 本身是内置的，天然不在里面
+    const nonBuiltinSub =
+      `SELECT c.id FROM course_catalog c JOIN catalog_imports ci ON ci.id = c.import_id ` +
+      `WHERE ci.is_builtin = 0 AND ${KEY_WHERE} AND c.id != @keeper`;
+    const pickKeeper = db.prepare(
+      `SELECT c.id AS id ${KEEPER_FROM} WHERE ${KEY_WHERE} ${KEEPER_ORDER} LIMIT 1`
+    );
+    const updReportItems = db.prepare(
+      'UPDATE report_items SET course_id = @keeper WHERE course_id IN (' + nonBuiltinSub + ')'
+    );
+    const updObservations = db.prepare(
+      'UPDATE observations SET course_id = @keeper WHERE course_id IN (' + nonBuiltinSub + ')'
+    );
+    const delNonBuiltin = db.prepare('DELETE FROM course_catalog WHERE id IN (' + nonBuiltinSub + ')');
+
+    for (const g of sharedKeys.all() as any[]) {
+      const keeper = pickKeeper.get(g) as { id: number } | undefined;
+      if (!keeper) continue;
+      const params = { ...g, keeper: keeper.id };
+
+      reassigned += updReportItems.run(params).changes;
+      reassigned += updObservations.run(params).changes;
+      removed += delNonBuiltin.run(params).changes;
+    }
+
+    // 没有内置同名课的已导入课程整批删掉
+    removed += db
+      .prepare(
+        `DELETE FROM course_catalog
+         WHERE import_id IN (SELECT id FROM catalog_imports WHERE is_builtin = 0)`
+      )
+      .run().changes;
+
+    // 已导入记录清掉。必须先删课程再删导入：course_catalog.import_id 是
+    // ON DELETE SET NULL，顺序反了会把课留下、变成没来路的孤儿课
+    importsRemoved = db.prepare('DELETE FROM catalog_imports WHERE is_builtin = 0').run().changes;
+
+    return { removed, reassigned, importsRemoved };
+  });
+
+  const r = run();
+  // 收尾再来一轮去重：内置那份内部也可能有历史遗留的重复
+  const dedupe = dedupeCourseCatalog({ force: true });
+
+  return {
+    removed: r.removed,
+    reassigned: r.reassigned,
+    importsRemoved: r.importsRemoved,
+    deduped: dedupe.removed,
+    remaining: (db.prepare('SELECT COUNT(*) AS n FROM course_catalog').get() as { n: number }).n,
+    appliedAt: dedupe.appliedAt,
+  };
+}

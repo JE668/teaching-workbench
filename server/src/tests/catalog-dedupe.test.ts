@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { db } from '../config/database.js';
 import {
   dedupeCourseCatalog,
+  resetCatalogToBuiltIn,
   lastDedupeAt,
   CATALOG_DEDUPE_VERSION,
 } from '../migrations/catalogDedupe.js';
@@ -86,6 +87,17 @@ function addReportItem(courseId: number): number {
 }
 
 const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+
+/** 落库一条听评课记录关联到某门课，用来验「课堂观察的引用被改指」 */
+function addObservation(courseId: number): number {
+  return db
+    .prepare(
+      `INSERT INTO observations (user_id, teacher_id, topic, lesson_type, observed_at, grade, subject, course_id)
+       VALUES (?, NULL, '一节物理课', 'one_on_one', '2026-10-20 10:00', '初二', '物理', ?)`
+    )
+    .run(uid, courseId)
+    .lastInsertRowid as number;
+}
 
 before(async () => {
   await startServer();
@@ -238,5 +250,116 @@ describe('POST /api/catalog/dedupe', () => {
   });
   test('未登录 401', async () => {
     assert.equal((await req('POST', '/api/catalog/dedupe')).status, 401);
+  });
+});
+
+/**
+ * 「只保留系统内置」：去重合不掉「用户导的是一套不一样的课表」——那种情况下
+ * 条目只会越堆越多。这里是更彻底的清除。
+ */
+describe('resetCatalogToBuiltIn', () => {
+  test('删掉所有非内置的导入和课程，只留内置那份', () => {
+    const mine = addImport('我自己导的那套课表.xlsx', 'g'.repeat(64));
+    const builtin = addImport('内置目录.xlsx', 'h'.repeat(64), 1);
+
+    const builtinA = addCourse(builtin, { seq: 1, content: '声现象' });
+    const mineA = addCourse(mine, { seq: 1, content: '声现象' });
+    const mineB = addCourse(mine, { seq: 2, content: '只在我这套课表里' });
+    const builtinB = addCourse(builtin, { seq: 2, content: '光现象' });
+
+    const r = resetCatalogToBuiltIn();
+    assert.equal(r.removed, 2, '用户那份的两条课都该删');
+    assert.equal(r.importsRemoved, 1, '用户的导入记录该清掉');
+    assert.equal(r.remaining, 2, '只剩内置两条');
+
+    const left = db.prepare('SELECT id FROM course_catalog ORDER BY seq').all() as { id: number }[];
+    assert.deepEqual(
+      left.map((x) => x.id).sort(),
+      [builtinA, builtinB].sort()
+    );
+    // 只剩一条导入记录，且是内置的
+    assert.equal(count('SELECT COUNT(*) AS n FROM catalog_imports'), 1);
+    assert.equal(
+      (db.prepare('SELECT is_builtin FROM catalog_imports').get() as { is_builtin: number })
+        .is_builtin,
+      1
+    );
+    // 被删的课确实不在了
+    for (const gone of [mineA, mineB]) {
+      assert.ok(!db.prepare('SELECT id FROM course_catalog WHERE id = ?').get(gone));
+    }
+  });
+
+  test('指向被删课程的月度总结和课堂观察改指到内置同名课', () => {
+    const mine = addImport('用户目录.xlsx', 'i'.repeat(64));
+    const builtin = addImport('内置目录.xlsx', 'j'.repeat(64), 1);
+    const mineRow = addCourse(mine, { seq: 3, content: '物态变化' });
+    const builtinRow = addCourse(builtin, { seq: 3, content: '物态变化' });
+
+    const item = addReportItem(mineRow);
+    const obs = addObservation(mineRow);
+
+    const r = resetCatalogToBuiltIn();
+    assert.equal(r.reassigned, 2, '月度总结 + 课堂观察各改指一处');
+    assert.equal(r.removed, 1);
+
+    assert.equal(
+      (db.prepare('SELECT course_id FROM report_items WHERE id = ?').get(item) as any).course_id,
+      builtinRow
+    );
+    assert.equal(
+      (db.prepare('SELECT course_id FROM observations WHERE id = ?').get(obs) as any).course_id,
+      builtinRow
+    );
+  });
+
+  test('内置里没有同名课的不硬改引用，只删课', () => {
+    const mine = addImport('另一套课表.xlsx', 'k'.repeat(64));
+    addImport('内置目录.xlsx', 'l'.repeat(64), 1);
+    const mineRow = addCourse(mine, { seq: 4, content: '我自己编的课' });
+    const item = addReportItem(mineRow);
+
+    const r = resetCatalogToBuiltIn();
+    assert.equal(r.reassigned, 0, '没有内置同名课就不硬改');
+    assert.equal(r.removed, 1);
+    assert.equal(r.importsRemoved, 1);
+    // 引用值原样保留（course_id 没有外键，不会连锁删数据），月度总结本身还在
+    assert.equal(
+      (db.prepare('SELECT course_id FROM report_items WHERE id = ?').get(item) as any).course_id,
+      mineRow
+    );
+    assert.ok(db.prepare('SELECT id FROM monthly_reports WHERE id = (SELECT report_id FROM report_items WHERE id = ?)').get(item));
+  });
+
+  test('幂等：已经只剩内置时再跑一次全 0', () => {
+    const builtin = addImport('内置目录.xlsx', 'm'.repeat(64), 1);
+    addCourse(builtin, { seq: 5, content: '电学入门' });
+
+    const r = resetCatalogToBuiltIn();
+    assert.deepEqual(
+      { removed: r.removed, importsRemoved: r.importsRemoved, deduped: r.deduped, remaining: r.remaining },
+      { removed: 0, importsRemoved: 0, deduped: 0, remaining: 1 }
+    );
+  });
+});
+
+describe('POST /api/catalog/reset-to-builtin', () => {
+  test('手工入口能跑，把统计带回来', async () => {
+    const mine = addImport('用户那份.xlsx', 'n'.repeat(64));
+    const builtin = addImport('内置那份.xlsx', 'o'.repeat(64), 1);
+    addCourse(mine, { seq: 6, content: '力的合成' });
+    addCourse(builtin, { seq: 6, content: '力的合成' });
+    addCourse(builtin, { seq: 7, content: '力的分解' });
+
+    const res = await req('POST', '/api/catalog/reset-to-builtin', { token });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.removed, 1);
+    assert.equal(res.body.importsRemoved, 1);
+    assert.equal(res.body.remaining, 2);
+    assert.equal(count('SELECT COUNT(*) AS n FROM course_catalog'), 2);
+  });
+
+  test('未登录 401', async () => {
+    assert.equal((await req('POST', '/api/catalog/reset-to-builtin')).status, 401);
   });
 });

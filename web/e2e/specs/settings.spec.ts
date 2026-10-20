@@ -108,4 +108,25 @@ test.describe('设置页', () => {
     // 本地登录态已被清理
     expect(await page.evaluate(() => localStorage.getItem('token'))).toBeNull();
   });
+
+  test('一键清除已导入课程规划：确认框写清后果，确认后调接口', async ({ page }) => {
+    await loginViaApi(page);
+    await page.goto('/settings');
+
+    await page.getByTestId('reset-catalog-to-builtin').click();
+    await expect(page.getByText('清除已导入的课程规划？')).toBeVisible();
+    await expect(page.getByText(/课时来源会被改指到内置同名课/)).toBeVisible();
+    await expect(page.getByText(/不可撤销/)).toBeVisible();
+
+    await page.getByRole('button', { name: '清除，只保留系统内置' }).click();
+    await expect(page.getByText(/已清除 \d+ 条已导入课程/)).toBeVisible();
+
+    // 目录接口里不再有任何一份「非内置」的导入记录（一份不剩也算成立）
+    const token = await getToken(page);
+    const res = await page.request.get('/api/catalog/imports', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    const imports = ((await res.json()) as any).imports as any[];
+    expect(imports.every((i) => i.is_builtin === 1)).toBe(true);
+  });
 });

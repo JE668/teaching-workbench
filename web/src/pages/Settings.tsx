@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle, PenLine } from 'lucide-react';
+import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle, PenLine, BookOpen, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
+import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { usePreferences } from '../hooks/usePreferences';
@@ -69,6 +70,35 @@ export default function Settings() {
       toast.error('保存失败，请重试');
     } finally {
       setSavingSig(false);
+    }
+  }
+
+  // 课程目录：一键清除自己导入的课程规划，只保留系统内置那份
+  //
+  // 「清理重复课程」只能合并同一门课被灌两次的情况，合不掉「导入的是一套
+  // 不一样的课表」——那种情况下目录只会越堆越多，去重永远收不拢。这里是更彻底
+  // 的那把刀，所以放在设置页、且是危险操作，确认框里写清楚后果。
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  async function confirmResetCatalog() {
+    setResetting(true);
+    try {
+      const r = await api.post('/catalog/reset-to-builtin', {});
+      setResetOpen(false);
+      toast.success(
+        `已清除 ${r.removed} 条已导入课程、${r.importsRemoved} 条导入记录，目录现在只剩 ${r.remaining} 条系统内置课程`
+      );
+      if (r.reassigned > 0) {
+        toast.info(`${r.reassigned} 处月度总结/课堂观察的课时来源已改指到内置同名课`);
+      }
+      if (r.deduped > 0) {
+        toast.info(`收尾又合并掉 ${r.deduped} 条重复课程`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || '清理失败，请重试');
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -409,6 +439,35 @@ export default function Settings() {
         </div>
       </Card>
 
+      {/* ===== 课程目录维护 ===== */}
+      <Card className="lg:max-w-3xl ring-1 ring-red-100">
+        <CardHeader
+          title="课程目录维护"
+          description="清除自己导入的课程规划，目录只保留系统内置那份"
+          icon={<BookOpen className="h-4 w-4" />}
+        />
+        <div className="space-y-4 p-5">
+          <p className="text-sm leading-relaxed text-slate-500">
+            目录是机构级共享数据。如果你导入过自己的一套课程规划、条目数一直居高不下，
+            可以一键清掉自己导入的部分，只留随镜像发版的系统内置课程。
+          </p>
+          <div className="rounded-xl bg-slate-50 p-3.5 text-xs leading-relaxed text-slate-500">
+            <span className="font-medium text-slate-600">会清除：</span>
+            所有你自己导入的课程条目与导入记录（系统内置那份不受影响）<br />
+            <span className="font-medium text-slate-600">会保留：</span>
+            月度总结与课堂观察本身不动，它们指向被删课程的课时来源会自动改指到内置同名课
+          </div>
+          <Button
+            variant="danger"
+            icon={<Trash2 className="h-4 w-4" />}
+            onClick={() => setResetOpen(true)}
+            data-testid="reset-catalog-to-builtin"
+          >
+            清除已导入课程规划，只保留系统内置
+          </Button>
+        </div>
+      </Card>
+
       {/* ===== 听评课 Word 导出 ===== */}
       <Card className="lg:max-w-3xl">
         <CardHeader
@@ -476,6 +535,17 @@ export default function Settings() {
           </p>
         </div>
       </Card>
+
+      <ConfirmDialog
+        open={resetOpen}
+        danger
+        loading={resetting}
+        title="清除已导入的课程规划？"
+        description="目录里所有你自己导入的课程条目和导入记录都会被删掉，只保留系统内置那份。月度总结与课堂观察本身不动，但课时来源会被改指到内置同名课。这个操作不可撤销，建议先做一次数据库备份。"
+        confirmText="清除，只保留系统内置"
+        onConfirm={confirmResetCatalog}
+        onCancel={() => setResetOpen(false)}
+      />
     </div>
   );
 }
