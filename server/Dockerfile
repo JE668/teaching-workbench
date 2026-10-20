@@ -29,6 +29,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends     wget tzdata
 
 ENV TZ=Asia/Shanghai
 
+# 构建时传入的 git 提交号（见 .github/workflows 的 build-args）。
+# 镜像里带上它，线上出问题时 `docker exec <容器> printenv BUILD_SHA` 就能对上代码版本，
+# 不用再猜「我到底部署的是哪一版」——本地跑没有这个变量，返回 dev。
+ARG BUILD_SHA=dev
+ENV BUILD_SHA=${BUILD_SHA}
+
 # 创建非 root 用户
 RUN addgroup --system --gid 1001 nodejs     && adduser --system --uid 1001 nodejs
 

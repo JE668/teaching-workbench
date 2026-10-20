@@ -81,6 +81,8 @@ function mockApi(
     /** 按 student_id 返回不同 usage：用来测「换个学生只重拉 usage」 */
     usageByStudent?: Record<string, Record<string, any>>;
     students?: { id: number; name: string }[];
+    /** 清理重复课程的返回，用来测 toast 文案 */
+    dedupe?: { groups: number; removed: number; reassigned: number; importsRemoved: number };
   } = {}
 ) {
   const courses = opts.courses || [];
@@ -107,6 +109,9 @@ function mockApi(
       return Promise.resolve({ deleted: courses.length });
     }
     if (path.startsWith('/catalog/imports')) return Promise.resolve({ imports });
+    if (path === '/catalog/dedupe' && init?.method === 'POST') {
+      return Promise.resolve(opts.dedupe || { groups: 0, removed: 0, reassigned: 0, importsRemoved: 0 });
+    }
     return Promise.reject(new Error('unexpected ' + path));
   });
 }
@@ -452,6 +457,39 @@ describe('课程目录页', () => {
       expect(del?.[0]).toBe('/catalog/imports/batch');
       expect(JSON.parse((del?.[1] as any).body).ids).toEqual([3, 4]);
     });
+  });
+
+  it('清理重复课程：确认后调接口，提示合并了多少条', async () => {
+    mockApi({
+      courses: [makeCourse()],
+      imports: [{ ...makeImport({ id: 2, is_builtin: true, importer: '__catalog__' }), courses_imported: 1896 }],
+      dedupe: { groups: 3, removed: 1896, reassigned: 4, importsRemoved: 1 },
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<Catalog />);
+    await screen.findByText('导入历史');
+
+    await user.click(screen.getByTestId('dedupe-courses'));
+    expect(screen.getByText('清理重复课程？')).toBeInTheDocument();
+    expect(screen.getByText(/月度总结、课堂观察会改指/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '合并重复' }));
+
+    expect(await screen.findByText(/已合并 1896 条重复课程/)).toBeInTheDocument();
+    expect(screen.getByText(/4 处月度总结\/课堂观察已改指/)).toBeInTheDocument();
+    expect(screen.getByText(/顺带清掉 1 条空导入记录/)).toBeInTheDocument();
+    const call = request.mock.calls.find(([, init]) => init?.method === 'POST');
+    expect(call?.[0]).toBe('/catalog/dedupe');
+  });
+
+  it('没有重复课程时提示目录是干净的', async () => {
+    mockApi({ courses: [makeCourse()], imports: [makeImport()] });
+    const user = userEvent.setup();
+    renderWithProviders(<Catalog />);
+    await screen.findByText('导入历史');
+
+    await user.click(screen.getByTestId('dedupe-courses'));
+    await user.click(screen.getByRole('button', { name: '合并重复' }));
+    expect(await screen.findByText('没有重复课程，目录已经是干净的')).toBeInTheDocument();
   });
 
 });

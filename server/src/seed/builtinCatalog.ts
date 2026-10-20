@@ -132,7 +132,8 @@ export async function seedBuiltInCatalog(options: { force?: boolean } = {}): Pro
     // 去重口径跟用户导入一致：不带 user_id，跨账号去重
     const findExisting = db.prepare(
       `SELECT id FROM course_catalog
-       WHERE band = ? AND grade = ? AND subject = ? AND track = ? AND term = ? AND seq = ? AND content = ?`
+       WHERE band = ? AND grade = ? AND subject = ? AND track = ? AND term = ? AND seq = ?
+         AND TRIM(content) = TRIM(?)`
     );
     const insertCourse = db.prepare(
       `INSERT INTO course_catalog

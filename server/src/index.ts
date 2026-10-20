@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { db } from './config/database.js';
 import { createApp } from './app.js';
 import { seedBuiltInCatalog } from './seed/builtinCatalog.js';
+import { dedupeCourseCatalog } from './migrations/catalogDedupe.js';
 import { repairAllUsers } from './services/linkOrphans.js';
 import {
   migrateLegacyFolders,
@@ -29,6 +30,24 @@ try {
   }
 } catch (err: any) {
   log.warn({ err: err.message }, '内置课程目录灌库失败（不影响启动）');
+}
+
+// ========== 课程目录去重 ==========
+// #40 之前目录按账号隔离、去重键里带 user_id；改成全局共享后，早期导入的行和内置灌库的行
+// 其实是同一门课，却各自占一份，页面上就是「内置 3589 条 + 自己导的 3589 条」叠成七千多条。
+// 这里按 (band, grade, subject, track, term, seq, TRIM(content)) 合并重复行：优先留系统内置
+// 那份，并把手工指向重复行的月度总结 / 课堂观察改指到保留行，不会留下孤儿。
+// 幂等：结果写 schema_migrations 留痕，只跑一次；页面上也能手工再跑。
+try {
+  const deduped = dedupeCourseCatalog();
+  if (deduped.removed > 0) {
+    log.info(
+      { groups: deduped.groups, removed: deduped.removed, reassigned: deduped.reassigned },
+      '已合并课程目录里的重复行'
+    );
+  }
+} catch (err: any) {
+  log.warn({ err: err.message }, '课程目录去重失败（不影响启动）');
 }
 
 // 启动时做一次「孤儿回访」修复：把按姓名能唯一确定的未关联回访

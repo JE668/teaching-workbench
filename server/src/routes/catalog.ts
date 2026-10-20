@@ -6,6 +6,7 @@ import multer from 'multer';
 import ExcelJS from 'exceljs';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
+import { dedupeCourseCatalog } from '../migrations/catalogDedupe.js';
 import { parseCatalogWorkbook, type Band } from '../utils/catalogParse.js';
 import {
   COURSE_ORDER,
@@ -137,7 +138,8 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
 
       const findExisting = db.prepare(`
         SELECT id FROM course_catalog
-        WHERE band = ? AND grade = ? AND subject = ? AND track = ? AND term = ? AND seq = ? AND content = ?
+        WHERE band = ? AND grade = ? AND subject = ? AND track = ? AND term = ? AND seq = ?
+          AND TRIM(content) = TRIM(?)
       `);
 
       let imported = 0;
@@ -558,6 +560,20 @@ function safeParse(s: unknown): string[] {
     return [];
   }
 }
+
+/**
+ * 合并重复课程（同一门课被灌进库里两次）。
+ *
+ * 启动时已经自动跑过一次并写 schema_migrations 留痕，这里再给一个手工入口：
+ * 用户自己又导了一份跟内置重复的目录时，不用重启容器就能收敛。
+ */
+router.post('/dedupe', (_req: AuthenticatedRequest, res) => {
+  try {
+    res.json(dedupeCourseCatalog({ force: true }));
+  } catch (error: any) {
+    res.status(500).json({ error: '清理重复课程失败', message: error.message });
+  }
+});
 
 /** 掌握星级等字段的手改。目录全局共享，所以改的是共享数据 */
 router.patch('/courses/:id', (req: AuthenticatedRequest, res) => {

@@ -400,6 +400,10 @@ export default function Catalog() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
+  /** 清理重复课程：同一门课被灌进库里两次时合并成一条 */
+  const [dedupeOpen, setDedupeOpen] = useState(false);
+  const [deduping, setDeduping] = useState(false);
+
   /** 拉一次使用情况。studentId 非空时只拉这个学生的（进度模式）。 */
   const loadUsage = useCallback((studentId: string) => {
     void api
@@ -512,6 +516,33 @@ export default function Catalog() {
       toast.error(e.message || '批量删除失败');
     } finally {
       setBulkDeleting(false);
+    }
+  };
+
+  /** 合并重复课程。后端在启动时也跑过一次，这里是手工重跑入口。 */
+  const confirmDedupe = async () => {
+    setDeduping(true);
+    try {
+      const res = await api.request<{
+        groups: number;
+        removed: number;
+        reassigned: number;
+        importsRemoved: number;
+      }>('/catalog/dedupe', { method: 'POST', body: '{}' });
+      if (res.removed > 0) {
+        toast.success(
+          '已合并 ' + res.removed + ' 条重复课程' + (res.reassigned ? '，' + res.reassigned + ' 处月度总结/课堂观察已改指' : '')
+        );
+      } else {
+        toast.success('没有重复课程，目录已经是干净的');
+      }
+      if (res.importsRemoved > 0) toast.info('顺带清掉 ' + res.importsRemoved + ' 条空导入记录');
+      setDedupeOpen(false);
+      await reload();
+    } catch (e: any) {
+      toast.error(e.message || '清理重复课程失败');
+    } finally {
+      setDeduping(false);
     }
   };
 
@@ -829,7 +860,21 @@ export default function Catalog() {
       {/* 导入历史 */}
       {anyImported && (
         <Card className="print-hide">
-          <CardHeader title="导入历史" description="全账号共享 · 同一份文件重复上传不会重复灌库" />
+          <CardHeader
+            title="导入历史"
+            description="全账号共享 · 同一份文件重复上传不会重复灌库"
+            action={
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<RotateCcw size={14} />}
+                onClick={() => setDedupeOpen(true)}
+                data-testid="dedupe-courses"
+              >
+                清理重复课程
+              </Button>
+            }
+          />
           {deletableImports.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-2.5">
               <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-500">
@@ -1048,6 +1093,16 @@ export default function Catalog() {
         loading={bulkDeleting}
         onConfirm={() => void confirmBulkDelete()}
         onCancel={() => setBulkDeleteOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={dedupeOpen}
+        title="清理重复课程？"
+        description="把同一门课（年级 / 学科 / 学期 / 教案版本 / 序号 / 课程内容完全相同）的重复记录合并成一条，优先保留系统内置那份。已经指向这些课的月度总结、课堂观察会改指到保留的那条，不会丢数据。"
+        confirmText="合并重复"
+        loading={deduping}
+        onConfirm={() => void confirmDedupe()}
+        onCancel={() => setDedupeOpen(false)}
       />
     </div>
   );

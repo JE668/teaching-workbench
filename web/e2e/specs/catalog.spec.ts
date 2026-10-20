@@ -246,4 +246,34 @@ test.describe('批量删除导入', () => {
     const titles = ((await res.json()) as any).courses.map((c: any) => c.content);
     for (const t of [...a.titles, ...b.titles]) expect(titles).not.toContain(t);
   });
+
+  test('清理重复课程：按钮在导入历史上，弹窗确认后调接口', async ({ page }) => {
+    // 先导一份，保证「导入历史」卡片真的渲染出来（去重按钮挂在这张卡上）
+    const fixture = await buildCatalogFixture({
+      sheet: '初二物理',
+      term: '春季',
+      courses: [[1, '声现象', '同步', '★★']],
+      filename: '去重按钮校验.xlsx',
+    });
+    await loginViaApi(page);
+    await importCatalog(page, { name: fixture.filename, buffer: fixture.buffer });
+
+    await page.goto('/catalog');
+    await page.getByTestId('dedupe-courses').click();
+    await expect(page.getByText('清理重复课程？')).toBeVisible();
+    await expect(page.getByText(/月度总结、课堂观察会改指/)).toBeVisible();
+    await page.getByRole('button', { name: '合并重复' }).click();
+    await expect(page.getByText(/已合并 \d+ 条重复课程|没有重复课程，目录已经是干净的/)).toBeVisible();
+
+    // 接口也能直接调，返回体带全四个统计项
+    const token = await getToken(page);
+    const res = await page.request.post('/api/catalog/dedupe', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    expect(res.status()).toBe(200);
+    const body = (await res.json()) as any;
+    for (const k of ['groups', 'removed', 'reassigned', 'importsRemoved']) {
+      expect(typeof body[k]).toBe('number');
+    }
+  });
 });

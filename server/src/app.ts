@@ -125,6 +125,9 @@ export function createApp() {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         version: '1.0.0',
+        // 构建时的 git 提交号，烤进镜像（Dockerfile 的 ARG BUILD_SHA）。
+        // 确认线上是不是最新代码就看这个，别靠「我记得我部署过」。
+        build: process.env.BUILD_SHA || 'dev',
       });
     } catch {
       res.status(503).json({ status: 'error', message: '数据库不可用' });
