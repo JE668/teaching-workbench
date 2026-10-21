@@ -1,4 +1,4 @@
-import { getSharedClient, describeAiError } from './ai.js';
+import { getSharedClient, withAiSlot, acquireAiSlot, releaseAiSlot, describeAiError } from './ai.js';
 import { getAiConfig } from '../config/settings.js';
 import { OVERALL_GRADE_LABELS } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
@@ -185,52 +185,62 @@ export function runObservationGeneration(p: ObservationReportParams): Promise<st
 
 /** 单次真实生成（不落库、不含字数重试——评课报告比回访长，不设字数窗口） */
 export async function generateObservationReport(p: ObservationReportParams): Promise<string> {
-  const ai = getSharedClient();
-  const config = getAiConfig();
-  const body: any = {
-    model: config.model,
-    messages: [
-      {
-        role: 'system',
-        content: '你是一位资深教研员，擅长 1对1 课堂听评课。评价具体、可落地，不空谈。',
-      },
-      { role: 'user', content: buildObservationPrompt(p) },
-    ],
-    max_tokens: 4000,
-    temperature: 0.5,
-    reasoning_effort: config.reasoningEffort,
-  };
-  const res = await ai.chat.completions.create(body);
-  const text = (res.choices[0]?.message?.content || '').trim();
-  if (!text) {
-    log.warn({}, '评课生成为空');
-    throw new Error('AI 未返回评课内容，请重试');
-  }
-  return text;
+  return withAiSlot(async () => {
+    const ai = getSharedClient();
+    const config = getAiConfig();
+    const body: any = {
+      model: config.model,
+      messages: [
+        {
+          role: 'system',
+          content: '你是一位资深教研员，擅长 1对1 课堂听评课。评价具体、可落地，不空谈。',
+        },
+        { role: 'user', content: buildObservationPrompt(p) },
+      ],
+      max_tokens: 4000,
+      temperature: 0.5,
+      reasoning_effort: config.reasoningEffort,
+    };
+    const res = await ai.chat.completions.create(body);
+    const text = (res.choices[0]?.message?.content || '').trim();
+    if (!text) {
+      log.warn({}, '评课生成为空');
+      throw new Error('AI 未返回评课内容，请重试');
+    }
+    return text;
+  });
 }
 
 /** 流式生成：逐块产出评课文本增量（SSE 用），不含字数窗口 */
-export async function* streamObservationGeneration(p: ObservationReportParams): AsyncGenerator<string> {
-  const ai = getSharedClient();
-  const config = getAiConfig();
-  const body: any = {
-    model: config.model,
-    messages: [
-      {
-        role: 'system',
-        content: '你是一位资深教研员，擅长 1对1 课堂听评课。评价具体、可落地，不空谈。',
-      },
-      { role: 'user', content: buildObservationPrompt(p) },
-    ],
-    max_tokens: 4000,
-    temperature: 0.5,
-    reasoning_effort: config.reasoningEffort,
-    stream: true,
-  };
-  const stream = (await ai.chat.completions.create(body)) as any;
-  for await (const chunk of stream) {
-    const delta = chunk?.choices?.[0]?.delta?.content;
-    if (delta) yield delta as string;
+export async function* streamObservationGeneration(
+  p: ObservationReportParams
+): AsyncGenerator<string> {
+  // 占位直到流读完：一次评课生成可持续几十秒
+  await acquireAiSlot();
+  try {
+    const ai = getSharedClient();
+    const config = getAiConfig();
+    const body: any = {
+      model: config.model,
+      messages: [
+        {
+          role: 'system',
+          content: '你是一位资深教研员，擅长 1对1 课堂听评课。评价具体、可落地，不空谈。',
+        },
+        { role: 'user', content: buildObservationPrompt(p) },
+      ],
+      max_tokens: 4000,
+      temperature: 0.5,
+      reasoning_effort: config.reasoningEffort,
+      stream: true,
+    };
+    const stream = (await ai.chat.completions.create(body)) as any;
+    for await (const chunk of stream) {
+      const delta = chunk?.choices?.[0]?.delta?.content;
+      if (delta) yield delta as string;
+    }
+  } finally {
+    releaseAiSlot();
   }
 }
 

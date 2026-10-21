@@ -37,6 +37,24 @@ function ensureColumn(table: string, column: string, definition: string): void {
 }
 
 /**
+ * 建索引；如果同名索引已经存在但**列组成不同**，先删掉再按新列重建。
+ *
+ * 用途：#40 把课程目录改成全局共享后，`courseFilter` 不再带 `user_id`，
+ * 一批 `user_id` 打头的旧索引就全成了死索引 —— 查询用不上，但每次写入
+ * （尤其是批量灌 3589 条内置目录）都要白更新几棵 B-tree。
+ * 这里复用旧索引名、按新列重建，幂等且能自愈，不用留一次性迁移标记。
+ */
+function ensureIndexShape(name: string, table: string, columns: string[]): void {
+  const existing = (db.prepare('PRAGMA index_info(' + name + ')').all() as any[]).map(
+    (c) => c.name
+  );
+  if (existing.join(',') === columns.join(',')) return;
+  db.exec('DROP INDEX IF EXISTS ' + name);
+  db.exec('CREATE INDEX IF NOT EXISTS ' + name + ' ON ' + table + '(' + columns.join(',') + ')');
+  log.info({ name, table, columns }, '数据库迁移：调整索引列组成');
+}
+
+/**
  * 存量数据时区订正（一次性迁移）。
  *
  * 事故：SQLite 的 datetime('now','localtime') 依赖容器时区，而 Docker 默认时区是 UTC，
@@ -386,9 +404,18 @@ export function initDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_observations_date ON observations(observed_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_catalog_imports_user ON catalog_imports(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_catalog_imports_sha ON catalog_imports(user_id, file_sha256)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_user ON course_catalog(user_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_filter ON course_catalog(user_id, grade, subject, term)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_content ON course_catalog(user_id, band, grade, subject, track, term, seq)');
+  // 目录 #40 后全局共享，courseFilter 不带 user_id：旧的 user_id 打头索引全是死索引
+  // （查询用不上，批量灌内置目录时每条还要白更新几棵 B-tree）。这里按新口径重建。
+  db.exec('DROP INDEX IF EXISTS idx_course_catalog_user');
+  ensureIndexShape('idx_course_catalog_filter', 'course_catalog', ['grade', 'subject', 'term']);
+  ensureIndexShape('idx_course_catalog_content', 'course_catalog', [
+    'band',
+    'grade',
+    'subject',
+    'track',
+    'term',
+    'seq',
+  ]);
   // 目录改为全局共享后，导入去重不再按 user_id 圈范围，单独建一个不带 user_id 的索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_course_catalog_dedupe ON course_catalog(band, grade, subject, track, term, seq, content)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_monthly_reports_user ON monthly_reports(user_id)');

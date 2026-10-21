@@ -1,4 +1,4 @@
-import { getSharedClient, describeAiError } from './ai.js';
+import { getSharedClient, withAiSlot, describeAiError } from './ai.js';
 import { getAiConfig } from '../config/settings.js';
 import { log } from '../utils/logger.js';
 import {
@@ -44,24 +44,26 @@ type StarGenerator = (prompt: string) => Promise<string>;
 let generatorImpl: StarGenerator = callModel;
 
 async function callModel(prompt: string): Promise<string> {
-  const ai = getSharedClient();
-  const config = getAiConfig();
-  const body: any = {
-    model: config.model,
-    messages: [
-      {
-        role: 'system',
-        content:
-          '你是教研课程顾问，擅长依据期末考分值占比、学习难度和课程类型判断一门课的掌握要求档位。只输出要求的 JSON。',
-      },
-      { role: 'user', content: prompt },
-    ],
-    max_tokens: 4000,
-    temperature: 0.2,
-    reasoning_effort: config.reasoningEffort,
-  };
-  const res = await ai.chat.completions.create(body);
-  return (res.choices[0]?.message?.content || '').trim();
+  return withAiSlot(async () => {
+    const ai = getSharedClient();
+    const config = getAiConfig();
+    const body: any = {
+      model: config.model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            '你是教研课程顾问，擅长依据期末考分值占比、学习难度和课程类型判断一门课的掌握要求档位。只输出要求的 JSON。',
+        },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 4000,
+      temperature: 0.2,
+      reasoning_effort: config.reasoningEffort,
+    };
+    const res = await ai.chat.completions.create(body);
+    return (res.choices[0]?.message?.content || '').trim();
+  });
 }
 
 /** 替换模型调用（仅供测试） */

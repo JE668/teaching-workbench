@@ -365,14 +365,67 @@ function buildRequest(params: FollowUpGenerateParams, correction?: string, strea
   return body;
 }
 
+// ============ 并发闸门 ============
+//
+// 老师连点两次「生成」，或两个学生在两个标签页同时生成，就是两个请求一起打出去：
+// 双倍计费，而且两份结果会互相覆盖（后返回的把先返回的冲掉）。
+//
+// 限到 2 个对单人使用绰绰有余；超出就排队，不会丢请求。
+// 闸门加在真正调用 SDK 的地方（generateOnce / streamOnce），
+// 所有上层入口（非流式、流式、字数重试、家长版精简）自动被覆盖。
+export const MAX_CONCURRENT_AI = 2;
+let aiInFlight = 0;
+const aiWaiters: Array<() => void> = [];
+
+export async function acquireAiSlot(): Promise<void> {
+  while (aiInFlight >= MAX_CONCURRENT_AI) {
+    await new Promise<void>((resolve) => aiWaiters.push(resolve));
+  }
+  aiInFlight++;
+}
+
+export function releaseAiSlot(): void {
+  aiInFlight = Math.max(0, aiInFlight - 1);
+  // 唤醒一个等待者；被唤醒的一方会重新检查占用，避免多抢同一个槽位
+  const next = aiWaiters.shift();
+  if (next) next();
+}
+
+/**
+ * 把一次 AI 调用放进并发闸门。
+ * 星级定档（catalogStar）、听评课（observation）这些走 `getSharedClient()` 的能力
+ * 也要套上，否则闸门只管得住回访生成，其它能力照样能并发打满。
+ */
+export async function withAiSlot<T>(fn: () => Promise<T>): Promise<T> {
+  await acquireAiSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseAiSlot();
+  }
+}
+
+/** 当前正在跑的 AI 请求数（仅供测试断言） */
+export function getAiInFlightCount(): number {
+  return aiInFlight;
+}
+
+/** 重置闸门计数（仅供测试） */
+export function resetAiGate(): void {
+  aiInFlight = 0;
+  aiWaiters.length = 0;
+}
+
 /** 单次调用（非流式）。供字数重试逻辑复用。 */
 export async function generateOnce(
   params: FollowUpGenerateParams,
   correction?: string
 ): Promise<string> {
-  const ai = getClient(getAiConfig());
-  const response = await ai.chat.completions.create(buildRequest(params, correction));
-  return (response.choices[0].message.content || '').trim();
+  return withAiSlot(async () => {
+    const ai = getClient(getAiConfig());
+    const response = await ai.chat.completions.create(buildRequest(params, correction));
+    return (response.choices[0].message.content || '').trim();
+  });
 }
 
 /** 单次调用（流式），逐块产出文本增量 */
@@ -380,13 +433,22 @@ export async function* streamOnce(
   params: FollowUpGenerateParams,
   correction?: string
 ): AsyncGenerator<string> {
-  const ai = getClient(getAiConfig());
-  const stream = (await ai.chat.completions.create(buildRequest(params, correction, true))) as any;
-  for await (const chunk of stream) {
-    const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
-      ? chunk.choices[0].delta.content
-      : null;
-    if (delta) yield delta as string;
+  // 流式占用槽位直到流读完：一次生成可持续几十秒，
+  // 如果只在 create 时占一瞬间，等于没限流。
+  await acquireAiSlot();
+  try {
+    const ai = getClient(getAiConfig());
+    const stream = (await ai.chat.completions.create(
+      buildRequest(params, correction, true)
+    )) as any;
+    for await (const chunk of stream) {
+      const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+        ? chunk.choices[0].delta.content
+        : null;
+      if (delta) yield delta as string;
+    }
+  } finally {
+    releaseAiSlot();
   }
 }
 
@@ -532,9 +594,11 @@ function buildCondenseRequest(params: CondenseParams): any {
 }
 
 export async function condenseForParent(params: CondenseParams): Promise<string> {
-  const ai = getClient(getAiConfig());
-  const response = await ai.chat.completions.create(buildCondenseRequest(params));
-  return (response.choices[0].message.content || '').trim();
+  return withAiSlot(async () => {
+    const ai = getClient(getAiConfig());
+    const response = await ai.chat.completions.create(buildCondenseRequest(params));
+    return (response.choices[0].message.content || '').trim();
+  });
 }
 
 export async function* streamCondenseForParent(params: CondenseParams): AsyncGenerator<string> {
@@ -543,13 +607,18 @@ export async function* streamCondenseForParent(params: CondenseParams): AsyncGen
   const body: any = buildCondenseRequest(params);
   body.stream = true;
 
-  const ai = getClient(getAiConfig());
-  const stream = (await ai.chat.completions.create(body)) as any;
-  for await (const chunk of stream) {
-    const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
-      ? chunk.choices[0].delta.content
-      : null;
-    if (delta) yield delta as string;
+  await acquireAiSlot();
+  try {
+    const ai = getClient(getAiConfig());
+    const stream = (await ai.chat.completions.create(body)) as any;
+    for await (const chunk of stream) {
+      const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+        ? chunk.choices[0].delta.content
+        : null;
+      if (delta) yield delta as string;
+    }
+  } finally {
+    releaseAiSlot();
   }
 }
 
