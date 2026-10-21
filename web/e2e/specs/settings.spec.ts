@@ -121,12 +121,19 @@ test.describe('设置页', () => {
     await page.getByRole('button', { name: '清除，只保留系统内置' }).click();
     await expect(page.getByText(/已清除 \d+ 条已导入课程/)).toBeVisible();
 
-    // 目录接口里不再有任何一份「非内置」的导入记录（一份不剩也算成立）
+    // 断言前先说清口径：后端把 is_builtin 序列化成**布尔**（Number(x) === 1），
+    // 不是数字 1，所以别写 `i.is_builtin === 1`——那永远为 false。
     const token = await getToken(page);
-    const res = await page.request.get('/api/catalog/imports', {
-      headers: { Authorization: 'Bearer ' + token },
-    });
-    const imports = ((await res.json()) as any).imports as any[];
-    expect(imports.every((i) => i.is_builtin === 1)).toBe(true);
+    const importsOf = async () => {
+      const res = await page.request.get('/api/catalog/imports', {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      return ((await res.json()) as any).imports as any[];
+    };
+
+    const after = await importsOf();
+    expect(after.filter((i) => !i.is_builtin), '不该有任何非内置的导入记录').toEqual([]);
+    // 至少有一份内置还在，避免「数组是空的」让上面那条空转通过
+    expect(after.filter((i) => i.is_builtin).length).toBeGreaterThan(0);
   });
 });
