@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount, normalizeCourseType } from '../utils/mappers.js';
+import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount, normalizeCourseType, normalizeFollowUpModule } from '../utils/mappers.js';
 
 /**
  * 只读查询路由：列表 / 统计 / 历史建议 / 单条。
@@ -151,7 +151,7 @@ router.get('/last', (req: AuthenticatedRequest, res: Response) => {
 
     const row = db
       .prepare(
-        `SELECT id, topic, performance, mastery, session_count, course_type, subject, grade, word_count, created_at
+        `SELECT id, topic, performance, mastery, session_count, course_type, module, subject, grade, word_count, created_at
          FROM followups WHERE user_id = ? AND student_id = ?
          ORDER BY created_at DESC, id DESC LIMIT 1`
       )
@@ -169,6 +169,7 @@ router.get('/last', (req: AuthenticatedRequest, res: Response) => {
         mastery: row.mastery,
         sessionCount: normalizeSessionCount(row.session_count),
         courseType: normalizeCourseType(row.course_type),
+        module: normalizeFollowUpModule(row.module),
         subject: row.subject,
         grade: row.grade,
         wordCount: row.word_count,

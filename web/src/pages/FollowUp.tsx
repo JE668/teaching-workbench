@@ -30,7 +30,13 @@ import {
   MASTERY_LEVELS,
   SESSION_COUNTS,
   COURSE_TYPES,
+  FOLLOWUP_MODULE_GROUPS,
+  FOLLOWUP_MODULES,
+  FOLLOWUP_MODULE_LABELS,
+  FOLLOWUP_MODULE_GROUPS_BY_VALUE,
+  DEFAULT_FOLLOWUP_MODULE,
   CourseType,
+  FollowUpModule,
 } from '../types/index';
 import { deriveNickname } from '../lib/nickname';
 import {
@@ -76,6 +82,8 @@ const DEFAULT_FORM = {
   /** 亲切称呼；留空则由姓名自动推导 */
   nickname: '',
   courseType: 'one_on_one' as CourseType,
+  /** 流程打卡类型，决定 AI 生成内容侧重哪个模块 */
+  module: DEFAULT_FOLLOWUP_MODULE,
   grade: '小学三年级',
   subject: '数学',
   topic: '',
@@ -197,6 +205,7 @@ export default function FollowUp() {
       performance: lastFollowup.performance ?? prev.performance,
       mastery: lastFollowup.mastery ?? prev.mastery,
       sessionCount: lastFollowup.sessionCount ?? prev.sessionCount,
+      module: lastFollowup.module ?? prev.module,
     }));
     toast.info('已带入上次回访内容，请按需修改后再生成');
   };
@@ -627,6 +636,42 @@ export default function FollowUp() {
               icon={<ClipboardList className="h-4 w-4" />}
             />
             <div className="space-y-4 p-5">
+              {/* 流程打卡类型：学校新规的常规类 / 非常规类，选中哪个就按哪个模块生成 */}
+              <div>
+                <p className="mb-2 text-sm font-medium text-slate-700">流程打卡类型</p>
+                {FOLLOWUP_MODULE_GROUPS.map((g) => (
+                  <div key={g.group} className="mb-2.5">
+                    <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-xs font-semibold text-slate-600">{g.group}</span>
+                      <span className="text-xs text-slate-400">{g.hint}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {g.modules.map((m) => {
+                        const on = form.module === m.value;
+                        return (
+                          <button
+                            key={m.value}
+                            type="button"
+                            onClick={() => setForm({ ...form, module: m.value })}
+                            className={cn(
+                              'rounded-lg px-2 py-1.5 text-xs font-medium ring-1 transition-all duration-200',
+                              on
+                                ? 'bg-brand-600 text-white ring-brand-600 shadow-soft'
+                                : 'bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100'
+                            )}
+                          >
+                            {m.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                  {FOLLOWUP_MODULES.find((m) => m.value === form.module)?.hint}
+                </p>
+              </div>
+
               {/* 课程类型 */}
               <div>
                 <p className="mb-2 text-sm font-medium text-slate-700">课程类型</p>

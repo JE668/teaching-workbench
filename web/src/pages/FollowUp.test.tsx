@@ -844,3 +844,71 @@ describe('课后回访 · 流程打卡新规达标线', () => {
     expect(screen.queryByText(/学校要求约 150 字/)).not.toBeInTheDocument();
   });
 });
+
+describe('课后回访 · 流程打卡类型（常规类 / 非常规类）', () => {
+  // 学校新规把流程打卡分成常规类 5 种与非常规类 3 种，选中哪个就按哪个模块生成。
+  // 这里只锁 UI 选择与请求载荷；提示词按模块换写法由服务端 followup-module.test.ts 锁。
+  it('默认选中课堂总结，两组类型与八个选项都在', () => {
+    renderWithProviders(<FollowUp />);
+
+    expect(screen.getByText('流程打卡类型')).toBeInTheDocument();
+    expect(screen.getByText('常规类')).toBeInTheDocument();
+    expect(screen.getByText(/每周需完成不少于 5 项/)).toBeInTheDocument();
+    expect(screen.getByText('非常规类')).toBeInTheDocument();
+
+    for (const label of [
+      '课堂总结',
+      '新生首课',
+      '预习资料',
+      '作业批改',
+      '错题专练',
+      '成绩分析',
+      '阶测反馈',
+      '补课安排',
+    ]) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it('常规类选中后，生成请求与保存载荷都带上 module', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    post.mockResolvedValue({ id: 1 });
+    renderWithProviders(<FollowUp />);
+
+    await user.click(screen.getByRole('button', { name: '作业批改' }));
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    expect(streamPost.mock.calls[0][1].module).toBe('homework_review');
+
+    await user.click(screen.getByRole('button', { name: /保存并归档到学生档案/ }));
+    expect(post.mock.calls[0][1].module).toBe('homework_review');
+  });
+
+  it('非常规类同样生效：选中成绩分析后按 grade_analysis 生成', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    renderWithProviders(<FollowUp />);
+
+    await user.click(screen.getByRole('button', { name: '成绩分析' }));
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    expect(streamPost.mock.calls[0][1].module).toBe('grade_analysis');
+  });
+
+  it('不选时默认按课堂总结提交', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    renderWithProviders(<FollowUp />);
+
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    expect(streamPost.mock.calls[0][1].module).toBe('class_summary');
+  });
+});

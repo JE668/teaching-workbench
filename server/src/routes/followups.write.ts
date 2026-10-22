@@ -7,6 +7,7 @@ import {
   parseImages,
   normalizeSessionCount,
   normalizeCourseType,
+  normalizeFollowUpModule,
 } from '../utils/mappers.js';
 import { countWords } from '../services/ai.js';
 import { commitImages } from '../services/imageLifecycle.js';
@@ -39,6 +40,8 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
       req.body as FollowUpCreate;
     const sessionCount = normalizeSessionCount(req.body.sessionCount);
     const courseType = normalizeCourseType(req.body.courseType);
+    // 流程打卡类型：决定生成内容侧重哪个模块，非法值回落「课堂总结」
+    const module = normalizeFollowUpModule(req.body.module);
 
     // 小组课不需要 studentName；1对1 必须提供
     if (!grade || !subject || !topic || !performance || !mastery || !content) {
@@ -52,8 +55,8 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
     const imagesJson = JSON.stringify(committedImages);
 
     const insert = db.prepare(
-      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, course_type, images, content, word_count, batch_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO followups (user_id, student_id, student_name, grade, subject, topic, performance, mastery, session_count, course_type, module, images, content, word_count, batch_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // ============ 小组课：为每个选中的学生各存一条相同内容 ============
@@ -81,7 +84,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
         for (const s of rows) {
           const r = insert.run(
             userId, s.id, s.name, grade, subject, topic, performance, mastery,
-            sessionCount, 'group', imagesJson, content, wordCount, batchId
+            sessionCount, 'group', module, imagesJson, content, wordCount, batchId
           );
           newIds.push(Number(r.lastInsertRowid));
         }
@@ -147,7 +150,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
 
     const result = insert.run(
       userId, linkedStudentId, studentName, grade, subject, topic, performance, mastery,
-      sessionCount, 'one_on_one', imagesJson, content, wordCount, null
+      sessionCount, 'one_on_one', module, imagesJson, content, wordCount, null
     );
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(result.lastInsertRowid);

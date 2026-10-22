@@ -11,7 +11,7 @@ import {
   MIN_WORDS,
   MAX_WORDS,
 } from '../services/ai.js';
-import { normalizeCourseType, normalizeSessionCount } from '../utils/mappers.js';
+import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
 import { followUpGenerateSchema, followUpCondenseSchema } from '../utils/schemas.js';
@@ -96,6 +96,7 @@ router.post('/generate', validateBody(followUpGenerateSchema), async (req: Authe
       mastery,
       sessionCount: normalizeSessionCount(req.body.sessionCount),
       courseType,
+      module: normalizeFollowUpModule(req.body.module),
       nickname: req.body.nickname,
       images: images || [],
     });
@@ -133,6 +134,7 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     mastery,
     sessionCount: normalizeSessionCount(req.body.sessionCount),
     courseType,
+    module: normalizeFollowUpModule(req.body.module),
     nickname: req.body.nickname,
     images: images || [],
   };

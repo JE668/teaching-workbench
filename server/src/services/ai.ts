@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { env } from '../config/env.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { getAiConfig, getConfigVersion, getSetting, AiConfig } from '../config/settings.js';
+import { normalizeFollowUpModule } from '../utils/mappers.js';
+import type { FollowUpModule } from '../types/index.js';
 import fs from 'fs';
 import path from 'path';
 import { log } from '../utils/logger.js';
@@ -49,6 +51,8 @@ export interface FollowUpGenerateParams {
   sessionCount?: number;
   /** 课程类型：1对1（默认）或小组课 */
   courseType?: 'one_on_one' | 'group';
+  /** 流程打卡类型：决定生成内容侧重哪个模块，默认「课堂总结」 */
+  module?: FollowUpModule;
   /** 自定义称呼；不传则由 studentName 推导 */
   nickname?: string;
   images: string[];
@@ -162,6 +166,155 @@ function imageToBase64DataUrl(imagePath: string): string {
   return 'data:' + mimeType + ';base64,' + fs.readFileSync(fullPath).toString('base64');
 }
 
+// ============ 流程打卡类型（模块）=
+//
+// 学校新规把流程打卡分成常规类 5 种和非常规类 3 种，每种的家长关注点完全不同：
+// 「作业批改」关心错在哪，「新生首课」关心了解与计划，「补课安排」关心是否掉队。
+// 所以三段（课堂内容 / 学生收获 / 课后任务）的写法要跟着模块变，而不是永远写同一套。
+//
+// 模板用 {占位符} 表达，由 buildPrompt 里的 fill() 替换；占位符清单见那里的 vars。
+interface ModuleGuidance {
+  /** 中文名，用于提示词与前端回显 */
+  label: string;
+  /** 常规类 / 非常规类 */
+  group: '常规类' | '非常规类';
+  /** 这个打卡场景的定位，一句话，帮助模型理解上下文 */
+  scene: string;
+  /** 三段的写法指引（约字数上限沿用学校「约 150 字」的总控口径） */
+  sections: { classContent: string; gains: string; homework: string };
+  /** 本模块特有的补充要求，追加在通用硬性要求之外 */
+  rules: string[];
+}
+
+export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
+  // ---------- 常规类 ----------
+  class_summary: {
+    label: '课堂总结',
+    group: '常规类',
+    scene: '一次普通课程后的常规总结打卡：这节课讲了什么、孩子有什么收获、回家练什么。',
+    sections: {
+      classContent:
+        '说明{scopePhrase}讲授的知识点、教学重点与进度{multiRecap}，要与{grade}{subject}的课程标准相衔接。约 50-65 字。',
+      gains: '{gainsDefault}{gainsTail}。约 50-65 字。',
+      homework: '{homeworkDefault}。任务要可落地，难度匹配{grade}水平。约 35-50 字。',
+    },
+    rules: [],
+  },
+  first_lesson: {
+    label: '新生首课',
+    group: '常规类',
+    scene: '孩子第一次来上课，重点是了解学情、介绍教学计划、让孩子对上这门课有兴趣。',
+    sections: {
+      classContent:
+        '说明{scopePhrase}做了什么：先了解孩子的学习习惯与基础情况，向家长介绍了后续教学计划，再带孩子入门{topic}。约 50-65 字。',
+      gains:
+        '描述{call}的状态与性格特点：开口是否积极、注意力怎么样、愿不愿意提问，以及对这门课的反响。约 50-65 字。',
+      homework:
+        '写清需要家长配合的事，例如固定时间准备课本、提前和孩子说这周要学什么。第一次课不用留太多作业。约 35-50 字。',
+    },
+    rules: [
+      '【新生首课】刚上第一课还看不出掌握程度，【不要】评价孩子「掌握得好不好」，重点写了解到的情况和后续安排',
+    ],
+  },
+  preview: {
+    label: '预习资料',
+    group: '常规类',
+    scene: '发放或布置了预习资料，告诉家长资料内容、孩子怎么用、要完成到什么程度。',
+    sections: {
+      classContent:
+        '说明本次发放的预习资料覆盖了哪些知识点、这份资料该怎么用，跟{topic}有什么关系。约 50-65 字。',
+      gains:
+        '描述{call}拿到资料后的状态：知不知道从哪开始预习，预计会在哪一部分遇到困难。约 50-65 字。',
+      homework:
+        '把预习任务写具体：看哪几页、做哪几道题、大概花多少分钟，完成后怎么反馈给老师。约 35-50 字。',
+    },
+    rules: [
+      '【预习资料】任务必须具体到页码或题号，【不要】写成「提前预习一下」这种没法执行的空话',
+    ],
+  },
+  homework_review: {
+    label: '作业批改',
+    group: '常规类',
+    scene: '批改完作业后向家长反馈完成质量、错在哪里、要怎么订正。',
+    sections: {
+      classContent:
+        '说明本次批改的作业范围、整体完成质量，以及错误主要集中在哪些知识点上。约 50-65 字。',
+      gains:
+        '描述{call}的正确率趋势：哪些有进步，哪些类型的题还容易出错，要写具体（例如「通分时容易漏乘分子」）。约 50-65 字。',
+      homework:
+        '写清订正要求和配套练习：哪几题重做、再练哪一组、下次课带什么来。约 35-50 字。',
+    },
+    rules: [
+      '【作业批改】只能写老师真实批改出来的错误类型，【严禁】自己编造题目或编造错误',
+    ],
+  },
+  mistake_drill: {
+    label: '错题专练',
+    group: '常规类',
+    scene: '针对之前做错的题做专项训练，反馈这些错题现在处于什么状态。',
+    sections: {
+      classContent:
+        '说明本次专练了哪几类错题、一共多少道，针对这些错误专门练了什么方法。约 50-65 字。',
+      gains:
+        '描述{call}重做错题时的表现：哪些已经会了、哪些还需要提醒，方法上明白了什么。约 50-65 字。',
+      homework:
+        '布置同类题再练一组，并要求把错题整理进错题本、下次课前自查一遍。约 35-50 字。',
+    },
+    rules: [
+      '【错题专练】全篇围绕「错题」展开，【不要】写成整节课的泛泛总结',
+    ],
+  },
+  // ---------- 非常规类 ----------
+  grade_analysis: {
+    label: '成绩分析',
+    group: '非常规类',
+    scene: '针对某次考试或测评的成绩做分析反馈，回答「分数怎么来的、接下来怎么提」。',
+    sections: {
+      classContent:
+        '说明这次成绩来自哪次考试或测评、孩子的整体得分情况，以及各部分的得分分布。约 50-65 字。',
+      gains:
+        '分析分数背后反映的能力点：哪类题丢分多、说明哪个环节薄弱，以及值得肯定的进步。约 50-65 字。',
+      homework:
+        '给出针对性的提分计划：接下来重点补什么、用什么材料、下次什么时候复盘。约 35-50 字。',
+    },
+    rules: [
+      '【成绩分析】成绩数字只能取自老师填写的内容；老师没给具体分数就不要编数字，也不要写具体名次',
+    ],
+  },
+  stage_test: {
+    label: '阶测反馈',
+    group: '非常规类',
+    scene: '一次阶段性测评后的整体反馈，要体现「阶段」的视角，而不是一次课。',
+    sections: {
+      classContent:
+        '说明这次阶段测评考察了哪些范围、难度如何，孩子的整体完成情况怎么样。约 50-65 字。',
+      gains:
+        '描述{call}目前掌握得比较扎实的板块、还有哪些短板，与上一次阶段测评相比有什么变化。约 50-65 字。',
+      homework:
+        '明确下一阶段要攻克的模块与具体任务，说明下次阶测前需要达到什么程度。约 35-50 字。',
+    },
+    rules: [
+      '【阶测反馈】要有阶段性视角，【不要】写成一次普通课的总结',
+    ],
+  },
+  makeup_plan: {
+    label: '补课安排',
+    group: '非常规类',
+    scene: '需要补课：说明补的是哪一块、补完孩子掌握得怎么样、接下来怎么巩固。',
+    sections: {
+      classContent:
+        '说明这次补的内容对应原计划的哪一部分、为什么需要单独补这一块。约 50-65 字。',
+      gains:
+        '描述{call}补完这块内容后的掌握情况：之前卡住的地方有没有打通。约 50-65 字。',
+      homework:
+        '布置能把这块内容固化的练习，并说明下次课的安排。约 35-50 字。',
+    },
+    rules: [
+      '【补课安排】语气要正向，强调主动补救和已经打通的环节，【不要】让家长觉得孩子掉队了',
+    ],
+  },
+};
+
 /**
  * 构建提示词。correction 不为空时，追加纠偏指令（用于字数不达标时的重试）
  */
@@ -179,6 +332,35 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
   const isGroup = params.courseType === 'group';
   // 亲切称呼：李一一 → 一一
   const nickname = deriveNickname(params.nickname || studentName);
+
+  // 流程打卡类型：决定三段的写法侧重。非法值按「课堂总结」处理。
+  const mod = MODULE_GUIDANCE[normalizeFollowUpModule(params.module)];
+
+  // 模板占位符。gainsDefault / gainsTail / homeworkDefault 把原有「1对1 与小组课、
+  // 单次与多次」的分支收敛成字符串，模块模板只需要引用它们，不用各自重复分支逻辑。
+  const vars: Record<string, string> = {
+    scope,
+    scopePhrase,
+    grade,
+    subject,
+    topic,
+    masteryLabel,
+    sessionCount: String(sessionCount),
+    call: isGroup ? '孩子们' : (nickname || '学生'),
+    multiRecap: multi ? '，体现知识之间的递进关系' : '',
+    gainsDefault: isGroup
+      ? '结合课堂表现与掌握程度（' + masteryLabel + '），描述同学们在' + scopePhrase +
+        '的整体进步与亮点（理解力、专注度、解题能力等），并给出对全班的整体评价'
+      : '结合课堂表现与掌握程度（' + masteryLabel + '），描述' + (nickname || '学生') +
+        (multi
+          ? '在这 ' + sessionCount + ' 次课中的进步轨迹与当前'
+          : '本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现，并反映其当前'),
+    gainsTail: isGroup ? '' : '掌握情况',
+    homeworkDefault: multi
+      ? '针对' + scopePhrase + '的综合情况布置巩固练习，注意覆盖主要薄弱点'
+      : '布置具体、可执行、与本节课内容紧密相关的巩固练习',
+  };
+  const fill = (tpl: string) => tpl.replace(/\{(\w+)\}/g, (_m, k: string) => vars[k] ?? '');
 
   const lines: string[] = [
     '# 角色',
@@ -213,6 +395,7 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
 
   lines.push(
     multi ? '- 涵盖课次：' + scope : '- 涵盖课次：本次课',
+    '- 打卡类型：' + mod.group + ' · ' + mod.label,
     '- 课程内容：' + topic,
     '- 课堂表现：' + performance,
     '- 掌握程度（整体评价）：' + masteryLabel,
@@ -227,6 +410,15 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
       '- 【严禁】描述只有某个孩子才有的个性化细节（如"某某做错了第 3 题"）',
       '- 统一使用「孩子们」「同学们」「孩子」这类通用称呼',
       '- 内容写成对全班都适用的通用反馈，让每位家长读起来都自然贴切',
+      ''
+    );
+  }
+
+  // 打卡类型定位：让模型先明白「这是哪种打卡」，再决定三段怎么写
+  if (mod.scene) {
+    lines.push(
+      '# 本次打卡类型：' + mod.group + ' · ' + mod.label,
+      mod.scene,
       ''
     );
   }
@@ -259,26 +451,17 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     lines.push('# 风格偏好（老师自定义，优先遵循）', styleHint, '');
   }
 
+  // 三段的写法由打卡类型决定：课堂总结走通用写法，其余 7 种各有侧重
   lines.push(
     '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
     '【课堂内容】',
-    '说明' + scopePhrase + '讲授的知识点、教学重点与进度' +
-      (multi ? '，体现知识之间的递进关系' : '') +
-      '，要与' + grade + subject + '的课程标准相衔接。约 50-65 字。',
+    fill(mod.sections.classContent),
     '',
     '【学生收获】',
-    isGroup
-      ? '结合课堂表现与掌握程度（' + masteryLabel + '），描述同学们在' + scopePhrase +
-        '的整体进步与亮点（理解力、专注度、解题能力等），并给出对全班的整体评价。约 50-65 字。'
-      : '结合课堂表现与掌握程度（' + masteryLabel + '），描述' + (nickname || '学生') +
-        (multi ? '在这 ' + sessionCount + ' 次课中的进步轨迹与当前' : '本节课的进步与亮点，体现理解力、专注度、解题能力等具体表现，并反映其当前') +
-        '掌握情况。约 50-65 字。',
+    fill(mod.sections.gains),
     '',
     '【课后任务】',
-    (multi
-      ? '针对' + scopePhrase + '的综合情况布置巩固练习，注意覆盖主要薄弱点。'
-      : '布置具体、可执行、与本节课内容紧密相关的巩固练习。') +
-      '任务要可落地，难度匹配' + grade + '水平。约 35-50 字。',
+    fill(mod.sections.homework),
     '',
     '# 硬性要求（学校流程打卡标准）',
     '1. 全文总字数必须控制在 ' + MIN_WORDS + '-' + MAX_WORDS +
@@ -298,6 +481,12 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
       ? '11. 【严禁】出现任何学生姓名、昵称，一律使用通用称呼'
       : '11. 行文使用亲切称呼，不要反复使用学生全名'
   );
+
+  // 打卡类型专属要求：追加在通用硬性要求之外，不动通用条目的序号
+  if (mod.rules.length > 0) {
+    lines.push('', '# 本模块专属要求（' + mod.label + '）');
+    mod.rules.forEach((r, i) => lines.push(String(i + 1) + '. ' + r));
+  }
 
   if (correction) {
     lines.push(

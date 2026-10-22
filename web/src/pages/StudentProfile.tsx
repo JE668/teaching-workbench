@@ -21,7 +21,12 @@ import {
   ChartNoAxesCombined,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { MASTERY_LEVELS } from '../types/index';
+import {
+  MASTERY_LEVELS,
+  FOLLOWUP_MODULE_LABELS,
+  FOLLOWUP_MODULE_GROUPS_BY_VALUE,
+  FollowUpModule,
+} from '../types/index';
 import { buildProgression, TREND_META } from '../lib/progression';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -44,6 +49,8 @@ interface FollowUpRecord {
   mastery: string;
   sessionCount: number;
   courseType?: 'one_on_one' | 'group';
+  /** 流程打卡类型（常规类 / 非常规类）；历史数据可能没有 */
+  module?: FollowUpModule;
   images: string[];
   content: string;
   wordCount: number;
@@ -357,6 +364,17 @@ export default function StudentProfile() {
                             <h3 className="text-sm font-semibold text-slate-800">{f.topic}</h3>
                             <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                             <Badge tone="brand">{f.subject}</Badge>
+                            {f.module && (
+                              <Badge
+                                tone={
+                                  FOLLOWUP_MODULE_GROUPS_BY_VALUE[f.module] === '非常规类'
+                                    ? 'violet'
+                                    : 'neutral'
+                                }
+                              >
+                                {FOLLOWUP_MODULE_LABELS[f.module]}
+                              </Badge>
+                            )}
                             {f.courseType === 'group' && <Badge tone="info">小组课</Badge>}
                             {f.sessionCount > 1 && (
                               <Badge tone="violet">{f.sessionCount} 次课</Badge>

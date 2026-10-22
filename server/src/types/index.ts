@@ -61,6 +61,8 @@ export interface FollowUp {
   sessionCount: number;
   /** 课程类型：1对1 或 小组课 */
   courseType: CourseType;
+  /** 流程打卡类型（学校常规类 / 非常规类），决定生成内容的模块侧重 */
+  module: FollowUpModule;
   images: string[]; // 图片路径数组（API 层已解析）
   content: string;
   wordCount: number;
@@ -82,6 +84,8 @@ export interface FollowUpCreate {
   sessionCount?: number;
   /** 课程类型，不传按 1对1 处理 */
   courseType?: CourseType;
+  /** 流程打卡类型，不传按「课堂总结」处理 */
+  module?: FollowUpModule;
   /** 小组课：要归档到的多个学生 id */
   studentIds?: number[];
   /** 自定义称呼；不传则由 studentName 推导 */
@@ -89,6 +93,20 @@ export interface FollowUpCreate {
   images: string[];
   content: string;
 }
+
+/**
+ * 流程打卡类型（学校 2026 新规）。
+ * 常规类 5 种 + 非常规类 3 种，每种的生成侧重不同，见 services/ai.ts 的 MODULE_GUIDANCE。
+ */
+export type FollowUpModule =
+  | 'class_summary'
+  | 'first_lesson'
+  | 'preview'
+  | 'homework_review'
+  | 'mistake_drill'
+  | 'grade_analysis'
+  | 'stage_test'
+  | 'makeup_plan';
 
 // ============ 听评课（独立于课后回访） ============
 /** 课型 */

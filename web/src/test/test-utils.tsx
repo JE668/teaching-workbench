@@ -68,6 +68,8 @@ export function makeFollowUp(overrides: Record<string, unknown> = {}) {
     performance: '专注度较高，能主动回答问题',
     mastery: 'good',
     sessionCount: 1,
+    courseType: 'one_on_one',
+    module: 'class_summary',
     images: [],
     content,
     wordCount: 175,

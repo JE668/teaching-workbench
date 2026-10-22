@@ -186,6 +186,7 @@ export function initDatabase() {
       mastery TEXT NOT NULL,
       session_count INTEGER NOT NULL DEFAULT 1,
       course_type TEXT NOT NULL DEFAULT 'one_on_one',
+      module TEXT NOT NULL DEFAULT 'class_summary',
       images TEXT NOT NULL DEFAULT '[]',
       content TEXT NOT NULL,
       word_count INTEGER NOT NULL DEFAULT 0,
@@ -375,6 +376,8 @@ export function initDatabase() {
   ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
   ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn('followups', 'course_type', "TEXT NOT NULL DEFAULT 'one_on_one'");
+  // 流程打卡类型（常规类 / 非常规类）；存量记录归到「课堂总结」
+  ensureColumn('followups', 'module', "TEXT NOT NULL DEFAULT 'class_summary'");
   // 小组课批量一致性：同一次小组课拆出的 N 条记录共享一个 batch_id，
   // 编辑时可同步更新整批，避免 8 人里 1 条和其余不一致。
   ensureColumn('followups', 'batch_id', 'TEXT');

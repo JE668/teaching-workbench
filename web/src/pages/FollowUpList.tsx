@@ -23,6 +23,8 @@ import {
   MASTERY_LEVELS,
   SESSION_COUNTS,
   COURSE_TYPES,
+  FOLLOWUP_MODULE_LABELS,
+  FOLLOWUP_MODULE_GROUPS_BY_VALUE,
   CourseType,
 } from '../types/index';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -39,6 +41,14 @@ import { formatDate, relativeTime, countWords, copyText, cn } from '../lib/utils
 const masteryTone = (v: string) =>
   v === 'excellent' ? 'success' : v === 'good' ? 'info' : v === 'average' ? 'warning' : 'danger';
 const masteryLabel = (v: string) => MASTERY_LEVELS.find((m) => m.value === v)?.label || v;
+
+/**
+ * 流程打卡类型徽标。非常规类用紫色突出（这类打卡不是每天都有），
+ * 常规类低调处理，避免列表被 8 种颜色糊满。
+ */
+const moduleBadgeTone = (f: FollowUp) =>
+  FOLLOWUP_MODULE_GROUPS_BY_VALUE[f.module] === '非常规类' ? 'violet' : 'neutral';
+const moduleLabel = (f: FollowUp) => FOLLOWUP_MODULE_LABELS[f.module] ?? FOLLOWUP_MODULE_LABELS.class_summary;
 
 export default function FollowUpList() {
   const [items, setItems] = useState<FollowUp[]>([]);
@@ -277,6 +287,7 @@ export default function FollowUpList() {
                     <span className="text-sm font-semibold text-slate-700">{f.studentName}</span>
                     <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                     <Badge tone="brand">{f.subject}</Badge>
+                    <Badge tone={moduleBadgeTone(f)}>{moduleLabel(f)}</Badge>
                     {f.courseType === 'group' && <Badge tone="info">小组课</Badge>}
                     {f.sessionCount > 1 && <Badge tone="violet">{f.sessionCount} 次课</Badge>}
                     <span className="text-xs text-slate-400">{f.grade}</span>
@@ -413,6 +424,7 @@ export default function FollowUpList() {
                 { label: '学生', value: detail.studentName },
                 { label: '年级', value: detail.grade },
                 { label: '学科', value: detail.subject },
+                { label: '打卡类型', value: FOLLOWUP_MODULE_GROUPS_BY_VALUE[detail.module] + ' · ' + moduleLabel(detail) },
                 { label: '课程类型', value: detail.courseType === 'group' ? '小组课' : '1对1' },
                 { label: '涵盖课次', value: detail.sessionCount > 1 ? detail.sessionCount + ' 次课' : '本次课' },
               ].map((x) => (

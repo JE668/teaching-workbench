@@ -31,6 +31,8 @@ export interface FollowUp {
   sessionCount: number;
   /** 课程类型：1对1 或 小组课 */
   courseType: CourseType;
+  /** 流程打卡类型（学校常规类 / 非常规类） */
+  module: FollowUpModule;
   images: string[];
   content: string;
   wordCount: number;
@@ -80,6 +82,78 @@ export const COURSE_TYPES: { value: CourseType; label: string; hint: string }[] 
   { value: 'one_on_one', label: '1对1', hint: '面向单个学生，文案中会使用学生称呼' },
   { value: 'group', label: '小组课', hint: '面向全班，文案不含任何学生姓名，可同时归档给多名学生' },
 ];
+
+// ============ 流程打卡类型（学校 2026 新规）============
+//
+// 常规类 5 种是每周必须完成的日常打卡，非常规类 3 种按实际需要打。
+// 选中哪种，AI 生成的三段（课堂内容 / 学生收获 / 课后任务）就侧重那个模块——
+// 服务端对应实现在 server/src/services/ai.ts 的 MODULE_GUIDANCE，key 必须保持一致。
+
+export type FollowUpModule =
+  | 'class_summary'
+  | 'first_lesson'
+  | 'preview'
+  | 'homework_review'
+  | 'mistake_drill'
+  | 'grade_analysis'
+  | 'stage_test'
+  | 'makeup_plan';
+
+export interface FollowUpModuleOption {
+  value: FollowUpModule;
+  label: string;
+  hint: string;
+}
+
+export interface FollowUpModuleGroup {
+  group: '常规类' | '非常规类';
+  hint: string;
+  modules: FollowUpModuleOption[];
+}
+
+export const FOLLOWUP_MODULE_GROUPS: FollowUpModuleGroup[] = [
+  {
+    group: '常规类',
+    hint: '每周需完成不少于 5 项',
+    modules: [
+      { value: 'class_summary', label: '课堂总结', hint: '这节课讲了什么、孩子有什么收获、回家练什么' },
+      { value: 'first_lesson', label: '新生首课', hint: '了解学情、介绍教学计划，重点在配合而非评价掌握程度' },
+      { value: 'preview', label: '预习资料', hint: '资料覆盖哪些知识点、孩子怎么用，任务要具体到页码题号' },
+      { value: 'homework_review', label: '作业批改', hint: '完成质量、错在哪些知识点、怎么订正' },
+      { value: 'mistake_drill', label: '错题专练', hint: '哪几类错题专练了什么方法、现在掌握到什么程度' },
+    ],
+  },
+  {
+    group: '非常规类',
+    hint: '按需打卡',
+    modules: [
+      { value: 'grade_analysis', label: '成绩分析', hint: '成绩从哪来、丢分在哪、接下来怎么提分' },
+      { value: 'stage_test', label: '阶测反馈', hint: '阶段性测评的整体反馈，体现板块与短板的变化' },
+      { value: 'makeup_plan', label: '补课安排', hint: '补的是哪一块、补完掌握得怎么样、怎么巩固' },
+    ],
+  },
+];
+
+/** 全部打卡类型（不分组的扁平表），供回显与查找使用 */
+export const FOLLOWUP_MODULES: FollowUpModuleOption[] = FOLLOWUP_MODULE_GROUPS.flatMap(
+  (g) => g.modules
+);
+
+export const FOLLOWUP_MODULE_LABELS: Record<FollowUpModule, string> =
+  FOLLOWUP_MODULES.reduce((acc, m) => {
+    acc[m.value] = m.label;
+    return acc;
+  }, {} as Record<FollowUpModule, string>);
+
+export const FOLLOWUP_MODULE_GROUPS_BY_VALUE: Record<
+  FollowUpModule,
+  '常规类' | '非常规类'
+> = FOLLOWUP_MODULES.reduce((acc, m) => {
+  acc[m.value] = FOLLOWUP_MODULE_GROUPS.find((g) => g.modules.includes(m))!.group;
+  return acc;
+}, {} as Record<FollowUpModule, '常规类' | '非常规类'>);
+
+export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
 
 // 单次回访可涵盖的课次数
 export const SESSION_COUNTS = [1, 2, 3];

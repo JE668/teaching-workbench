@@ -1,4 +1,4 @@
-import { Student, FollowUp, UserPublic, Teacher, Observation } from '../types/index.js';
+import { Student, FollowUp, UserPublic, Teacher, Observation, FollowUpModule } from '../types/index.js';
 
 /**
  * 数据库行 (snake_case) → API 响应 (camelCase)
@@ -44,6 +44,7 @@ export function mapFollowUp(row: any): FollowUp {
     mastery: row.mastery,
     sessionCount: normalizeSessionCount(row.session_count),
     courseType: normalizeCourseType(row.course_type),
+    module: normalizeFollowUpModule(row.module),
     images: parseImages(row.images),
     content: row.content,
     wordCount: row.word_count,
@@ -61,6 +62,27 @@ export function mapFollowUps(rows: any[]): FollowUp[] {
 /** 课程类型归一化：非法值一律按 1对1 处理 */
 export function normalizeCourseType(value: any): 'one_on_one' | 'group' {
   return value === 'group' ? 'group' : 'one_on_one';
+}
+
+/**
+ * 流程打卡类型归一化。非法/缺失一律按「课堂总结」处理——
+ * 这是存量数据（module 列新增前的记录）的默认归类，也符合「常规类」里最常用的打卡场景。
+ */
+export const FOLLOWUP_MODULES: FollowUpModule[] = [
+  'class_summary',
+  'first_lesson',
+  'preview',
+  'homework_review',
+  'mistake_drill',
+  'grade_analysis',
+  'stage_test',
+  'makeup_plan',
+];
+
+export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
+
+export function normalizeFollowUpModule(value: any): FollowUpModule {
+  return FOLLOWUP_MODULES.includes(value) ? value : DEFAULT_FOLLOWUP_MODULE;
 }
 
 export function normalizeSessionCount(value: any): number {

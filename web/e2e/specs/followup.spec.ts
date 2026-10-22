@@ -135,6 +135,33 @@ test.describe('课后回访生成', () => {
     await expect(page.getByText('涵盖 3 次课')).toBeVisible();
   });
 
+  test('选择流程打卡类型后按该模块生成，归档后时间线显示类型徽标', async ({ page }) => {
+    const studentId = await seedStudent(page, '打卡类型测试');
+
+    await gotoFollowUp(page);
+    await page.getByLabel(/选择已有学生/).selectOption(String(studentId));
+
+    // 常规类里点「作业批改」，下方提示应切换到该模块的说明
+    await page.getByRole('button', { name: '作业批改', exact: true }).click();
+    await expect(page.getByText(/完成质量、错在哪些知识点/)).toBeVisible();
+
+    await page.getByLabel(/课程主题/).fill('作业批改专项');
+    await page.getByLabel(/课堂表现/).fill('作业完成质量较好，但通分步骤有遗漏');
+    await page.getByRole('button', { name: /生成课后回访内容/ }).click();
+
+    await expect(page.getByTestId('generated-content')).toContainText('【课后任务】', {
+      timeout: 20_000,
+    });
+
+    await page.getByRole('button', { name: /保存并归档到学生档案/ }).click();
+    await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
+
+    // 打卡类型要一路传到落库并回显在档案时间线上
+    await expect(page.getByText('作业批改', { exact: true })).toBeVisible();
+    // 作业批改属常规类，用低调灰底；非常规类（成绩分析等）才是紫色突出
+    await expect(page.getByText('作业批改', { exact: true })).toHaveClass(/bg-slate-100/);
+  });
+
   test('保存后自动归档到学生档案', async ({ page }) => {
     const studentId = await seedStudent(page, '归档测试');
 
