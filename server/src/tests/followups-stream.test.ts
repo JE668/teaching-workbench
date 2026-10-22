@@ -6,6 +6,8 @@ import {
   setFollowUpStreamer,
   setFollowUpGenerator,
   resetFollowUpGenerator,
+  MIN_WORDS,
+  MAX_WORDS,
 } from '../services/ai.js';
 
 let token = '';
@@ -121,9 +123,10 @@ describe('流式生成接口', () => {
 
   test('字数不达标时发出 regenerating 并以重试结果收尾', async () => {
     const tooShort = '太短了。';
-    // 注意：必须真的落在 150-500 区间，否则路由会正确判定其不合格（这里曾经写短过）
+    // 注意：必须真的落在 MIN_WORDS-MAX_WORDS 区间内，否则路由会正确判定其不合格
+    // （这里曾经写长过——200 上限收紧后 201 字就超出区间了）
     const good =
-      '【课堂内容】本节课重点讲解异分母分数加减法的通分原理与步骤，通过数轴与图形直观演示，帮助学生理解分数单位统一的数学本质，并结合生活情境设计练习，让抽象的分数运算变得具体可感。' +
+      '【课堂内容】本节课重点讲解异分母分数加减法的通分原理与步骤，通过数轴与图形直观演示，帮助学生理解分数单位统一的数学本质，并结合生活情境设计练习。' +
       '【学生收获】李小明本节课专注度较高，能够主动举手回答问题，对通分方法的理解比较到位，独立完成基础题型时准确率良好，计算速度还有提升空间，建议通过限时练习逐步改善。' +
       '【课后任务】完成练习册第12页第1到8题，重点巩固通分步骤；每天用5分钟做10道口算，提升计算速度与准确率。';
 
@@ -145,7 +148,7 @@ describe('流式生成接口', () => {
     const expectedWords = good.replace(/[\s\p{P}\p{S}]/gu, '').length;
     assert.equal(done.data.wordCount, expectedWords);
     assert.ok(
-      expectedWords >= 150 && expectedWords <= 500,
+      expectedWords >= MIN_WORDS && expectedWords <= MAX_WORDS,
       '测试数据本身应落在区间内，当前 ' + expectedWords + ' 字'
     );
   });

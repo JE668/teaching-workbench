@@ -148,7 +148,7 @@ describe('课次数 · Prompt 自适应', () => {
       assert.match(p, /【课堂内容】/);
       assert.match(p, /【学生收获】/);
       assert.match(p, /【课后任务】/);
-      assert.match(p, /150-500 字之间/);
+      assert.match(p, /140-200 字之间/);
     }
   });
 });

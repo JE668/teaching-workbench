@@ -61,6 +61,14 @@ const MASTERY_TONE: Record<string, string> = {
   needs_improvement: 'data-[on=true]:bg-red-500 data-[on=true]:ring-red-500',
 };
 
+/**
+ * 流程打卡新规的达标线。字数口径与后端 ai.ts 的 MIN_WORDS / MAX_WORDS 一致：
+ * 学校要求「打卡文字约 150 字」，照片「不少于 3 张」。
+ */
+export const WORD_MIN = 140;
+export const WORD_MAX = 200;
+export const PHOTO_MIN = 3;
+
 /** 表单默认值。单独抽出来是为了让状态有明确类型（否则草稿的 `any` 会污染整个 form） */
 const DEFAULT_FORM = {
   studentId: null as number | null,
@@ -548,7 +556,7 @@ export default function FollowUp() {
 
   const finalContent = editing ? draft : content;
   const words = countWords(finalContent);
-  const wordsOk = words >= 150 && words <= 500;
+  const wordsOk = words >= WORD_MIN && words <= WORD_MAX;
   const canGenerate =
     !!form.topic.trim() &&
     !!form.performance.trim() &&
@@ -1021,9 +1029,15 @@ export default function FollowUp() {
           <Card>
             <CardHeader
               title="课堂图片"
-              description="支持粘贴截图、拖拽或点击上传"
+              description={`流程打卡要求不少于 ${PHOTO_MIN} 张；支持粘贴截图、拖拽或点击上传`}
               icon={<ImagePlus className="h-4 w-4" />}
-              action={images.length > 0 ? <Badge tone="brand">{images.length} 张</Badge> : undefined}
+              action={
+                images.length > 0 ? (
+                  <Badge tone={images.length >= PHOTO_MIN ? 'success' : 'warning'}>
+                    {images.length} / {PHOTO_MIN} 张
+                  </Badge>
+                ) : undefined
+              }
             />
             <div className="p-5">
               <div
@@ -1362,7 +1376,8 @@ export default function FollowUp() {
                   <div className="mb-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 ring-1 ring-amber-100">
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                     <p className="text-xs text-amber-700">
-                      当前 {words} 字，要求 150–500 字。可点击「重新生成」或手动编辑。
+                      当前 {words} 字，学校要求约 150 字（{WORD_MIN}–{WORD_MAX}）。
+                      可点击「重新生成」或手动编辑。
                     </p>
                   </div>
                 )}

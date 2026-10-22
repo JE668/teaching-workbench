@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, createUser, createStudent, createFollowUp } from './helpers.js';
-import { buildPrompt } from '../services/ai.js';
+import { buildPrompt, MIN_WORDS, MAX_WORDS, isWordCountOk } from '../services/ai.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { normalizeCourseType } from '../utils/mappers.js';
 
@@ -268,8 +268,8 @@ describe('Prompt · 称呼 / emoji / 照片措辞 / 小组课', () => {
     assert.match(p, /严禁/);
     assert.match(p, /图中/);
     assert.match(p, /家长看不到这些照片/);
-    // 硬性要求里也要再强调一次
-    assert.match(p, /7\. 【严禁】出现"图中"/);
+    // 硬性要求里也要再强调一次（不锁序号，避免以后加条目时测试跟着坏）
+    assert.match(p, /【严禁】出现.*图中/);
   });
 
   test('无图片时不输出照片相关禁令（避免无意义指令）', () => {
@@ -287,8 +287,8 @@ describe('Prompt · 称呼 / emoji / 照片措辞 / 小组课', () => {
     assert.match(p, /分别私发给多位家长/);
     assert.match(p, /严禁】出现任何学生姓名/);
     assert.match(p, /孩子们.*同学们/);
-    // 硬性要求也要有姓名禁令
-    assert.match(p, /8\. 【严禁】出现任何学生姓名/);
+    // 硬性要求也要有姓名禁令（不锁序号）
+    assert.match(p, /【严禁】出现任何学生姓名/);
   });
 
   test('小组课的段落要求改为面向全班', () => {
@@ -303,8 +303,28 @@ describe('Prompt · 称呼 / emoji / 照片措辞 / 小组课', () => {
       assert.match(p, /【课堂内容】/);
       assert.match(p, /【学生收获】/);
       assert.match(p, /【课后任务】/);
-      assert.match(p, /150-500 字之间/);
+      assert.match(p, new RegExp(MIN_WORDS + '-' + MAX_WORDS + ' 字之间'));
     }
+  });
+
+  test('流程打卡新规的四条基准都写进提示词', () => {
+    // 学校 2026 新规：约 150 字、通俗易懂、真实、无错误、个性化。
+    // 这四条是提示词里的硬约束，删掉任何一条 AI 就会回到旧写法，所以逐条锁住。
+    const p = buildPrompt({ ...base, studentName: '李一一', courseType: 'one_on_one' });
+    assert.match(p, /通俗易懂/);
+    assert.match(p, /不用学科术语和教研行话/);
+    assert.match(p, /严禁编造分数/);
+    assert.match(p, /个性化/);
+    assert.match(p, /错别字/);
+    assert.match(p, /约 150 字/);
+  });
+
+  test('字数上限收到 200，不再允许写成长篇', () => {
+    assert.ok(MAX_WORDS <= 200, 'MAX_WORDS 应不超过 200，当前 ' + MAX_WORDS);
+    assert.ok(MIN_WORDS >= 140, 'MIN_WORDS 应不低于 140，当前 ' + MIN_WORDS);
+    // 三段指引加起来必须落在区间内，否则提示词自相矛盾（历史上出现过 3×80-130 配 150-500，与总区间自相矛盾）
+    assert.ok(isWordCountOk(150));
+    assert.ok(!isWordCountOk(300), '300 字已超出新规上限');
   });
 });
 

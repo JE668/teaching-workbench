@@ -51,7 +51,7 @@ export function makeStudent(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** 构造一条回访数据（内容长度落在 150-500 区间内） */
+/** 构造一条回访数据（内容长度落在 140-200 区间内，符合流程打卡新规「约 150 字」） */
 export function makeFollowUp(overrides: Record<string, unknown> = {}) {
   const content =
     '【课堂内容】本节课重点讲解异分母分数加减法的通分原理与步骤，通过数轴与图形直观演示，帮助学生理解分数单位统一的数学本质，并结合生活情境设计练习。' +

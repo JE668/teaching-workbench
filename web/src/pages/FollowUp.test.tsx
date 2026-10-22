@@ -813,3 +813,34 @@ describe('课后回访 · 家长版精简', () => {
     expect(body.content).not.toContain('家长您好');
   });
 });
+
+describe('课后回访 · 流程打卡新规达标线', () => {
+  // 学校新规：打卡文字约 150 字、课堂照片不少于 3 张。
+  // 这里只锁 UI 上的达标提示，提示词的约束由服务端 course-type.test.ts 锁。
+  it('字数不达标时提示引用学校标准，图片卡片写明 3 张要求', async () => {
+    const user = userEvent.setup();
+    // 故意给一段超上限的内容，好让「字数不达标」提示出现
+    stubStream(GENERATED + '补充说明'.repeat(40));
+    renderWithProviders(<FollowUp />);
+
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    expect(screen.getByText(/学校要求约 150 字/)).toBeInTheDocument();
+    expect(screen.getByText(/140–200/)).toBeInTheDocument();
+    expect(screen.getByText(/不少于 3 张/)).toBeInTheDocument();
+  });
+
+  it('字数达标时不再提示不达标', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    renderWithProviders(<FollowUp />);
+
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    expect(screen.queryByText(/学校要求约 150 字/)).not.toBeInTheDocument();
+  });
+});
