@@ -556,7 +556,8 @@ router.get('/:id/docx', async (req: AuthenticatedRequest, res: Response) => {
       signature,
     });
 
-    const fname = encodeURIComponent(buildDocxFilename(row.observed_at || '', signature));
+    // 文件名用**被听课老师**（不是上面的评课人签名）：星火个性化教学听评课表 10.17 周江凌.docx
+    const fname = encodeURIComponent(buildDocxFilename(row.observed_at || '', row.teacher_name || ''));
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fname}`);
     res.send(buf);

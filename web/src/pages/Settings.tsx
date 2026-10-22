@@ -485,7 +485,7 @@ export default function Settings() {
             onChange={(e) => setSigInput(e.target.value)}
             placeholder={user?.username || '留空则用登录用户名'}
             maxLength={20}
-            hint="填在表末「评课人签名：」后面，同时用于导出文件名，例如 星火个性化教学听评课表 10.17 周江凌.docx"
+            hint="填在表末「评课人签名：」后面。导出文件名用的是**被听课老师**的姓名，例如 星火个性化教学听评课表 10.17 周江凌.docx"
           />
           <Button
             onClick={saveSignature}

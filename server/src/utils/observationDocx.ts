@@ -79,10 +79,18 @@ export function formatDateForFilename(raw: string): string {
   return dt ? pad2(dt.m) + '.' + pad2(dt.d) : '';
 }
 
-/** 文件名：星火个性化教学听评课表 10.17 周江凌.docx */
-export function buildDocxFilename(observedAt: string, signature: string): string {
+/** 清掉 Windows 不接受的文件名字符（盘符、路径分隔符、通配符、引号等） */
+function cleanForFilename(s: string): string {
+  return String(s || '')
+    .replace(/[\\/:*?"<>|\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 文件名：星火个性化教学听评课表 10.17 周江凌.docx —— 第三段是**被听课老师**，不是评课人签名 */
+export function buildDocxFilename(observedAt: string, teacherName: string): string {
   const date = formatDateForFilename(observedAt);
-  const who = signature.trim() || '评课人';
+  const who = cleanForFilename(teacherName) || '被听课老师';
   return DOCX_DOC_TITLE + (date ? ' ' + date : '') + ' ' + who + '.docx';
 }
 

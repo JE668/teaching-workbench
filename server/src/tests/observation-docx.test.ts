@@ -192,11 +192,11 @@ describe('听评课 Word 导出（docx）', () => {
     assert.ok(teacherRun, '应能找到填入老师姓名的 run');
     assert.match(teacherRun[0], /<w:sz w:val="18"\/>/, '填入内容字号应为小五（18 半点）');
 
-    // 文件名：星火个性化教学听评课表 {MM.DD} {签名}.docx
+    // 文件名：星火个性化教学听评课表 {MM.DD} {被听课老师}.docx（不是评课人签名）
     const cd = res.headers.get('content-disposition') || '';
     const m = cd.match(/filename\*=UTF-8''(.+)$/);
     const fname = decodeURIComponent(m ? m[1] : '');
-    assert.equal(fname, '星火个性化教学听评课表 10.17 docx-听课人.docx');
+    assert.equal(fname, '星火个性化教学听评课表 10.17 王丽.docx');
   });
 
   test('尚未生成报告 → 400', async () => {

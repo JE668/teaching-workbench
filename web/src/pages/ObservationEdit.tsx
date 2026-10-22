@@ -324,10 +324,11 @@ export default function ObservationEdit() {
     if (!recordId) return;
     setDownloading(true);
     try {
-      const blob = await api.download('/observations/' + recordId + '/docx');
+      // 文件名由后端给（星火个性化教学听评课表 10.17 周江凌.docx），前端别自己拼
+      const { blob, filename } = await api.downloadFile('/observations/' + recordId + '/docx');
       const display =
         form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
-      saveBlob(blob, buildReportFilename(display, form.topic).replace(/\.txt$/, '.docx'));
+      saveBlob(blob, /\.docx$/i.test(filename) ? filename : buildReportFilename(display, form.topic).replace(/\.txt$/, '.docx'));
       toast.success('已导出 Word');
     } catch (err: any) {
       toast.error('导出 Word 失败：' + err.message);
