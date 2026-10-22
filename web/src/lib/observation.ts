@@ -18,10 +18,40 @@ export function splitReport(report: string): { head: string; tail: string } {
   return { head, tail };
 }
 
-/** .txt 导出文件名：听评课_老师_课题.txt（去掉非法字符）。 */
-export function buildReportFilename(teacher: string, topic: string): string {
-  const clean = (s: string) => s.replace(/[\\/:*?"<>|]/g, '').trim();
-  return '听评课_' + (clean(teacher) || '老师') + '_' + (clean(topic) || '报告') + '.txt';
+/** 文档标题（与 Word 导出的大标题、文件名前缀一致） */
+export const DOCX_DOC_TITLE = '星火个性化教学听评课表';
+
+/** 导出文件名：星火个性化教学听评课表 10.17 周江凌.txt
+ *
+ * 第三段是**被听课老师**的姓名，不是评课人签名；日期取听课日期的 MM.DD。
+ * txt / png / docx 三种导出统一用这个命名（docx 由后端生成，这里只在
+ * 后端没给文件名时兜底，口径必须一致）。
+ */
+export function buildReportFilename(teacher: string, observedAt: string, ext = 'txt'): string {
+  const date = dateForFilename(observedAt);
+  const who = cleanForFilename(teacher) || '被听课老师';
+  return DOCX_DOC_TITLE + (date ? ' ' + date : '') + ' ' + who + '.' + ext;
+}
+
+function cleanForFilename(s: string): string {
+  return String(s || '')
+    .replace(/[\\/:*?"<>|\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 听课日期 → 文件名里的 10.17；解析不出返回空串（不硬塞空格） */
+export function dateForFilename(raw: string): string {
+  const m = String(raw || '')
+    .trim()
+    .split(/\s+/)[0]
+    .match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return '';
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return p(mo) + '.' + p(d);
 }
 
 /* ─────────── 评课报告图片卡片：结构化切块 ─────────── */

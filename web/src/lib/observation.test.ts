@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   splitReport,
   buildReportFilename,
+  dateForFilename,
   parseObservationBlocks,
   OBSERVATION_DIMENSIONS,
 } from './observation';
@@ -28,12 +29,63 @@ describe('splitReport', () => {
 });
 
 describe('buildReportFilename', () => {
-  it('生成 老师_课题 文件名并清洗非法字符', () => {
-    expect(buildReportFilename('王丽', '分数/加减?')).toBe('听评课_王丽_分数加减.txt');
+  it('统一格式：星火个性化教学听评课表 {MM.DD} {被听课老师}.{ext}', () => {
+    expect(buildReportFilename('周江凌', '2026-10-17')).toBe(
+      '星火个性化教学听评课表 10.17 周江凌.txt'
+    );
+    expect(buildReportFilename('周江凌', '2026-10-17', 'png')).toBe(
+      '星火个性化教学听评课表 10.17 周江凌.png'
+    );
+    expect(buildReportFilename('周江凌', '2026-10-17', 'docx')).toBe(
+      '星火个性化教学听评课表 10.17 周江凌.docx'
+    );
   });
 
-  it('缺省字段回退占位词', () => {
-    expect(buildReportFilename('', '')).toBe('听评课_老师_报告.txt');
+  it('与后端 buildDocxFilename 口径一致（docx 兜底用）', () => {
+    expect(buildReportFilename('王丽', '2026-03-05', 'docx')).toBe(
+      '星火个性化教学听评课表 03.05 王丽.docx'
+    );
+  });
+
+  it('清洗文件名非法字符，空格压成一个', () => {
+    expect(buildReportFilename('周/江凌:副*主', '2026-10-17')).toBe(
+      '星火个性化教学听评课表 10.17 周 江凌 副 主.txt'
+    );
+  });
+
+  it('缺老师名回退「被听课老师」，不是评课人签名', () => {
+    expect(buildReportFilename('', '2026-10-17')).toBe(
+      '星火个性化教学听评课表 10.17 被听课老师.txt'
+    );
+    expect(buildReportFilename('   ', '2026-10-17')).toBe(
+      '星火个性化教学听评课表 10.17 被听课老师.txt'
+    );
+  });
+
+  it('没填日期时不硬塞空格，也不编一个日期', () => {
+    expect(buildReportFilename('周江凌', '')).toBe('星火个性化教学听评课表 周江凌.txt');
+    expect(buildReportFilename('周江凌', '还没填')).toBe('星火个性化教学听评课表 周江凌.txt');
+    expect(buildReportFilename('周江凌', '2026-13-40')).toBe('星火个性化教学听评课表 周江凌.txt');
+  });
+
+  it('带时间戳的日期也能取到 MM.DD', () => {
+    expect(buildReportFilename('周江凌', '2026-10-17 14:30:00')).toBe(
+      '星火个性化教学听评课表 10.17 周江凌.txt'
+    );
+  });
+});
+
+describe('dateForFilename', () => {
+  it('补零并只取月.日', () => {
+    expect(dateForFilename('2026-10-17')).toBe('10.17');
+    expect(dateForFilename('2026-3-5')).toBe('03.05');
+    expect(dateForFilename('2026-12-01')).toBe('12.01');
+  });
+
+  it('解析不出返回空串', () => {
+    expect(dateForFilename('')).toBe('');
+    expect(dateForFilename('2026/10/17')).toBe('');
+    expect(dateForFilename('10月17日')).toBe('');
   });
 });
 

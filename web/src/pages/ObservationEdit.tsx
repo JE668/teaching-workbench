@@ -316,7 +316,7 @@ export default function ObservationEdit() {
     const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
     const display =
       form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
-    saveBlob(blob, buildReportFilename(display, form.topic));
+    saveBlob(blob, buildReportFilename(display, form.observedAt));
     toast.success('已导出 .txt');
   };
 
@@ -328,7 +328,7 @@ export default function ObservationEdit() {
       const { blob, filename } = await api.downloadFile('/observations/' + recordId + '/docx');
       const display =
         form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
-      saveBlob(blob, /\.docx$/i.test(filename) ? filename : buildReportFilename(display, form.topic).replace(/\.txt$/, '.docx'));
+      saveBlob(blob, /\.docx$/i.test(filename) ? filename : buildReportFilename(display, form.observedAt, 'docx'));
       toast.success('已导出 Word');
     } catch (err: any) {
       toast.error('导出 Word 失败：' + err.message);
@@ -348,7 +348,7 @@ export default function ObservationEdit() {
         dateLabel: form.observedAt || undefined,
         gradeLabel: overallGradeLabel(form.overallGrade) || undefined,
       },
-      buildReportFilename(display, form.topic).replace(/\.txt$/, '.png')
+      buildReportFilename(display, form.observedAt, 'png')
     );
     toast.success('已导出图片卡片');
   };
