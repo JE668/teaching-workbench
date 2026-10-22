@@ -155,6 +155,31 @@ export const FOLLOWUP_MODULE_GROUPS_BY_VALUE: Record<
 
 export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
 
+/** 打卡类型的周配额：常规类共 5 种，全部覆盖即视为本周达标 */
+export const WEEKLY_FOLLOWUP_QUOTA = FOLLOWUP_MODULE_GROUPS[0].modules.length;
+
+/** 本周流程打卡进度里的单个类型 */
+export interface FollowUpWeeklyType {
+  value: FollowUpModule;
+  label: string;
+  group: 'regular' | 'unusual';
+  count: number;
+}
+
+/**
+ * 本周流程打卡进度。
+ * 口径按**覆盖的打卡类型种类**统计，不按打卡条数——
+ * 同一个孩子一周回访三次课堂总结，也只算覆盖了 1 种。
+ */
+export interface FollowUpWeeklyStats {
+  weekStart: string; // 北京周一 YYYY-MM-DD
+  weekEnd: string; // 北京周日 YYYY-MM-DD
+  quota: number; // 常规类配额
+  covered: number; // 本周覆盖的常规类种类数
+  records: number; // 本周打卡总条数
+  types: FollowUpWeeklyType[];
+}
+
 // 单次回访可涵盖的课次数
 export const SESSION_COUNTS = [1, 2, 3];
 

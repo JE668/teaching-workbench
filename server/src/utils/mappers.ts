@@ -85,6 +85,24 @@ export function normalizeFollowUpModule(value: any): FollowUpModule {
   return FOLLOWUP_MODULES.includes(value) ? value : DEFAULT_FOLLOWUP_MODULE;
 }
 
+/**
+ * 打卡类型的分组元信息（后端只用于统计，文案在前端 FOLLOWUP_MODULE_GROUPS）。
+ * 常规类 5 种是每周的配额分母；非常规类按需打卡，不计入配额。
+ */
+export const FOLLOWUP_TYPES: { value: FollowUpModule; label: string; group: 'regular' | 'unusual' }[] = [
+  { value: 'class_summary', label: '课堂总结', group: 'regular' },
+  { value: 'first_lesson', label: '新生首课', group: 'regular' },
+  { value: 'preview', label: '预习资料', group: 'regular' },
+  { value: 'homework_review', label: '作业批改', group: 'regular' },
+  { value: 'mistake_drill', label: '错题专练', group: 'regular' },
+  { value: 'grade_analysis', label: '成绩分析', group: 'unusual' },
+  { value: 'stage_test', label: '阶测反馈', group: 'unusual' },
+  { value: 'makeup_plan', label: '补课安排', group: 'unusual' },
+];
+
+/** 每周流程打卡的配额：常规类共 5 种，全部覆盖即为达标 */
+export const WEEKLY_FOLLOWUP_QUOTA = FOLLOWUP_TYPES.filter((t) => t.group === 'regular').length;
+
 export function normalizeSessionCount(value: any): number {
   const n = parseInt(value, 10);
   if (!Number.isFinite(n)) return 1;

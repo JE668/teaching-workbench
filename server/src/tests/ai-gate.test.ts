@@ -79,15 +79,14 @@ describe('AI 并发闸门', () => {
     assert.equal(getAiInFlightCount(), 0);
   });
 
-  test('闸门覆盖所有 AI 入口：回访 / 精简 / 星级 / 听评课都套上了', async () => {
+  test('闸门覆盖所有 AI 入口：回访 / 星级 / 听评课都套上了', async () => {
     // 回归护栏：谁新加一个 AI 能力、忘了套闸门，这里会红。
     const files = await Promise.all(
       ['services/ai.ts', 'services/catalogStar.ts', 'services/observation.ts'].map((f) =>
         readFile(new URL('../' + f, import.meta.url), 'utf-8')
       )
     );
-    // ai.ts 4 处（generateOnce / streamOnce / condense / streamCondense），
-    // catalogStar 1 处，observation 2 处
+    // ai.ts 2 处（generateOnce / streamOnce），catalogStar 1 处，observation 2 处
     const wrapped = files.reduce(
       (sum, s) =>
         sum +
@@ -95,6 +94,6 @@ describe('AI 并发闸门', () => {
         (s.match(/acquireAiSlot\(/g) || []).length,
       0
     );
-    assert.ok(wrapped >= 6, '所有 AI 入口都该进闸门，实际 ' + wrapped);
+    assert.ok(wrapped >= 5, '所有 AI 入口都该进闸门，实际 ' + wrapped);
   });
 });

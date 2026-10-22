@@ -76,6 +76,39 @@ export async function loginViaApi(page: Page) {
     .catch(() => {});
 }
 
+/**
+ * 注册一个全新账号并注入登录态。
+ *
+ * 需要「干净数据」的统计类用例用这个：admin 账号下已经堆了一堆
+ * 前面用例造的回访记录，覆盖次数之类的断言会被污染。
+ */
+export async function loginAsNewUser(page: Page, username: string, password = 'e2e-admin-pass'): Promise<string> {
+  // 必须先落到同源页面，否则 page.evaluate 读 localStorage 会被跨源策略拦掉
+  await page.goto('/login');
+
+  const reg = await page.request.post('/api/auth/register', {
+    data: { username, password },
+  });
+  expect(reg.ok(), '注册失败: ' + reg.status() + ' ' + (await reg.text())).toBeTruthy();
+  const token = (await reg.json()).token as string;
+
+  const me = await page.request.get('/api/auth/me', {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  expect(me.ok()).toBeTruthy();
+  const { user } = await me.json();
+
+  await page.evaluate(
+    ([t, u]) => {
+      localStorage.setItem('token', t as string);
+      localStorage.setItem('user', JSON.stringify(u));
+    },
+    [token, user] as const
+  );
+
+  return token;
+}
+
 /** 通过 API 建一个学生，返回其 id */
 export async function seedStudent(page: Page, name: string, extra: Record<string, unknown> = {}) {
   const res = await apiPost(page, '/api/students', {
@@ -88,9 +121,14 @@ export async function seedStudent(page: Page, name: string, extra: Record<string
   return (await res.json()).student.id as number;
 }
 
-/** 通过 API 建一条回访，返回其 id */
-export async function seedFollowUp(page: Page, data: Record<string, unknown>) {
-  const res = await apiPost(page, '/api/followups', {
+/**
+ * 通过 API 建一条回访，返回其 id。
+ *
+ * 不传 token 时用 admin；统计类用例传新账号的 token，
+ * 避免 admin 下前面用例造的回访记录污染覆盖次数之类的断言。
+ */
+export async function seedFollowUp(page: Page, data: Record<string, unknown>, token?: string) {
+  const body = {
     studentId: null,
     studentName: '测试学生',
     grade: '小学五年级',
@@ -101,7 +139,15 @@ export async function seedFollowUp(page: Page, data: Record<string, unknown>) {
     images: [],
     content: '【课堂内容】测试内容。',
     ...data,
-  });
+  };
+
+  const res = token
+    ? await page.request.post('/api/followups', {
+        headers: { Authorization: 'Bearer ' + token },
+        data: body,
+      })
+    : await apiPost(page, '/api/followups', body);
+
   expect(res.ok(), '创建回访失败: ' + res.status() + ' ' + (await res.text())).toBeTruthy();
   return (await res.json()).followup.id as number;
 }

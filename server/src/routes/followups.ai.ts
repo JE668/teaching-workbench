@@ -3,7 +3,6 @@ import { AuthenticatedRequest } from '../types/index.js';
 import {
   runFollowUpGeneration,
   runStreamGeneration,
-  runStreamCondense,
   retryGeneration,
   describeAiError,
   isWordCountOk,
@@ -14,13 +13,12 @@ import {
 import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
-import { followUpGenerateSchema, followUpCondenseSchema } from '../utils/schemas.js';
+import { followUpGenerateSchema } from '../utils/schemas.js';
 
 /**
  * AI 生成路由（不落库，由前端确认后再保存）：
  *  - POST /generate            非流式
  *  - POST /generate/stream     SSE 流式
- *  - POST /condense/stream     SSE 流式：把已有回访压成家长版短反馈
  */
 const router = Router();
 
@@ -171,45 +169,6 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
   } catch (error: any) {
     const { message } = describeAiError(error);
     log.error({ error: message }, 'AI 流式生成失败');
-    send('error', { error: message });
-  } finally {
-    sse.end();
-  }
-});
-
-/**
- * 家长版精简（SSE 流式）。
- *
- * 输入是"已经生成的完整回访"，输出压成 80-220 字的一段。
- * 只用于发送，不回写数据库 —— 完整版照旧保存归档。
- * 事件：delta -> done | error
- */
-router.post('/condense/stream', validateBody(followUpCondenseSchema), async (req: AuthenticatedRequest, res: Response) => {
-  const content = String(req.body.content || '').trim();
-  if (!content) {
-    return res.status(400).json({ error: '还没有可精简的回访内容，先生成或填写内容' });
-  }
-
-  const sse = openSse(res);
-  const { send } = sse;
-
-  try {
-    let full = '';
-    for await (const delta of runStreamCondense({
-      content,
-      studentName: req.body.studentName,
-      topic: req.body.topic,
-    })) {
-      if (sse.isGone()) break;
-      full += delta;
-      send('delta', { text: delta });
-    }
-
-    const text = full.trim();
-    send('done', { content: text, wordCount: countWords(text) });
-  } catch (error: any) {
-    const { message } = describeAiError(error);
-    log.error({ error: message }, '家长版精简失败');
     send('error', { error: message });
   } finally {
     sse.end();

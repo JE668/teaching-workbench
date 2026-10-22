@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import Dashboard from './Dashboard';
 import { renderWithProviders, makeStudent, makeFollowUp } from '../test/test-utils';
 import { api } from '../api/client';
+import { FOLLOWUP_MODULE_GROUPS, WEEKLY_FOLLOWUP_QUOTA } from '../types/index';
 
 vi.mock('../api/client', () => ({
   api: {
@@ -170,5 +171,107 @@ describe('工作台 · 加载失败', () => {
     expect(screen.getByText('学生总数')).toBeInTheDocument();
 
     spy.mockRestore();
+  });
+});
+
+describe('工作台 · 本周流程打卡', () => {
+  /** 用后端同一份类型清单（前端 FOLLOWUP_MODULE_GROUPS）拼出 8 个类型 */
+  const ALL_TYPES = FOLLOWUP_MODULE_GROUPS.flatMap((g) =>
+    g.modules.map((m) => ({
+      value: m.value,
+      label: m.label,
+      group: (g.group === '常规类' ? 'regular' : 'unusual') as 'regular' | 'unusual',
+    }))
+  );
+
+  /** counts 只写有打卡的类型，covered / records 按后端口径推导 */
+  function makeWeekly(counts: Record<string, number> = {}) {
+    const types = ALL_TYPES.map((t) => ({ ...t, count: counts[t.value] || 0 }));
+    return {
+      weekStart: '2026-10-19',
+      weekEnd: '2026-10-25',
+      quota: WEEKLY_FOLLOWUP_QUOTA,
+      covered: types.filter((t) => t.group === 'regular' && t.count > 0).length,
+      records: types.reduce((sum, t) => sum + t.count, 0),
+      types,
+    };
+  }
+
+  function mockWeekly(weekly?: object) {
+    mockApi([], {
+      totalFollowUps: 0,
+      totalImages: 0,
+      subjects: 0,
+      recent: [],
+      weekly: weekly || makeWeekly(),
+    });
+  }
+
+  function card(): HTMLElement {
+    return screen.getByText('本周流程打卡').closest('.rounded-2xl') as HTMLElement;
+  }
+
+  it('按覆盖的类型种类显示 n/5，而非打卡条数', async () => {
+    // 课堂总结打了 3 次 + 另外 2 种各 1 次 = 5 条打卡，但只覆盖 3 种
+    mockWeekly(makeWeekly({ class_summary: 3, homework_review: 1, preview: 2 }));
+    renderWithProviders(<Dashboard />);
+    await screen.findByText('本周流程打卡');
+    const el = card();
+    expect(el.textContent).toContain('3');
+    expect(el.textContent).toContain('/ ' + WEEKLY_FOLLOWUP_QUOTA + ' 种');
+    expect(el.textContent).toContain('本周共 6 条打卡');
+    expect(el.textContent).toContain('按覆盖的打卡类型统计');
+    expect(el.textContent).toContain('10-19 ~ 10-25');
+  });
+
+  it('常规类全覆盖时进入达标态，未覆盖的类型留在灰态', async () => {
+    mockWeekly(
+      makeWeekly({
+        class_summary: 1,
+        first_lesson: 1,
+        preview: 1,
+        homework_review: 1,
+        mistake_drill: 1,
+      })
+    );
+    renderWithProviders(<Dashboard />);
+    await screen.findByText('本周流程打卡');
+    const el = card();
+    // 达标态用绿色强调
+    expect(el.textContent).toContain('/ ' + WEEKLY_FOLLOWUP_QUOTA + ' 种');
+    expect(el.querySelector('span.text-emerald-600')).toBeTruthy();
+  });
+
+  it('非常规类单独成行，并说明不计入 5 种配额', async () => {
+    mockWeekly(makeWeekly({ class_summary: 1, stage_test: 2, makeup_plan: 1 }));
+    renderWithProviders(<Dashboard />);
+    await screen.findByText('本周流程打卡');
+    const el = card();
+    expect(el.textContent).toContain('非常规类按需打卡，不计入 5 种配额');
+    expect(el.textContent).toContain('阶测反馈');
+    expect(el.textContent).toContain('补课安排');
+    // 1 种常规 + 2 条阶测反馈 + 1 条补课安排 = 4 条打卡，covered 只算 1
+    expect(el.textContent).toContain('本周共 4 条打卡');
+    expect(el.textContent).toContain('2 条');
+  });
+
+  it('常规类未打满时不显示达标态', async () => {
+    mockWeekly(makeWeekly({ class_summary: 1, preview: 1 }));
+    renderWithProviders(<Dashboard />);
+    await screen.findByText('本周流程打卡');
+    const el = card();
+    expect(el.textContent).toContain('本周共 2 条打卡');
+    expect(el.querySelector('span.text-emerald-600')).toBeFalsy();
+  });
+
+  it('后端没有返回 weekly 时显示 0/5，页面不崩', async () => {
+    mockWeekly(undefined);
+    renderWithProviders(<Dashboard />);
+
+    expect(await screen.findByText('本周流程打卡')).toBeInTheDocument();
+    const el = card();
+    expect(el.textContent).toContain('/ 5 种');
+    expect(el.textContent).toContain('本周共 0 条打卡');
+    expect(el.textContent).toContain('课堂总结');
   });
 });
