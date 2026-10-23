@@ -279,6 +279,20 @@ describe('听评课 Word 导出（docx）', () => {
     }
   });
 
+  test('综合三块之间不留空行（回归：亮点/优化/建议的占位符下方各多两个空段落）', async () => {
+    const xml = await makeAndExport(REPORT);
+
+    // 综合三块在同一个大单元格里，取它的段落列表
+    const paras = cellLines(xml, '二、有待优化的部分：');
+
+    // 每块的最后一条内容，后面都应该直接接下一块的提示语
+    for (const value of ['板书清晰规范。', '练习梯度偏单一。', '分层布置练习。']) {
+      const i = paras.findIndex((l) => l.includes(value));
+      assert.ok(i >= 0, '综合区应能找到「' + value + '」');
+      assert.ok(paras[i + 1] && paras[i + 1].trim().length > 0, '「' + value + '」后面不应紧跟空行');
+    }
+  });
+
   /** 综合评价多点 → 每点一段，不挤在同一行 */
   test('综合评价多点 → 每点一段，不挤在同一行', async () => {
     const xml = await makeAndExport(

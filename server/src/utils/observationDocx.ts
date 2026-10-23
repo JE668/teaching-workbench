@@ -312,19 +312,37 @@ function toLines(s: string): string[] {
     .filter((l) => l.length > 0);
 }
 
-/** 完全空的段落：只有段落属性、里面没有任何 run（在 Word 里就是一行空白） */
-const EMPTY_PARA = /<w:p(?:\s[^>]*)?>\s*(?:<w:pPr>[\s\S]*?<\/w:pPr>)?\s*<\/w:p>/;
+/** 段落里没有任何 run（只有段落属性）→ 在 Word 里就是一行空白 */
+function isEmptyPara(para: string): boolean {
+  return !/<w:r[ >]/.test(para);
+}
+
+/** from 处或之后的第一个段落边界；from 正好落在段落起点时才会被后续调用采纳 */
+function paraAt(s: string, from: number): { s: number; e: number } | null {
+  const bare = s.indexOf('<w:p>', from);
+  const attr = s.indexOf('<w:p ', from);
+  const st = bare < 0 ? attr : attr < 0 ? bare : Math.min(bare, attr);
+  if (st < 0) return null;
+  const en = s.indexOf('</w:p>', st);
+  return en < 0 ? null : { s: st, e: en + '</w:p>'.length };
+}
 
 /**
- * 删掉占位符段落正上方紧挨着的空段落。
+ * 删掉占位符段落某一侧紧挨着的空段落。
  *
- * 模板里 8 个评价格子（{{eval1}}~{{eval8}}）都在占位符上方多留了一个空段落，
- * 填完就变成「一个空行 + 评价内容」，每格整体顶高一行。这里就地清掉它。
+ * 模板是人工在 Word 里排的，两类格子都残留了空段落（解压看 XML 才看得见）：
+ *  - {{eval1}}~{{eval8}}：占位符**上方**各多一个空段落 → 填完每格顶部空一行
+ *  - {{highlight}} / {{optimize}} / {{suggest}}：占位符**下方**各多两个空段落
+ *    → 亮点、优化、建议三块之间被空行撑开
  *
- * 只认「与占位符同一个 <w:tc>、且里面没有任何 run、并且紧贴占位符段落之前」的空段落，
- * 带文字的段落（如综合三块上方的红色提示语）一律不动；模板没有空段落时原样返回。
+ * 只认「与占位符同一个 <w:tc>、紧贴占位符段落、且里面没有任何 run」的段落；
+ * 带文字的段落（三块上方的红色提示语、区块标题）一律不动，模板没有空段落时原样返回。
+ *
+ * 注意：不要用一个正则去匹配「空段落」——<w:pPr> 里的 [\s\S]*? 会在 pPr 之后
+ * 紧跟不了 </w:p> 时继续向后扩张，越过段落边界把整段正文一起吞掉。
+ * 这里按段落边界逐个取段、逐段判定，正则只用来数 run。
  */
-function dropLeadingEmptyParagraphs(out: string, marker: string): string {
+function dropAdjacentEmptyParagraphs(out: string, marker: string, side: 'before' | 'after'): string {
   const at = out.indexOf(marker);
   if (at < 0) return out;
 
@@ -337,16 +355,32 @@ function dropLeadingEmptyParagraphs(out: string, marker: string): string {
   const pStart = Math.max(cell.lastIndexOf('<w:p>', local), cell.lastIndexOf('<w:p ', local));
   if (pStart < 0) return out;
 
-  // 从占位符段落起点往前，逐个吃掉紧贴着的空段落
-  let cursor = pStart;
-  for (;;) {
-    const m = [...cell.slice(0, cursor).matchAll(new RegExp(EMPTY_PARA.source, 'g'))].pop();
-    if (!m || m.index + m[0].length !== cursor) break;
-    cursor = m.index;
+  if (side === 'before') {
+    // 从占位符段落往前，逐个检查上一个段落是否为空
+    let keepFrom = pStart;
+    for (;;) {
+      const prevEnd = cell.lastIndexOf('</w:p>', keepFrom - 1);
+      if (prevEnd < 0) break;
+      const prevStart = Math.max(cell.lastIndexOf('<w:p>', prevEnd), cell.lastIndexOf('<w:p ', prevEnd));
+      if (prevStart < 0) break;
+      if (!isEmptyPara(cell.slice(prevStart, prevEnd + '</w:p>'.length))) break;
+      keepFrom = prevStart;
+    }
+    if (keepFrom === pStart) return out;
+    return out.slice(0, tcStart + keepFrom) + out.slice(tcStart + pStart);
   }
 
-  if (cursor === pStart) return out; // 前面没有空段落，原样保留
-  return out.slice(0, tcStart + cursor) + out.slice(tcStart + pStart);
+  // after：从占位符段落末尾往后，逐个吃掉紧贴着的空段落
+  const pEnd = cell.indexOf('</w:p>', local) + '</w:p>'.length;
+  let dropTo = pEnd;
+  for (;;) {
+    const next = paraAt(cell, dropTo);
+    if (!next || next.s !== dropTo) break; // 必须紧贴占位符段落，中间不能有别的内容
+    if (!isEmptyPara(cell.slice(next.s, next.e))) break;
+    dropTo = next.e;
+  }
+  if (dropTo === pEnd) return out;
+  return out.slice(0, tcStart + pEnd) + out.slice(tcStart + dropTo);
 }
 
 /** 渲染带占位符模板，返回已填充的 .docx（Node Buffer）。 */
@@ -354,10 +388,14 @@ export async function buildObservationDocx(d: ObservationDocxData): Promise<Buff
   const zip = await new PizZip().load(loadTemplateBuffer());
   let xml = zip.file('word/document.xml').asText();
 
-  // 模板里 8 个评价格子上方都多留了一个空段落，先清掉，避免每格顶部空一行
+  // 模板里残留的空段落先清掉（评价格子上方各多一行、综合三块下方各多两行，
+  // 不清就会把表格整体撑高）——详见 dropAdjacentEmptyParagraphs
   (d.evals || []).forEach((_, i) => {
-    xml = dropLeadingEmptyParagraphs(xml, '{{eval' + (i + 1) + '}}');
+    xml = dropAdjacentEmptyParagraphs(xml, '{{eval' + (i + 1) + '}}', 'before');
   });
+  for (const tag of ['highlight', 'optimize', 'suggest']) {
+    xml = dropAdjacentEmptyParagraphs(xml, '{{' + tag + '}}', 'after');
+  }
 
   // 等级：命中的那个填 ✓，其余保留空格
   const check = (code: string) => (d.grade === code ? '✓' : UNCHECKED);
