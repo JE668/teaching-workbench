@@ -226,6 +226,23 @@ describe('听评课 Word 导出（docx）', () => {
     return out;
   }
 
+  /** 找出包含 value 的那个表格单元格，返回其段落纯文本数组（顺序即 Word 里从上到下） */
+  function cellLines(xml: string, value: string): string[] {
+    const at = xml.indexOf(value);
+    assert.ok(at >= 0, '导出的文档里应能找到「' + value + '」');
+    const tcStart = Math.max(xml.lastIndexOf('<w:tc>', at), xml.lastIndexOf('<w:tc ', at));
+    const tcEnd = xml.indexOf('</w:tc>', at);
+    assert.ok(tcStart >= 0 && tcEnd > at, '「' + value + '」应落在表格单元格里');
+
+    return (xml.slice(tcStart, tcEnd).match(/<w:p[\s>][\s\S]*?<\/w:p>/g) || []).map((para) => {
+      let text = '';
+      const re = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+      let m;
+      while ((m = re.exec(para))) text += m[1];
+      return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    });
+  }
+
   async function makeAndExport(report: string): Promise<string> {
     resetObservationGenerator();
     setObservationGenerator(async () => report);
@@ -244,6 +261,25 @@ describe('听评课 Word 导出（docx）', () => {
     return (zip.file('word/document.xml') as any).async('string');
   }
 
+  test('评价格子填完不留空行（回归：模板每个评价格子上方多留一个空段落）', async () => {
+    const xml = await makeAndExport(REPORT);
+
+    // 从测试报告里取 8 条评价内容，与模板的评价格子一一对应
+    const lines = REPORT.split('\n');
+    const values = lines
+      .slice(lines.indexOf('【听课人评价】') + 1, lines.indexOf('【综合评价与建议】'))
+      .map((l) => l.split(/：/)[1])
+      .filter((v) => v && v.trim());
+    assert.equal(values.length, 8, '测试报告应覆盖 8 个评课维度');
+
+    for (const value of values) {
+      const lines = cellLines(xml, value);
+      assert.equal(lines.length, 1, '「' + value + '」所在单元格应只有一个段落');
+      assert.equal(lines[0].trim(), value, '单元格应以评价内容开头，不能有前置空行');
+    }
+  });
+
+  /** 综合评价多点 → 每点一段，不挤在同一行 */
   test('综合评价多点 → 每点一段，不挤在同一行', async () => {
     const xml = await makeAndExport(
       [

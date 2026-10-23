@@ -312,10 +312,52 @@ function toLines(s: string): string[] {
     .filter((l) => l.length > 0);
 }
 
+/** 完全空的段落：只有段落属性、里面没有任何 run（在 Word 里就是一行空白） */
+const EMPTY_PARA = /<w:p(?:\s[^>]*)?>\s*(?:<w:pPr>[\s\S]*?<\/w:pPr>)?\s*<\/w:p>/;
+
+/**
+ * 删掉占位符段落正上方紧挨着的空段落。
+ *
+ * 模板里 8 个评价格子（{{eval1}}~{{eval8}}）都在占位符上方多留了一个空段落，
+ * 填完就变成「一个空行 + 评价内容」，每格整体顶高一行。这里就地清掉它。
+ *
+ * 只认「与占位符同一个 <w:tc>、且里面没有任何 run、并且紧贴占位符段落之前」的空段落，
+ * 带文字的段落（如综合三块上方的红色提示语）一律不动；模板没有空段落时原样返回。
+ */
+function dropLeadingEmptyParagraphs(out: string, marker: string): string {
+  const at = out.indexOf(marker);
+  if (at < 0) return out;
+
+  const tcStart = Math.max(out.lastIndexOf('<w:tc>', at), out.lastIndexOf('<w:tc ', at));
+  const tcEnd = out.indexOf('</w:tc>', at);
+  if (tcStart < 0 || tcEnd <= at) return out;
+
+  const cell = out.slice(tcStart, tcEnd);
+  const local = at - tcStart;
+  const pStart = Math.max(cell.lastIndexOf('<w:p>', local), cell.lastIndexOf('<w:p ', local));
+  if (pStart < 0) return out;
+
+  // 从占位符段落起点往前，逐个吃掉紧贴着的空段落
+  let cursor = pStart;
+  for (;;) {
+    const m = [...cell.slice(0, cursor).matchAll(new RegExp(EMPTY_PARA.source, 'g'))].pop();
+    if (!m || m.index + m[0].length !== cursor) break;
+    cursor = m.index;
+  }
+
+  if (cursor === pStart) return out; // 前面没有空段落，原样保留
+  return out.slice(0, tcStart + cursor) + out.slice(tcStart + pStart);
+}
+
 /** 渲染带占位符模板，返回已填充的 .docx（Node Buffer）。 */
 export async function buildObservationDocx(d: ObservationDocxData): Promise<Buffer> {
   const zip = await new PizZip().load(loadTemplateBuffer());
   let xml = zip.file('word/document.xml').asText();
+
+  // 模板里 8 个评价格子上方都多留了一个空段落，先清掉，避免每格顶部空一行
+  (d.evals || []).forEach((_, i) => {
+    xml = dropLeadingEmptyParagraphs(xml, '{{eval' + (i + 1) + '}}');
+  });
 
   // 等级：命中的那个填 ✓，其余保留空格
   const check = (code: string) => (d.grade === code ? '✓' : UNCHECKED);
