@@ -240,34 +240,36 @@ test.describe('分页', () => {
 });
 
 test.describe('本周流程打卡', () => {
-  test('工作台按覆盖的类型种类统计，同一类型打多次不重复计覆盖', async ({ page }) => {
+  test('工作台按覆盖的类型种类统计，常规类与非常规类合并计入 5 种配额', async ({ page }) => {
     // 统计类断言依赖干净数据，admin 下已被其他用例造了一堆回访
     const token = await loginAsNewUser(page, 'weekly-probe-' + Date.now());
 
-    // 课堂总结打 2 次 + 作业批改 + 错题专练 = 4 条打卡，但只覆盖 3 种常规类
-    // 再加 1 条非常规类（阶测反馈），验证它不计入 5 种配额
+    // 课堂总结打 2 次（只覆盖 1 种）+ 作业批改 + 错题专练 + 阶测反馈 + 请假处理
+    // = 6 条打卡，覆盖 5 种（含 2 种非常规类），达标
     await seedFollowUp(page, { studentName: '周测甲', topic: '课题一', module: 'class_summary' }, token);
     await seedFollowUp(page, { studentName: '周测甲', topic: '课题二', module: 'class_summary' }, token);
     await seedFollowUp(page, { studentName: '周测乙', topic: '作业一', module: 'homework_review' }, token);
     await seedFollowUp(page, { studentName: '周测丙', topic: '错题一', module: 'mistake_drill' }, token);
     await seedFollowUp(page, { studentName: '周测丁', topic: '阶测一', module: 'stage_test' }, token);
+    await seedFollowUp(page, { studentName: '周测戊', topic: '请假一', module: 'leave' }, token);
 
     await page.goto('/');
     const card = page.getByTestId('weekly-progress');
     await expect(card).toBeVisible();
 
-    // 覆盖率显示的是种类数 3，不是打卡条数 5
-    await expect(card.locator('span.font-mono')).toHaveText('3');
+    // 覆盖率显示的是种类数 5，不是打卡条数 6
+    await expect(card.locator('span.font-mono')).toHaveText('5');
     await expect(card).toContainText('/ 5 种');
-    await expect(card).toContainText('本周共 5 条打卡');
+    await expect(card).toContainText('本周共 6 条打卡');
     await expect(card).toContainText('课堂总结');
     await expect(card).toContainText('作业批改');
     await expect(card).toContainText('错题专练');
-    // 未打卡的常规类仍在列表里，不会消失
-    await expect(card).toContainText('新生首课');
+    // 未打卡的类型仍在列表里，不会消失
     await expect(card).toContainText('预习资料');
-    // 非常规类单独成行并标注不计入配额
-    await expect(card).toContainText('非常规类按需打卡，不计入 5 种配额');
+    await expect(card).toContainText('笔记痕迹');
+    // 非常规类单独成组，但同样计入 5 种配额
     await expect(card).toContainText('阶测反馈');
+    await expect(card).toContainText('请假处理');
+    await expect(card).toContainText('1 条');
   });
 });

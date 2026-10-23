@@ -85,18 +85,27 @@ export const COURSE_TYPES: { value: CourseType; label: string; hint: string }[] 
 
 // ============ 流程打卡类型（学校 2026 新规）============
 //
-// 常规类 5 种是每周必须完成的日常打卡，非常规类 3 种按实际需要打。
+// 常规类 8 种是日常回访的主体，非常规类 8 种是特殊情况的沟通。
+// 每周配额按「覆盖的种类数」算，两组合并统计，5 种以上即达标。
 // 选中哪种，AI 生成的三段（课堂内容 / 学生收获 / 课后任务）就侧重那个模块——
 // 服务端对应实现在 server/src/services/ai.ts 的 MODULE_GUIDANCE，key 必须保持一致。
 
 export type FollowUpModule =
-  | 'class_summary'
-  | 'first_lesson'
   | 'preview'
   | 'homework_review'
+  | 'class_summary'
+  | 'note_trace'
   | 'mistake_drill'
+  | 'homework_assign'
+  | 'accumulation'
+  | 'exam_prep'
   | 'grade_analysis'
   | 'stage_test'
+  | 'plan_adjust'
+  | 'student_request'
+  | 'academic_assist'
+  | 'extra_class'
+  | 'leave'
   | 'makeup_plan';
 
 export interface FollowUpModuleOption {
@@ -114,21 +123,29 @@ export interface FollowUpModuleGroup {
 export const FOLLOWUP_MODULE_GROUPS: FollowUpModuleGroup[] = [
   {
     group: '常规类',
-    hint: '每周需完成不少于 5 项',
+    hint: '日常回访的主体，与非常规类合并计入每周 5 种',
     modules: [
-      { value: 'class_summary', label: '课堂总结', hint: '这节课讲了什么、孩子有什么收获、回家练什么' },
-      { value: 'first_lesson', label: '新生首课', hint: '了解学情、介绍教学计划，重点在配合而非评价掌握程度' },
       { value: 'preview', label: '预习资料', hint: '资料覆盖哪些知识点、孩子怎么用，任务要具体到页码题号' },
       { value: 'homework_review', label: '作业批改', hint: '完成质量、错在哪些知识点、怎么订正' },
+      { value: 'class_summary', label: '课堂总结', hint: '这节课讲了什么、孩子有什么收获、回家练什么' },
+      { value: 'note_trace', label: '笔记痕迹', hint: '板书有没有记全、有没有自己的补充和思考' },
       { value: 'mistake_drill', label: '错题专练', hint: '哪几类错题专练了什么方法、现在掌握到什么程度' },
+      { value: 'homework_assign', label: '作业布置', hint: '布置了什么、为什么做、预计花多久' },
+      { value: 'accumulation', label: '积累打卡', hint: '今天攒了什么、多少量，明天接着做什么' },
+      { value: 'exam_prep', label: '备考资料', hint: '资料是什么、覆盖什么范围、孩子怎么用' },
     ],
   },
   {
     group: '非常规类',
-    hint: '按需打卡',
+    hint: '特殊情况的沟通，与常规类合并计入每周 5 种',
     modules: [
       { value: 'grade_analysis', label: '成绩分析', hint: '成绩从哪来、丢分在哪、接下来怎么提分' },
       { value: 'stage_test', label: '阶测反馈', hint: '阶段性测评的整体反馈，体现板块与短板的变化' },
+      { value: 'plan_adjust', label: '规划调整', hint: '调整了什么、为什么改、改完之后怎么推进' },
+      { value: 'student_request', label: '学生要求', hint: '孩子自己提了什么诉求、老师怎么回应' },
+      { value: 'academic_assist', label: '学管协助', hint: '排课、上课方式、家校衔接等配合事项' },
+      { value: 'extra_class', label: '加课沟通', hint: '加在哪一块、什么时间、为什么需要加' },
+      { value: 'leave', label: '请假处理', hint: '缺了哪一节、要不要补、怎么补回来' },
       { value: 'makeup_plan', label: '补课安排', hint: '补的是哪一块、补完掌握得怎么样、怎么巩固' },
     ],
   },
@@ -155,8 +172,11 @@ export const FOLLOWUP_MODULE_GROUPS_BY_VALUE: Record<
 
 export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
 
-/** 打卡类型的周配额：常规类共 5 种，全部覆盖即视为本周达标 */
-export const WEEKLY_FOLLOWUP_QUOTA = FOLLOWUP_MODULE_GROUPS[0].modules.length;
+/**
+ * 打卡类型的周配额：覆盖 5 种以上即视为本周达标，常规类与非常规类**合并**统计。
+ * 不写成从分组数量推导：常规类现在是 8 种，推导会得到 8，与学校的 5 种不符。
+ */
+export const WEEKLY_FOLLOWUP_QUOTA = 5;
 
 /** 本周流程打卡进度里的单个类型 */
 export interface FollowUpWeeklyType {

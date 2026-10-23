@@ -157,14 +157,14 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* 本周流程打卡：学校要求每周覆盖不少于 5 种常规打卡类型 */}
+      {/* 本周流程打卡：学校要求每周覆盖不少于 5 种打卡类型，常规类与非常规类合并统计 */}
       <Card className="animate-fade-up" style={{ animationDelay: '200ms' }} data-testid="weekly-progress">
         <CardHeader
           title="本周流程打卡"
           description={
             weekly
               ? '按覆盖的打卡类型统计 · ' + weekly.weekStart.slice(5) + ' ~ ' + weekly.weekEnd.slice(5)
-              : '学校要求每周覆盖不少于 5 种常规打卡类型'
+              : '学校要求每周覆盖不少于 5 种打卡类型'
           }
           icon={<CheckCircle2 className="h-4 w-4" />}
           action={
@@ -182,12 +182,13 @@ export default function Dashboard() {
           }
         />
         <div className="px-5 pb-5">
-          <div className="flex flex-wrap gap-2">
+          <span className="text-[11px] font-medium text-slate-400">常规类</span>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
             {regularTypes.map((t) => (
               <span
                 key={t.value}
                 className={
-                  'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ring-1 ' +
+                  'flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium ring-1 ' +
                   (t.count > 0
                     ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
                     : 'bg-slate-50 text-slate-400 ring-slate-200')
@@ -206,8 +207,8 @@ export default function Dashboard() {
             ))}
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-            <span className="text-[11px] text-slate-400">非常规类按需打卡，不计入 5 种配额</span>
+          <span className="mt-3 block text-[11px] font-medium text-slate-400">非常规类</span>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
             {unusualTypes.map((t) => (
               <span
                 key={t.value}

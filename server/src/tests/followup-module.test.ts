@@ -35,7 +35,7 @@ describe('流程打卡类型 · 归一化', () => {
     assert.equal(normalizeFollowUpModule('乱写的值'), 'class_summary');
   });
 
-  test('八个类型全部被接受', () => {
+  test('十六个类型全部被接受', () => {
     for (const m of FOLLOWUP_MODULES) {
       assert.equal(normalizeFollowUpModule(m), m);
     }
@@ -51,13 +51,13 @@ describe('流程打卡类型 · 提示词', () => {
     assert.ok(!p.includes('本模块专属要求'), '课堂总结没有专属要求，不应输出空标题');
   });
 
-  test('八种类型都写进提示词，且三段标题保持完整', () => {
+  test('十六种类型都写进提示词，且三段标题保持完整', () => {
     for (const m of FOLLOWUP_MODULES) {
       const p = buildPrompt({ ...base, module: m });
       const g = MODULE_GUIDANCE[m];
       assert.match(p, new RegExp('- 打卡类型：' + g.group + ' · ' + g.label), m + ' 课堂信息');
       assert.match(p, new RegExp('# 本次打卡类型：' + g.group + ' · ' + g.label), m + ' 场景块');
-      // 课堂总结是通用模块，没有专属要求；其余 7 种必须各有一条针对性约束
+      // 课堂总结是通用模块，没有专属要求；其余 15 种必须各有一条针对性约束
       if (m === 'class_summary') {
         assert.equal(g.rules.length, 0);
         assert.ok(!p.includes('本模块专属要求'), '课堂总结不应输出空的专属要求块');
@@ -72,19 +72,19 @@ describe('流程打卡类型 · 提示词', () => {
     }
   });
 
-  test('常规类五种齐全，非常规类三种齐全', () => {
+  test('常规类八种齐全，非常规类八种齐全', () => {
     const groups = FOLLOWUP_MODULES.map((m) => MODULE_GUIDANCE[m].group);
-    assert.equal(groups.filter((g) => g === '常规类').length, 5);
-    assert.equal(groups.filter((g) => g === '非常规类').length, 3);
+    assert.equal(groups.filter((g) => g === '常规类').length, 8);
+    assert.equal(groups.filter((g) => g === '非常规类').length, 8);
   });
 
   test('不同模块的写法确实不同，不会互相串词', () => {
     const homework = buildPrompt({ ...base, module: 'homework_review' });
-    const firstLesson = buildPrompt({ ...base, module: 'first_lesson' });
+    const preview = buildPrompt({ ...base, module: 'preview' });
     assert.match(homework, /批改的作业范围/);
-    assert.match(firstLesson, /后续教学计划/);
-    assert.ok(!homework.includes('后续教学计划'), '作业批改不应出现新生首课的措辞');
-    assert.ok(!firstLesson.includes('批改的作业范围'), '新生首课不应出现作业批改的措辞');
+    assert.match(preview, /预习资料覆盖了哪些知识点/);
+    assert.ok(!homework.includes('预习资料覆盖了哪些知识点'), '作业批改不应出现预习资料的措辞');
+    assert.ok(!preview.includes('批改的作业范围'), '预习资料不应出现作业批改的措辞');
   });
 
   test('课堂总结在 1对1 与小组课下的措辞各自正确', () => {
@@ -94,9 +94,9 @@ describe('流程打卡类型 · 提示词', () => {
     assert.match(group, /描述同学们在本节课的整体进步与亮点/);
     assert.ok(!group.includes('小明本节课的进步与亮点'), '小组课文案不能出现学生称呼');
     // 模块模板里的 {call} 占位符必须替换成「孩子们」，不能残留花括号
-    const firstLessonGroup = buildPrompt({ ...base, module: 'first_lesson', courseType: 'group' });
-    assert.match(firstLessonGroup, /描述孩子们的状态与性格特点/);
-    assert.ok(!/(\{[a-zA-Z]+\})/.test(firstLessonGroup), '提示词里不应残留未替换的占位符');
+    const noteTraceGroup = buildPrompt({ ...base, module: 'note_trace', courseType: 'group' });
+    assert.match(noteTraceGroup, /描述孩子们做笔记时的状态/);
+    assert.ok(!/(\{[a-zA-Z]+\})/.test(noteTraceGroup), '提示词里不应残留未替换的占位符');
   });
 
   test('多次课的递进措辞在课堂总结里保留', () => {

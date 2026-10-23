@@ -90,8 +90,8 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
  * 本周流程打卡进度。
  *
  * 学校要求「每周完成不少于 5 项流程打卡」，口径按**覆盖的打卡类型种类**算：
- * 常规类共 5 种，本周每种至少打过一次即为达标。不按打卡条数算——
- * 同一个孩子一周回访三次课堂总结，也只算覆盖了 1 种。
+ * 常规类 8 种与非常规类 8 种**合并**统计，任何 5 种各打过一次即为达标。
+ * 不按打卡条数算——同一个孩子一周回访三次课堂总结，也只算覆盖了 1 种。
  *
  * 周界：北京周一 00:00 到周日 24:00。数据库时间列存的是北京时间串
  * （datetime('now', '+8 hours')），直接拼「周一 00:00:00」做字符串比较即可。
@@ -137,7 +137,8 @@ function weeklyModuleProgress(rows: any[]): {
     weekStart: iso(monday),
     weekEnd: iso(sunday),
     quota: WEEKLY_FOLLOWUP_QUOTA,
-    covered: types.filter((t) => t.group === 'regular' && t.count > 0).length,
+    // 常规类与非常规类合并统计：任何 5 种各打过一次即达标
+    covered: types.filter((t) => t.count > 0).length,
     records: inWeek.length,
     types,
   };

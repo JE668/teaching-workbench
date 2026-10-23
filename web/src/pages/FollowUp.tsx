@@ -564,7 +564,7 @@ export default function FollowUp() {
                       <span className="text-xs font-semibold text-slate-600">{g.group}</span>
                       <span className="text-xs text-slate-400">{g.hint}</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-1.5">
+                    <div className="grid grid-cols-4 gap-1.5">
                       {g.modules.map((m) => {
                         const on = form.module === m.value;
                         return (

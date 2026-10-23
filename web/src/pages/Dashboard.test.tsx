@@ -175,7 +175,7 @@ describe('工作台 · 加载失败', () => {
 });
 
 describe('工作台 · 本周流程打卡', () => {
-  /** 用后端同一份类型清单（前端 FOLLOWUP_MODULE_GROUPS）拼出 8 个类型 */
+  /** 用后端同一份类型清单（前端 FOLLOWUP_MODULE_GROUPS）拼出 16 个类型 */
   const ALL_TYPES = FOLLOWUP_MODULE_GROUPS.flatMap((g) =>
     g.modules.map((m) => ({
       value: m.value,
@@ -191,7 +191,7 @@ describe('工作台 · 本周流程打卡', () => {
       weekStart: '2026-10-19',
       weekEnd: '2026-10-25',
       quota: WEEKLY_FOLLOWUP_QUOTA,
-      covered: types.filter((t) => t.group === 'regular' && t.count > 0).length,
+      covered: types.filter((t) => t.count > 0).length,
       records: types.reduce((sum, t) => sum + t.count, 0),
       types,
     };
@@ -224,35 +224,40 @@ describe('工作台 · 本周流程打卡', () => {
     expect(el.textContent).toContain('10-19 ~ 10-25');
   });
 
-  it('常规类全覆盖时进入达标态，未覆盖的类型留在灰态', async () => {
+  it('任意 5 种各打一次即达标，未覆盖的类型留在灰态', async () => {
+    // 3 种常规 + 2 种非常规 = 覆盖 5 种，达标（两组合并统计）
     mockWeekly(
       makeWeekly({
         class_summary: 1,
-        first_lesson: 1,
         preview: 1,
         homework_review: 1,
-        mistake_drill: 1,
+        note_trace: 1,
+        grade_analysis: 1,
       })
     );
     renderWithProviders(<Dashboard />);
     await screen.findByText('本周流程打卡');
     const el = card();
-    // 达标态用绿色强调
     expect(el.textContent).toContain('/ ' + WEEKLY_FOLLOWUP_QUOTA + ' 种');
+    // 达标态用绿色强调
+    expect(el.querySelector('span.font-mono')?.textContent).toBe('5');
     expect(el.querySelector('span.text-emerald-600')).toBeTruthy();
   });
 
-  it('非常规类单独成行，并说明不计入 5 种配额', async () => {
+  it('非常规类单独成组，但同样计入 5 种配额', async () => {
+    // 1 种常规 + 2 种非常规 = 覆盖 3 种，4 条打卡，未达标
     mockWeekly(makeWeekly({ class_summary: 1, stage_test: 2, makeup_plan: 1 }));
     renderWithProviders(<Dashboard />);
     await screen.findByText('本周流程打卡');
     const el = card();
-    expect(el.textContent).toContain('非常规类按需打卡，不计入 5 种配额');
+    expect(el.textContent).toContain('常规类');
+    expect(el.textContent).toContain('非常规类');
     expect(el.textContent).toContain('阶测反馈');
     expect(el.textContent).toContain('补课安排');
-    // 1 种常规 + 2 条阶测反馈 + 1 条补课安排 = 4 条打卡，covered 只算 1
     expect(el.textContent).toContain('本周共 4 条打卡');
     expect(el.textContent).toContain('2 条');
+    expect(el.querySelector('span.font-mono')?.textContent).toBe('3');
+    expect(el.querySelector('span.text-emerald-600')).toBeFalsy();
   });
 
   it('常规类未打满时不显示达标态', async () => {

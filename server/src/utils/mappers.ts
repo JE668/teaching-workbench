@@ -69,13 +69,21 @@ export function normalizeCourseType(value: any): 'one_on_one' | 'group' {
  * 这是存量数据（module 列新增前的记录）的默认归类，也符合「常规类」里最常用的打卡场景。
  */
 export const FOLLOWUP_MODULES: FollowUpModule[] = [
-  'class_summary',
-  'first_lesson',
   'preview',
   'homework_review',
+  'class_summary',
+  'note_trace',
   'mistake_drill',
+  'homework_assign',
+  'accumulation',
+  'exam_prep',
   'grade_analysis',
   'stage_test',
+  'plan_adjust',
+  'student_request',
+  'academic_assist',
+  'extra_class',
+  'leave',
   'makeup_plan',
 ];
 
@@ -87,21 +95,33 @@ export function normalizeFollowUpModule(value: any): FollowUpModule {
 
 /**
  * 打卡类型的分组元信息（后端只用于统计，文案在前端 FOLLOWUP_MODULE_GROUPS）。
- * 常规类 5 种是每周的配额分母；非常规类按需打卡，不计入配额。
+ * 常规类 8 种是日常回访的主体；非常规类 8 种是特殊情况的沟通。
  */
 export const FOLLOWUP_TYPES: { value: FollowUpModule; label: string; group: 'regular' | 'unusual' }[] = [
-  { value: 'class_summary', label: '课堂总结', group: 'regular' },
-  { value: 'first_lesson', label: '新生首课', group: 'regular' },
   { value: 'preview', label: '预习资料', group: 'regular' },
   { value: 'homework_review', label: '作业批改', group: 'regular' },
+  { value: 'class_summary', label: '课堂总结', group: 'regular' },
+  { value: 'note_trace', label: '笔记痕迹', group: 'regular' },
   { value: 'mistake_drill', label: '错题专练', group: 'regular' },
+  { value: 'homework_assign', label: '作业布置', group: 'regular' },
+  { value: 'accumulation', label: '积累打卡', group: 'regular' },
+  { value: 'exam_prep', label: '备考资料', group: 'regular' },
   { value: 'grade_analysis', label: '成绩分析', group: 'unusual' },
   { value: 'stage_test', label: '阶测反馈', group: 'unusual' },
+  { value: 'plan_adjust', label: '规划调整', group: 'unusual' },
+  { value: 'student_request', label: '学生要求', group: 'unusual' },
+  { value: 'academic_assist', label: '学管协助', group: 'unusual' },
+  { value: 'extra_class', label: '加课沟通', group: 'unusual' },
+  { value: 'leave', label: '请假处理', group: 'unusual' },
   { value: 'makeup_plan', label: '补课安排', group: 'unusual' },
 ];
 
-/** 每周流程打卡的配额：常规类共 5 种，全部覆盖即为达标 */
-export const WEEKLY_FOLLOWUP_QUOTA = FOLLOWUP_TYPES.filter((t) => t.group === 'regular').length;
+/**
+ * 每周流程打卡的配额：覆盖 5 种以上打卡类型即达标。
+ * 常规类与非常规类**合并**统计——任何 5 种各打过一次就算达标。
+ * 不写成常量推导：常规类现在是 8 种，从分组数量推导会得到 8，与学校的 5 项不符。
+ */
+export const WEEKLY_FOLLOWUP_QUOTA = 5;
 
 export function normalizeSessionCount(value: any): number {
   const n = parseInt(value, 10);

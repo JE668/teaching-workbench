@@ -96,16 +96,25 @@ export interface FollowUpCreate {
 
 /**
  * 流程打卡类型（学校 2026 新规）。
- * 常规类 5 种 + 非常规类 3 种，每种的生成侧重不同，见 services/ai.ts 的 MODULE_GUIDANCE。
+ * 常规类 8 种 + 非常规类 8 种，每种的生成侧重不同，见 services/ai.ts 的 MODULE_GUIDANCE。
+ * 每周配额按「覆盖的种类数」算，常规类与非常规类合并统计，5 种以上即达标。
  */
 export type FollowUpModule =
-  | 'class_summary'
-  | 'first_lesson'
   | 'preview'
   | 'homework_review'
+  | 'class_summary'
+  | 'note_trace'
   | 'mistake_drill'
+  | 'homework_assign'
+  | 'accumulation'
+  | 'exam_prep'
   | 'grade_analysis'
   | 'stage_test'
+  | 'plan_adjust'
+  | 'student_request'
+  | 'academic_assist'
+  | 'extra_class'
+  | 'leave'
   | 'makeup_plan';
 
 // ============ 听评课（独立于课后回访） ============

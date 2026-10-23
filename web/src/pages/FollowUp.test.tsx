@@ -728,24 +728,33 @@ describe('课后回访 · 流程打卡新规达标线', () => {
 });
 
 describe('课后回访 · 流程打卡类型（常规类 / 非常规类）', () => {
-  // 学校新规把流程打卡分成常规类 5 种与非常规类 3 种，选中哪个就按哪个模块生成。
+  // 学校新规把流程打卡分成常规类 8 种与非常规类 8 种，选中哪个就按哪个模块生成。
   // 这里只锁 UI 选择与请求载荷；提示词按模块换写法由服务端 followup-module.test.ts 锁。
-  it('默认选中课堂总结，两组类型与八个选项都在', () => {
+  it('默认选中课堂总结，两组类型与十六个选项都在', () => {
     renderWithProviders(<FollowUp />);
 
     expect(screen.getByText('流程打卡类型')).toBeInTheDocument();
     expect(screen.getByText('常规类')).toBeInTheDocument();
-    expect(screen.getByText(/每周需完成不少于 5 项/)).toBeInTheDocument();
+    expect(screen.getByText(/日常回访的主体/)).toBeInTheDocument();
     expect(screen.getByText('非常规类')).toBeInTheDocument();
+    expect(screen.getByText(/特殊情况的沟通/)).toBeInTheDocument();
 
     for (const label of [
-      '课堂总结',
-      '新生首课',
       '预习资料',
       '作业批改',
+      '课堂总结',
+      '笔记痕迹',
       '错题专练',
+      '作业布置',
+      '积累打卡',
+      '备考资料',
       '成绩分析',
       '阶测反馈',
+      '规划调整',
+      '学生要求',
+      '学管协助',
+      '加课沟通',
+      '请假处理',
       '补课安排',
     ]) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();

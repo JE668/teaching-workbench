@@ -61,7 +61,7 @@ async function weekly(): Promise<any> {
 }
 
 describe('本周流程打卡进度 · 口径', () => {
-  test('没有记录时 covered 为 0，quota 是常规类的 5 种', async () => {
+  test('没有记录时 covered 为 0，quota 固定是 5 种', async () => {
     reset();
     const w = await weekly();
     assert.equal(w.quota, WEEKLY_FOLLOWUP_QUOTA);
@@ -83,27 +83,35 @@ describe('本周流程打卡进度 · 口径', () => {
     assert.equal(w.types.find((t: any) => t.value === 'class_summary').count, 3);
   });
 
-  test('常规类 5 种各打一次即为达标', async () => {
-    reset();
-    const regular = FOLLOWUP_TYPES.filter((t) => t.group === 'regular').map((t) => t.value);
-    regular.forEach((m, i) => seed(m, i));
-    const w = await weekly();
-    assert.equal(w.covered, 5);
-    assert.equal(w.records, 5);
-    assert.ok(w.covered >= w.quota, '5 种全覆盖应达标');
-  });
-
-  test('只打 4 种常规类不达标，非常规类再多也不顶配额', async () => {
+  test('任意 5 种类型各打一次即为达标', async () => {
     reset();
     seed('class_summary', 0);
     seed('homework_review', 1);
     seed('preview', 2);
-    seed('first_lesson', 3);
-    seed('grade_analysis', 4);
-    seed('stage_test', 5);
+    seed('note_trace', 3);
+    seed('mistake_drill', 4);
     const w = await weekly();
-    assert.equal(w.covered, 4, '4 种常规类不能算达标');
-    assert.equal(w.records, 6, '非常规类也计入本周总条数');
+    assert.equal(w.covered, 5);
+    assert.equal(w.records, 5);
+    assert.ok(w.covered >= w.quota, '覆盖 5 种应达标');
+  });
+
+  test('只打 4 种不达标，但非常规类同样计入覆盖种类', async () => {
+    reset();
+    seed('class_summary', 0);
+    seed('homework_review', 1);
+    seed('preview', 2);
+    seed('note_trace', 3);
+    const w4 = await weekly();
+    assert.equal(w4.covered, 4, '4 种覆盖不了 5 种的配额');
+    assert.ok(w4.covered < w4.quota, '4 种不应达标');
+
+    // 再补 1 条非常规类（阶测反馈），5 种覆盖即达标——两组合并统计
+    seed('stage_test', 4);
+    const w = await weekly();
+    assert.equal(w.covered, 5, '非常规类也计入覆盖种类');
+    assert.equal(w.records, 5);
+    assert.ok(w.covered >= w.quota, '5 种覆盖应达标');
     const stage = w.types.find((t: any) => t.value === 'stage_test');
     assert.equal(stage.count, 1);
     assert.equal(stage.group, 'unusual');
