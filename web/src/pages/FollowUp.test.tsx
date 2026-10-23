@@ -40,6 +40,13 @@ async function fillMinimalForm(user: ReturnType<typeof userEvent.setup>, topic =
   await user.type(screen.getByLabelText(/课堂表现/), '专注度较高');
 }
 
+/** 保存按钮：字数达标时叫「保存并归档到学生档案」，不达标时叫「仍要保存…」 */
+async function clickSave(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    screen.getByRole('button', { name: /保存并归档到学生档案|仍要保存/ })
+  );
+}
+
 beforeEach(() => {
   // 草稿是跨用例的持久状态，必须清掉，否则会串味
   localStorage.clear();
@@ -132,7 +139,7 @@ describe('课后回访 · 课次数传递', () => {
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
 
     await screen.findByTestId('generated-content');
-    await user.click(screen.getByRole('button', { name: /保存并归档到学生档案/ }));
+    await clickSave(user);
 
     await waitFor(() => expect(post).toHaveBeenCalled());
     const body = post.mock.calls[0][1];
@@ -270,7 +277,7 @@ describe('课后回访 · 课程类型', () => {
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await user.click(screen.getByRole('button', { name: /保存并归档|仍要保存/ }));
 
     await waitFor(() => expect(post).toHaveBeenCalled());
     const body = post.mock.calls[0][1];
@@ -335,7 +342,7 @@ describe('课后回访 · 保存后的告知', () => {
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await user.click(screen.getByRole('button', { name: /保存并归档|仍要保存/ }));
 
     expect(await screen.findByText(/学生库中没有「新同学」，已自动为其建立档案/)).toBeInTheDocument();
   });
@@ -352,7 +359,7 @@ describe('课后回访 · 保存后的告知', () => {
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await user.click(screen.getByRole('button', { name: /保存并归档|仍要保存/ }));
 
     expect(
       await screen.findByText(/已把 3 条同名历史回访归入该学生档案/)
@@ -578,7 +585,7 @@ describe('课后回访 · 保存后继续下一个', () => {
     await screen.findByTestId('generated-content');
 
     await user.click(screen.getByLabelText(/保存后继续填下一个学生/));
-    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await user.click(screen.getByRole('button', { name: /保存并归档|仍要保存/ }));
 
     await waitFor(() => expect(post).toHaveBeenCalled());
 
@@ -679,7 +686,7 @@ describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => 
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    await user.click(screen.getByRole('button', { name: /保存并归档/ }));
+    await user.click(screen.getByRole('button', { name: /保存并归档|仍要保存/ }));
     await waitFor(() => expect(post).toHaveBeenCalled());
 
     await waitFor(() => {
@@ -699,41 +706,50 @@ async function generateOnce(user: ReturnType<typeof userEvent.setup>) {
 describe('课后回访 · 流程打卡新规达标线', () => {
   // 学校新规：打卡文字约 150 字、课堂照片不少于 3 张。
   // 这里只锁 UI 上的达标提示，提示词的约束由服务端 course-type.test.ts 锁。
-  it('字数不达标时提示引用学校标准，图片卡片写明 3 张要求', async () => {
+  // 默认勾选 5 个板块，字数区间随之放宽到 200–300
+  it('字数超上限时提示动态区间与板块数，图片卡片写明 3 张要求', async () => {
     const user = userEvent.setup();
     // 故意给一段超上限的内容，好让「字数不达标」提示出现
-    stubStream(GENERATED + '补充说明'.repeat(40));
+    stubStream(GENERATED + '补充说明'.repeat(60));
     renderWithProviders(<FollowUp />);
 
     await fillMinimalForm(user);
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    expect(screen.getByText(/学校要求约 150 字/)).toBeInTheDocument();
-    expect(screen.getByText(/140–200/)).toBeInTheDocument();
-    expect(screen.getByText(/不少于 3 张/)).toBeInTheDocument();
+    // 提示文案由多个表达式拼接成一段，用容器全文断言，不被节点切分影响
+    const bodyText = document.body.textContent || '';
+    expect(bodyText).toContain('当前 415 字');
+    expect(bodyText).toContain('需 200–300 字');
+    expect(bodyText).toContain('5 个板块');
+    expect(bodyText).toContain('不少于 3 张');
   });
 
-  it('字数达标时不再提示不达标', async () => {
+  it('字数落在区间内时不再提示不达标', async () => {
     const user = userEvent.setup();
-    stubStream();
+    // 175 + 80 = 255 字，落在 5 个板块的 200–300 区间内
+    stubStream(GENERATED + '补充说明'.repeat(20));
     renderWithProviders(<FollowUp />);
 
     await fillMinimalForm(user);
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    expect(screen.queryByText(/学校要求约 150 字/)).not.toBeInTheDocument();
+    const bodyText = document.body.textContent || '';
+    expect(bodyText).not.toContain('需 200–300 字');
+    await clickSave(user);
+    await waitFor(() => expect(post).toHaveBeenCalled());
   });
 });
 
-describe('课后回访 · 流程打卡类型（常规类 / 非常规类）', () => {
-  // 学校新规把流程打卡分成常规类 8 种与非常规类 8 种，选中哪个就按哪个模块生成。
-  // 这里只锁 UI 选择与请求载荷；提示词按模块换写法由服务端 followup-module.test.ts 锁。
-  it('默认选中课堂总结，两组类型与十六个选项都在', () => {
+describe('课后回访 · 覆盖板块（多选，常规类 8 + 非常规类 7）', () => {
+  // 学校新规：一次回访内容里要覆盖 5 个以上板块，勾选几个内容里就写几段。
+  // 这里只锁 UI 选择与请求载荷；提示词按板块换写法由服务端 followup-module.test.ts 锁。
+  it('默认勾选 5 个板块，两组类型与十五个选项都在', () => {
     renderWithProviders(<FollowUp />);
 
-    expect(screen.getByText('流程打卡类型')).toBeInTheDocument();
+    expect(screen.getByText('覆盖板块')).toBeInTheDocument();
+    expect(screen.getByText(/已选 5 个/)).toBeInTheDocument();
     expect(screen.getByText('常规类')).toBeInTheDocument();
     expect(screen.getByText(/日常回访的主体/)).toBeInTheDocument();
     expect(screen.getByText('非常规类')).toBeInTheDocument();
@@ -754,52 +770,81 @@ describe('课后回访 · 流程打卡类型（常规类 / 非常规类）', () 
       '学生要求',
       '学管协助',
       '加课沟通',
-      '请假处理',
-      '补课安排',
+            '补课安排',
     ]) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
   });
-
-  it('常规类选中后，生成请求与保存载荷都带上 module', async () => {
+  it('默认勾选 5 个板块，按声明顺序传给生成与保存载荷', async () => {
     const user = userEvent.setup();
     stubStream();
     post.mockResolvedValue({ id: 1 });
     renderWithProviders(<FollowUp />);
 
-    await user.click(screen.getByRole('button', { name: '作业批改' }));
     await fillMinimalForm(user);
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
-    expect(streamPost.mock.calls[0][1].module).toBe('homework_review');
+    // 按 FOLLOWUP_MODULES 声明顺序排列，而不是勾选顺序
+    const expected = [
+      'preview',
+      'homework_review',
+      'class_summary',
+      'mistake_drill',
+      'homework_assign',
+    ];
+    expect(streamPost.mock.calls[0][1].modules).toEqual(expected);
 
-    await user.click(screen.getByRole('button', { name: /保存并归档到学生档案/ }));
-    expect(post.mock.calls[0][1].module).toBe('homework_review');
+    await clickSave(user);
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1].modules).toEqual(expected);
   });
 
-  it('非常规类同样生效：选中成绩分析后按 grade_analysis 生成', async () => {
+  it('常规类与非常规类都能继续勾选，生成载荷随勾选变化', async () => {
     const user = userEvent.setup();
     stubStream();
     renderWithProviders(<FollowUp />);
+
+    // 常规类：把「笔记痕迹」加上
+    await user.click(screen.getByRole('button', { name: '笔记痕迹' }));
+    // 非常规类：把「成绩分析」加上
+    await user.click(screen.getByRole('button', { name: '成绩分析' }));
+
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    const sent = streamPost.mock.calls[0][1].modules;
+    expect(sent).toContain('note_trace');
+    expect(sent).toContain('grade_analysis');
+    expect(sent).toHaveLength(7);
+  });
+
+  it('取消到 3 个板块时无法生成，并提示至少 5 个', async () => {
+    const user = userEvent.setup();
+    stubStream();
+    renderWithProviders(<FollowUp />);
+
+    await user.click(screen.getByRole('button', { name: '课堂总结' }));
+    await user.click(screen.getByRole('button', { name: '作业布置' }));
+
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+
+    expect(await screen.findByText(/请至少勾选 5 个板块/)).toBeInTheDocument();
+    expect(screen.getByText(/已选 3 个/)).toBeInTheDocument();
+    expect(streamPost).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('generated-content')).not.toBeInTheDocument();
+  });
+
+  it('勾选后计数实时更新，且计数面板用绿色标记达标', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FollowUp />);
+
+    const counter = screen.getByText(/已选 5 个，达标/);
+    expect(counter.className).toContain('text-emerald-600');
 
     await user.click(screen.getByRole('button', { name: '成绩分析' }));
-    await fillMinimalForm(user);
-    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
-    await screen.findByTestId('generated-content');
-
-    expect(streamPost.mock.calls[0][1].module).toBe('grade_analysis');
-  });
-
-  it('不选时默认按课堂总结提交', async () => {
-    const user = userEvent.setup();
-    stubStream();
-    renderWithProviders(<FollowUp />);
-
-    await fillMinimalForm(user);
-    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
-    await screen.findByTestId('generated-content');
-
-    expect(streamPost.mock.calls[0][1].module).toBe('class_summary');
+    expect(screen.getByText(/已选 6 个，达标/)).toBeInTheDocument();
   });
 });

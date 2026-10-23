@@ -135,18 +135,25 @@ test.describe('课后回访生成', () => {
     await expect(page.getByText('涵盖 3 次课')).toBeVisible();
   });
 
-  test('选择流程打卡类型后按该模块生成，归档后时间线显示类型徽标', async ({ page }) => {
+  test('多选覆盖板块后按板块生成，归档后时间线显示全部板块徽标', async ({ page }) => {
     const studentId = await seedStudent(page, '打卡类型测试');
 
     await gotoFollowUp(page);
     await page.getByLabel(/选择已有学生/).selectOption(String(studentId));
 
-    // 常规类里点「作业批改」，下方提示应切换到该模块的说明
-    await page.getByRole('button', { name: '作业批改', exact: true }).click();
-    await expect(page.getByText(/完成质量、错在哪些知识点/)).toBeVisible();
-
-    await page.getByLabel(/课程主题/).fill('作业批改专项');
+    // 默认已勾选 5 个常规类板块，再补勾一个常规类与一个非常规类
+    await page.getByRole('button', { name: '错题专练', exact: true }).click();
+    await expect(page.getByText(/已选 4 个/)).toBeVisible();
+    // 板块数不够 5 个时拦下生成，避免交出一份只有一两段的回访
+    await page.getByLabel(/课程主题/).fill('错题专练专项');
     await page.getByLabel(/课堂表现/).fill('作业完成质量较好，但通分步骤有遗漏');
+    await page.getByRole('button', { name: /生成课后回访内容/ }).click();
+    await expect(page.getByText(/请至少勾选 5 个板块/)).toBeVisible();
+
+    await page.getByRole('button', { name: '错题专练', exact: true }).click();
+    await page.getByRole('button', { name: '成绩分析', exact: true }).click();
+    await expect(page.getByText(/已选 6 个，达标/)).toBeVisible();
+
     await page.getByRole('button', { name: /生成课后回访内容/ }).click();
 
     await expect(page.getByTestId('generated-content')).toContainText('【课后任务】', {
@@ -156,10 +163,12 @@ test.describe('课后回访生成', () => {
     await page.getByRole('button', { name: /保存并归档到学生档案/ }).click();
     await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
 
-    // 打卡类型要一路传到落库并回显在档案时间线上
-    await expect(page.getByText('作业批改', { exact: true })).toBeVisible();
-    // 作业批改属常规类，用低调灰底；非常规类（成绩分析等）才是紫色突出
-    await expect(page.getByText('作业批改', { exact: true })).toHaveClass(/bg-slate-100/);
+    // 覆盖的每个板块都要传到落库并回显在档案时间线上
+    await expect(page.getByText('错题专练', { exact: true })).toBeVisible();
+    await expect(page.getByText('成绩分析', { exact: true })).toBeVisible();
+    // 错题专练属常规类，用低调灰底；成绩分析属非常规类，才是紫色突出
+    await expect(page.getByText('错题专练', { exact: true })).toHaveClass(/bg-slate-100/);
+    await expect(page.getByText('成绩分析', { exact: true })).toHaveClass(/violet|purple/);
   });
 
   test('保存后自动归档到学生档案', async ({ page }) => {
@@ -244,14 +253,14 @@ test.describe('本周流程打卡', () => {
     // 统计类断言依赖干净数据，admin 下已被其他用例造了一堆回访
     const token = await loginAsNewUser(page, 'weekly-probe-' + Date.now());
 
-    // 课堂总结打 2 次（只覆盖 1 种）+ 作业批改 + 错题专练 + 阶测反馈 + 请假处理
+    // 课堂总结打 2 次（只覆盖 1 种）+ 作业批改 + 错题专练 + 阶测反馈 + 规划调整
     // = 6 条打卡，覆盖 5 种（含 2 种非常规类），达标
     await seedFollowUp(page, { studentName: '周测甲', topic: '课题一', module: 'class_summary' }, token);
     await seedFollowUp(page, { studentName: '周测甲', topic: '课题二', module: 'class_summary' }, token);
     await seedFollowUp(page, { studentName: '周测乙', topic: '作业一', module: 'homework_review' }, token);
     await seedFollowUp(page, { studentName: '周测丙', topic: '错题一', module: 'mistake_drill' }, token);
     await seedFollowUp(page, { studentName: '周测丁', topic: '阶测一', module: 'stage_test' }, token);
-    await seedFollowUp(page, { studentName: '周测戊', topic: '请假一', module: 'leave' }, token);
+    await seedFollowUp(page, { studentName: '周测戊', topic: '请假一', module: 'plan_adjust' }, token);
 
     await page.goto('/');
     const card = page.getByTestId('weekly-progress');
@@ -269,7 +278,7 @@ test.describe('本周流程打卡', () => {
     await expect(card).toContainText('笔记痕迹');
     // 非常规类单独成组，但同样计入 5 种配额
     await expect(card).toContainText('阶测反馈');
-    await expect(card).toContainText('请假处理');
+    await expect(card).toContainText('规划调整');
     await expect(card).toContainText('1 条');
   });
 });

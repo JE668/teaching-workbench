@@ -61,8 +61,10 @@ export interface FollowUp {
   sessionCount: number;
   /** 课程类型：1对1 或 小组课 */
   courseType: CourseType;
-  /** 流程打卡类型（学校常规类 / 非常规类），决定生成内容的模块侧重 */
+  /** 流程打卡类型（首个板块），保留兼容字段 */
   module: FollowUpModule;
+  /** 本次回访覆盖的板块清单，生成内容按板块逐段展开 */
+  modules: FollowUpModule[];
   images: string[]; // 图片路径数组（API 层已解析）
   content: string;
   wordCount: number;
@@ -86,6 +88,8 @@ export interface FollowUpCreate {
   courseType?: CourseType;
   /** 流程打卡类型，不传按「课堂总结」处理 */
   module?: FollowUpModule;
+  /** 覆盖的板块清单（多选）；不传时按 module 单板块处理 */
+  modules?: FollowUpModule[];
   /** 小组课：要归档到的多个学生 id */
   studentIds?: number[];
   /** 自定义称呼；不传则由 studentName 推导 */
@@ -114,7 +118,6 @@ export type FollowUpModule =
   | 'student_request'
   | 'academic_assist'
   | 'extra_class'
-  | 'leave'
   | 'makeup_plan';
 
 // ============ 听评课（独立于课后回访） ============

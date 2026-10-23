@@ -33,6 +33,9 @@ import {
   FOLLOWUP_MODULE_LABELS,
   FOLLOWUP_MODULE_GROUPS_BY_VALUE,
   DEFAULT_FOLLOWUP_MODULE,
+  DEFAULT_FOLLOWUP_MODULES,
+  FOLLOWUP_MIN_BLOCKS,
+  sortFollowUpModules,
   CourseType,
   FollowUpModule,
 } from '../types/index';
@@ -73,6 +76,22 @@ export const WORD_MIN = 140;
 export const WORD_MAX = 200;
 export const PHOTO_MIN = 3;
 
+/** 每多覆盖一个板块，字数上下限各放宽的量（与服务端 ai.ts 一致） */
+const WORDS_PER_EXTRA_BLOCK_MIN = 15;
+const WORDS_PER_EXTRA_BLOCK_MAX = 25;
+
+/**
+ * 字数区间按板块数动态放宽：学校口径「约 150 字」对应单板块 + 两段收尾，
+ * 每多一个板块，上下限各放宽固定增量。
+ */
+export function followUpWordRange(blockCount: number): { min: number; max: number } {
+  const n = Math.max(1, Math.min(15, Math.round(blockCount)));
+  return {
+    min: WORD_MIN + (n - 1) * WORDS_PER_EXTRA_BLOCK_MIN,
+    max: WORD_MAX + (n - 1) * WORDS_PER_EXTRA_BLOCK_MAX,
+  };
+}
+
 /** 表单默认值。单独抽出来是为了让状态有明确类型（否则草稿的 `any` 会污染整个 form） */
 const DEFAULT_FORM = {
   studentId: null as number | null,
@@ -80,8 +99,8 @@ const DEFAULT_FORM = {
   /** 亲切称呼；留空则由姓名自动推导 */
   nickname: '',
   courseType: 'one_on_one' as CourseType,
-  /** 流程打卡类型，决定 AI 生成内容侧重哪个模块 */
-  module: DEFAULT_FOLLOWUP_MODULE,
+  /** 覆盖的板块（多选）；AI 生成内容按板块逐段展开 */
+  modules: DEFAULT_FOLLOWUP_MODULES,
   grade: '小学三年级',
   subject: '数学',
   topic: '',
@@ -194,7 +213,9 @@ export default function FollowUp() {
       performance: lastFollowup.performance ?? prev.performance,
       mastery: lastFollowup.mastery ?? prev.mastery,
       sessionCount: lastFollowup.sessionCount ?? prev.sessionCount,
-      module: lastFollowup.module ?? prev.module,
+      modules: lastFollowup.modules?.length
+        ? lastFollowup.modules
+        : prev.modules,
     }));
     toast.info('已带入上次回访内容，请按需修改后再生成');
   };
@@ -298,6 +319,25 @@ export default function FollowUp() {
 
   const isGroup = form.courseType === 'group';
 
+  /** 切换某个板块的勾选 */
+  const toggleModule = (value: FollowUpModule) => {
+    setForm((prev) => {
+      const has = prev.modules.includes(value);
+      return {
+        ...prev,
+        modules: has
+          ? prev.modules.filter((m) => m !== value)
+          : [...prev.modules, value],
+      };
+    });
+  };
+
+  /** 内容里的段顺序按 FOLLOWUP_MODULES 声明顺序，稳定可读 */
+  const orderedModules = useMemo(
+    () => sortFollowUpModules(form.modules),
+    [form.modules]
+  );
+
   const generate = async () => {
     if (!form.topic.trim() || !form.performance.trim()) {
       toast.error('请先填写课程主题和课堂表现');
@@ -312,6 +352,15 @@ export default function FollowUp() {
       toast.error('小组课请至少选择一名学生');
       return;
     }
+    // 学校口径：内容里要覆盖 5 个以上板块
+    if (form.modules.length < FOLLOWUP_MIN_BLOCKS) {
+      toast.error(
+        '请至少勾选 ' + FOLLOWUP_MIN_BLOCKS + ' 个板块再生成（当前 ' +
+          form.modules.length + ' 个）'
+      );
+      return;
+    }
+
     setGenerating(true);
     setRegenerating(false);
     setContent('');
@@ -324,7 +373,12 @@ export default function FollowUp() {
     try {
       await api.streamPost(
         '/followups/generate/stream',
-        { ...form, nickname: form.nickname || deriveNickname(form.studentName), images },
+        {
+          ...form,
+          modules: orderedModules,
+          nickname: form.nickname || deriveNickname(form.studentName),
+          images,
+        },
         {
           onDelta: (text) => setContent((prev) => prev + text),
           onRegenerating: () => {
@@ -365,6 +419,7 @@ export default function FollowUp() {
     try {
       const payload: any = {
         ...form,
+        modules: orderedModules,
         nickname: form.nickname || deriveNickname(form.studentName),
         images,
         content: final,
@@ -484,7 +539,9 @@ export default function FollowUp() {
 
   const finalContent = editing ? draft : content;
   const words = countWords(finalContent);
-  const wordsOk = words >= WORD_MIN && words <= WORD_MAX;
+  /** 字数区间随覆盖的板块数放宽 */
+  const wordRange = followUpWordRange(form.modules.length);
+  const wordsOk = words >= wordRange.min && words <= wordRange.max;
   const canGenerate =
     !!form.topic.trim() &&
     !!form.performance.trim() &&
@@ -555,9 +612,23 @@ export default function FollowUp() {
               icon={<ClipboardList className="h-4 w-4" />}
             />
             <div className="space-y-4 p-5">
-              {/* 流程打卡类型：学校新规的常规类 / 非常规类，选中哪个就按哪个模块生成 */}
+              {/* 覆盖板块：学校新规一次回访要覆盖 5 个以上板块，勾选几个内容里就写几段 */}
               <div>
-                <p className="mb-2 text-sm font-medium text-slate-700">流程打卡类型</p>
+                <div className="mb-2 flex items-baseline justify-between gap-2">
+                  <p className="text-sm font-medium text-slate-700">覆盖板块</p>
+                  <span
+                    className={cn(
+                      'text-xs font-medium',
+                      form.modules.length >= FOLLOWUP_MIN_BLOCKS
+                        ? 'text-emerald-600'
+                        : 'text-amber-600'
+                    )}
+                  >
+                    {form.modules.length < FOLLOWUP_MIN_BLOCKS
+                      ? `已选 ${form.modules.length} 个（至少 ${FOLLOWUP_MIN_BLOCKS} 个）`
+                      : `已选 ${form.modules.length} 个，达标`}
+                  </span>
+                </div>
                 {FOLLOWUP_MODULE_GROUPS.map((g) => (
                   <div key={g.group} className="mb-2.5">
                     <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
@@ -566,12 +637,14 @@ export default function FollowUp() {
                     </div>
                     <div className="grid grid-cols-4 gap-1.5">
                       {g.modules.map((m) => {
-                        const on = form.module === m.value;
+                        const on = form.modules.includes(m.value);
                         return (
                           <button
                             key={m.value}
                             type="button"
-                            onClick={() => setForm({ ...form, module: m.value })}
+                            title={m.hint}
+                            aria-pressed={on}
+                            onClick={() => toggleModule(m.value)}
                             className={cn(
                               'rounded-lg px-2 py-1.5 text-xs font-medium ring-1 transition-all duration-200',
                               on
@@ -587,7 +660,7 @@ export default function FollowUp() {
                   </div>
                 ))}
                 <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                  {FOLLOWUP_MODULES.find((m) => m.value === form.module)?.hint}
+                  每个板块在内容里单独成一段；勾选 {FOLLOWUP_MIN_BLOCKS} 个及以上才能生成。
                 </p>
               </div>
 
@@ -1200,7 +1273,11 @@ export default function FollowUp() {
             <Card className="animate-fade-up">
               <CardHeader
                 title="回访内容"
-                description="三段式：课堂内容 · 学生收获 · 课后任务"
+                description={
+                  form.modules.length > 1
+                    ? form.modules.length + ' 个板块 + 学生收获 · 课后任务'
+                    : '课堂内容 · 学生收获 · 课后任务'
+                }
                 icon={<MessageSquareText className="h-4 w-4" />}
                 action={
                   <div className="flex items-center gap-2">
@@ -1261,8 +1338,7 @@ export default function FollowUp() {
                   <div className="mb-3 flex items-start gap-2 rounded-xl bg-amber-50 px-3.5 py-2.5 ring-1 ring-amber-100">
                     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
                     <p className="text-xs text-amber-700">
-                      当前 {words} 字，学校要求约 150 字（{WORD_MIN}–{WORD_MAX}）。
-                      可点击「重新生成」或手动编辑。
+                      {`当前 ${words} 字，需 ${wordRange.min}–${wordRange.max} 字（${form.modules.length} 个板块）可点击「重新生成」或手动编辑。`}
                     </p>
                   </div>
                 )}

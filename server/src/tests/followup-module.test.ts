@@ -2,8 +2,8 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, createUser, createStudent, createFollowUp } from './helpers.js';
-import { buildPrompt, MODULE_GUIDANCE, FollowUpGenerateParams } from '../services/ai.js';
-import { normalizeFollowUpModule, FOLLOWUP_MODULES } from '../utils/mappers.js';
+import { buildPrompt, MODULE_GUIDANCE, FollowUpGenerateParams, followUpWordRange } from '../services/ai.js';
+import { normalizeFollowUpModule, normalizeFollowUpModules, FOLLOWUP_MODULES } from '../utils/mappers.js';
 import type { FollowUpModule } from '../types/index.js';
 
 let token = '';
@@ -35,7 +35,7 @@ describe('流程打卡类型 · 归一化', () => {
     assert.equal(normalizeFollowUpModule('乱写的值'), 'class_summary');
   });
 
-  test('十六个类型全部被接受', () => {
+  test('十五个类型全部被接受', () => {
     for (const m of FOLLOWUP_MODULES) {
       assert.equal(normalizeFollowUpModule(m), m);
     }
@@ -51,13 +51,13 @@ describe('流程打卡类型 · 提示词', () => {
     assert.ok(!p.includes('本模块专属要求'), '课堂总结没有专属要求，不应输出空标题');
   });
 
-  test('十六种类型都写进提示词，且三段标题保持完整', () => {
+  test('十五种类型都写进提示词，且三段标题保持完整', () => {
     for (const m of FOLLOWUP_MODULES) {
       const p = buildPrompt({ ...base, module: m });
       const g = MODULE_GUIDANCE[m];
       assert.match(p, new RegExp('- 打卡类型：' + g.group + ' · ' + g.label), m + ' 课堂信息');
       assert.match(p, new RegExp('# 本次打卡类型：' + g.group + ' · ' + g.label), m + ' 场景块');
-      // 课堂总结是通用模块，没有专属要求；其余 15 种必须各有一条针对性约束
+      // 课堂总结是通用模块，没有专属要求；其余 14 种必须各有一条针对性约束
       if (m === 'class_summary') {
         assert.equal(g.rules.length, 0);
         assert.ok(!p.includes('本模块专属要求'), '课堂总结不应输出空的专属要求块');
@@ -72,10 +72,33 @@ describe('流程打卡类型 · 提示词', () => {
     }
   });
 
-  test('常规类八种齐全，非常规类八种齐全', () => {
+  test('多选板块：每块单独成段，标题一字不差，字数区间按板块数放宽', () => {
+    const mods: FollowUpModule[] = ['preview', 'class_summary', 'homework_review', 'note_trace', 'mistake_drill'];
+    const p = buildPrompt({ ...base, modules: mods });
+    for (const m of mods) {
+      assert.match(p, new RegExp('【' + MODULE_GUIDANCE[m].label + '】'), m + ' 应有独立段标题');
+    }
+    assert.match(p, /【学生收获】/);
+    assert.match(p, /【课后任务】/);
+    const r = followUpWordRange(mods.length);
+    assert.match(p, new RegExp(r.min + '-' + r.max + ' 字之间'));
+    assert.ok(!p.includes('【课堂内容】'), '多板块模式不应再出现旧的课堂内容段标题');
+    assert.ok(p.includes('# 各板块专属要求'));
+  });
+
+  test('板块清单归一化：兼容 JSON 串、老单值、非法值丢弃', () => {
+    assert.deepEqual(normalizeFollowUpModules('["preview","class_summary"]'), ['preview', 'class_summary']);
+    assert.deepEqual(normalizeFollowUpModules('class_summary'), ['class_summary']);
+    assert.deepEqual(normalizeFollowUpModules(null), ['class_summary']);
+    assert.deepEqual(normalizeFollowUpModules(undefined), ['class_summary']);
+    assert.deepEqual(normalizeFollowUpModules(['preview', '乱写的值', 'preview']), ['preview']);
+    assert.deepEqual(normalizeFollowUpModules(['乱写的值']), ['class_summary']);
+  });
+
+  test('常规类八种齐全，非常规类七种齐全', () => {
     const groups = FOLLOWUP_MODULES.map((m) => MODULE_GUIDANCE[m].group);
     assert.equal(groups.filter((g) => g === '常规类').length, 8);
-    assert.equal(groups.filter((g) => g === '非常规类').length, 8);
+    assert.equal(groups.filter((g) => g === '非常规类').length, 7);
   });
 
   test('不同模块的写法确实不同，不会互相串词', () => {

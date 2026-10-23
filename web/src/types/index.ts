@@ -31,8 +31,10 @@ export interface FollowUp {
   sessionCount: number;
   /** 课程类型：1对1 或 小组课 */
   courseType: CourseType;
-  /** 流程打卡类型（学校常规类 / 非常规类） */
+  /** 流程打卡类型（首个板块），保留兼容字段 */
   module: FollowUpModule;
+  /** 本次回访覆盖的板块清单；生成内容按板块逐段展开 */
+  modules: FollowUpModule[];
   images: string[];
   content: string;
   wordCount: number;
@@ -105,7 +107,6 @@ export type FollowUpModule =
   | 'student_request'
   | 'academic_assist'
   | 'extra_class'
-  | 'leave'
   | 'makeup_plan';
 
 export interface FollowUpModuleOption {
@@ -145,7 +146,6 @@ export const FOLLOWUP_MODULE_GROUPS: FollowUpModuleGroup[] = [
       { value: 'student_request', label: '学生要求', hint: '孩子自己提了什么诉求、老师怎么回应' },
       { value: 'academic_assist', label: '学管协助', hint: '排课、上课方式、家校衔接等配合事项' },
       { value: 'extra_class', label: '加课沟通', hint: '加在哪一块、什么时间、为什么需要加' },
-      { value: 'leave', label: '请假处理', hint: '缺了哪一节、要不要补、怎么补回来' },
       { value: 'makeup_plan', label: '补课安排', hint: '补的是哪一块、补完掌握得怎么样、怎么巩固' },
     ],
   },
@@ -171,6 +171,27 @@ export const FOLLOWUP_MODULE_GROUPS_BY_VALUE: Record<
 }, {} as Record<FollowUpModule, '常规类' | '非常规类'>);
 
 export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
+
+/** 学校新规：一次回访内容里要覆盖 5 个以上板块 */
+export const FOLLOWUP_MIN_BLOCKS = 5;
+
+/** 默认勾选的 5 个板块：一周一遍课最核心的流程（可自由增减） */
+export const DEFAULT_FOLLOWUP_MODULES: FollowUpModule[] = [
+  'class_summary',
+  'preview',
+  'homework_review',
+  'mistake_drill',
+  'homework_assign',
+];
+
+/** 按 FOLLOWUP_MODULES 的声明顺序排，保证内容里的段顺序稳定 */
+export function sortFollowUpModules(mods: FollowUpModule[]): FollowUpModule[] {
+  const order = FOLLOWUP_MODULES.reduce<Record<string, number>>((acc, m, i) => {
+    acc[m.value] = i;
+    return acc;
+  }, {});
+  return [...mods].sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99));
+}
 
 /**
  * 打卡类型的周配额：覆盖 5 种以上即视为本周达标，常规类与非常规类**合并**统计。

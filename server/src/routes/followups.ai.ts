@@ -9,8 +9,9 @@ import {
   countWords,
   MIN_WORDS,
   MAX_WORDS,
+  followUpWordRangeForParams,
 } from '../services/ai.js';
-import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule } from '../utils/mappers.js';
+import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule, normalizeFollowUpModules } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
 import { followUpGenerateSchema } from '../utils/schemas.js';
@@ -23,9 +24,12 @@ import { followUpGenerateSchema } from '../utils/schemas.js';
 const router = Router();
 
 /** 距离字数区间的距离，用于两版都不达标时择优 */
-function wordsDistance(n: number): number {
-  if (n < MIN_WORDS) return MIN_WORDS - n;
-  if (n > MAX_WORDS) return n - MAX_WORDS;
+function wordsDistance(
+  n: number,
+  range: { min: number; max: number } = { min: MIN_WORDS, max: MAX_WORDS }
+): number {
+  if (n < range.min) return range.min - n;
+  if (n > range.max) return n - range.max;
   return 0;
 }
 
@@ -95,6 +99,7 @@ router.post('/generate', validateBody(followUpGenerateSchema), async (req: Authe
       sessionCount: normalizeSessionCount(req.body.sessionCount),
       courseType,
       module: normalizeFollowUpModule(req.body.module),
+      modules: normalizeFollowUpModules(req.body.modules ?? req.body.module),
       nickname: req.body.nickname,
       images: images || [],
     });
@@ -133,6 +138,7 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     sessionCount: normalizeSessionCount(req.body.sessionCount),
     courseType,
     module: normalizeFollowUpModule(req.body.module),
+    modules: normalizeFollowUpModules(req.body.modules ?? req.body.module),
     nickname: req.body.nickname,
     images: images || [],
   };
@@ -149,13 +155,18 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     let wordCount = countWords(content);
     let regenerated = false;
 
-    // 字数不达标 -> 追加纠偏指令重试一次
-    if (!isWordCountOk(wordCount)) {
-      send('regenerating', { wordCount });
+    // 字数不达标 -> 追加纠偏指令重试一次。区间按板块数放宽：
+    // 覆盖 8 个板块的内容天然比 1 个板块长，用死区间会把合格的长文判成不合格。
+    const wordRange = followUpWordRangeForParams(params);
+    if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
+      send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
       try {
         const retryContent = await retryGeneration(params, '约 ' + wordCount + ' 字');
         const retryWords = countWords(retryContent);
-        if (isWordCountOk(retryWords) || wordsDistance(retryWords) < wordsDistance(wordCount)) {
+        if (
+          isWordCountOk(retryWords, wordRange.min, wordRange.max) ||
+          wordsDistance(retryWords, wordRange) < wordsDistance(wordCount, wordRange)
+        ) {
           content = retryContent;
           wordCount = retryWords;
           regenerated = true;

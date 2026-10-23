@@ -49,8 +49,10 @@ interface FollowUpRecord {
   mastery: string;
   sessionCount: number;
   courseType?: 'one_on_one' | 'group';
-  /** 流程打卡类型（常规类 / 非常规类）；历史数据可能没有 */
+  /** 流程打卡类型（首个板块）；历史数据可能没有 */
   module?: FollowUpModule;
+  /** 覆盖的板块清单 */
+  modules?: FollowUpModule[];
   images: string[];
   content: string;
   wordCount: number;
@@ -364,17 +366,19 @@ export default function StudentProfile() {
                             <h3 className="text-sm font-semibold text-slate-800">{f.topic}</h3>
                             <Badge tone={masteryTone(f.mastery)}>{masteryLabel(f.mastery)}</Badge>
                             <Badge tone="brand">{f.subject}</Badge>
-                            {f.module && (
+                            {/* 覆盖的板块各挂一枚徽标：非常规类紫色突出，常规类低调灰底 */}
+                            {(f.modules || (f.module ? [f.module] : [])).map((m) => (
                               <Badge
+                                key={m}
                                 tone={
-                                  FOLLOWUP_MODULE_GROUPS_BY_VALUE[f.module] === '非常规类'
+                                  FOLLOWUP_MODULE_GROUPS_BY_VALUE[m] === '非常规类'
                                     ? 'violet'
                                     : 'neutral'
                                 }
                               >
-                                {FOLLOWUP_MODULE_LABELS[f.module]}
+                                {FOLLOWUP_MODULE_LABELS[m]}
                               </Badge>
-                            )}
+                            ))}
                             {f.courseType === 'group' && <Badge tone="info">小组课</Badge>}
                             {f.sessionCount > 1 && (
                               <Badge tone="violet">{f.sessionCount} 次课</Badge>

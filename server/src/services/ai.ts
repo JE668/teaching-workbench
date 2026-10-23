@@ -53,6 +53,11 @@ export interface FollowUpGenerateParams {
   courseType?: 'one_on_one' | 'group';
   /** 流程打卡类型：决定生成内容侧重哪个模块，默认「课堂总结」 */
   module?: FollowUpModule;
+  /**
+   * 本次回访覆盖的板块（多选）。每个板块在生成内容里单独成一段。
+   * 不传或为空时按 module 单板块处理（老数据 / 兼容旧调用方）。
+   */
+  modules?: FollowUpModule[];
   /** 自定义称呼；不传则由 studentName 推导 */
   nickname?: string;
   images: string[];
@@ -64,8 +69,34 @@ export const MIN_WORDS = 140;
 export const MAX_WORDS = 200;
 
 /** 字数是否落在要求区间内 */
-export function isWordCountOk(n: number): boolean {
-  return n >= MIN_WORDS && n <= MAX_WORDS;
+export function isWordCountOk(n: number, min = MIN_WORDS, max = MAX_WORDS): boolean {
+  return n >= min && n <= max;
+}
+
+/**
+ * 字数区间按板块数动态放宽。
+ * 学校口径是「约 150 字」，那对应 1 个板块 + 两段收尾；每多覆盖一个板块，
+ * 上下限各按固定增量放宽，保证每个板块仍能写出具体细节而不是被压成一句空话。
+ */
+export const WORDS_PER_EXTRA_BLOCK_MIN = 15;
+export const WORDS_PER_EXTRA_BLOCK_MAX = 25;
+export function followUpWordRange(blockCount: number): { min: number; max: number } {
+  const n = Math.max(1, Math.min(15, Math.round(blockCount)));
+  return {
+    min: MIN_WORDS + (n - 1) * WORDS_PER_EXTRA_BLOCK_MIN,
+    max: MAX_WORDS + (n - 1) * WORDS_PER_EXTRA_BLOCK_MAX,
+  };
+}
+
+/** 由请求参数算出字数区间（没给板块清单时按单板块算） */
+export function followUpWordRangeForParams(params: {
+  module?: FollowUpModule;
+  modules?: FollowUpModule[];
+} = {}): { min: number; max: number } {
+  const picked = params.modules && params.modules.length > 0
+    ? params.modules
+    : [normalizeFollowUpModule(params.module)];
+  return followUpWordRange(picked.length);
 }
 
 /** 纯文字计数：去除空白与标点 */
@@ -169,7 +200,7 @@ function imageToBase64DataUrl(imagePath: string): string {
 // ============ 流程打卡类型（模块）=
 //
 // 学校新规把流程打卡分成常规类 8 种和非常规类 8 种，每种的家长关注点完全不同：
-// 「作业批改」关心错在哪，「笔记痕迹」关心课堂吸收，「请假处理」关心怎么补回来。
+// 「作业批改」关心错在哪，「笔记痕迹」关心课堂吸收，「加课沟通」关心加哪块、什么时候加。
 // 每周配额按「覆盖的种类数」算，两组合并统计，5 种以上即达标。
 // 所以三段（课堂内容 / 学生收获 / 课后任务）的写法要跟着模块变，而不是永远写同一套。
 //
@@ -181,6 +212,8 @@ interface ModuleGuidance {
   group: '常规类' | '非常规类';
   /** 这个打卡场景的定位，一句话，帮助模型理解上下文 */
   scene: string;
+  /** 作为「一个板块」时的写法：多选板块时每个板块单独成段，只写这一段 */
+  point: string;
   /** 三段的写法指引（约字数上限沿用学校「约 150 字」的总控口径） */
   sections: { classContent: string; gains: string; homework: string };
   /** 本模块特有的补充要求，追加在通用硬性要求之外 */
@@ -192,6 +225,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   class_summary: {
     label: '课堂总结',
     group: '常规类',
+    point: '说明这堂课讲了什么内容、重点在哪、孩子听得怎么样。',
     scene: '一次普通课程后的常规总结打卡：这节课讲了什么、孩子有什么收获、回家练什么。',
     sections: {
       classContent:
@@ -204,6 +238,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   preview: {
     label: '预习资料',
     group: '常规类',
+    point: '说明发了哪份预习资料、覆盖哪些知识点、要完成到什么程度。',
     scene: '发放或布置了预习资料，告诉家长资料内容、孩子怎么用、要完成到什么程度。',
     sections: {
       classContent:
@@ -220,6 +255,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   homework_review: {
     label: '作业批改',
     group: '常规类',
+    point: '说明批改了哪份作业、错在哪几类题、怎么订正。',
     scene: '批改完作业后向家长反馈完成质量、错在哪里、要怎么订正。',
     sections: {
       classContent:
@@ -236,6 +272,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   mistake_drill: {
     label: '错题专练',
     group: '常规类',
+    point: '说明专练了哪几类错题、现在还剩哪些不会。',
     scene: '针对之前做错的题做专项训练，反馈这些错题现在处于什么状态。',
     sections: {
       classContent:
@@ -252,6 +289,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   note_trace: {
     label: '笔记痕迹',
     group: '常规类',
+    point: '说明笔记记得全不全、有没有自己的标注或提问。',
     scene: '翻看孩子这节课的笔记，反馈记录得怎么样、有没有自己补充和思考，判断他当时跟没跟上。',
     sections: {
       classContent:
@@ -268,6 +306,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   homework_assign: {
     label: '作业布置',
     group: '常规类',
+    point: '说明布置了什么作业、几项、针对哪块薄弱点、大概花多久。',
     scene: '这次回访的重点是布置接下来的作业：做什么、为什么做、大概花多久，家长要一次听懂。',
     sections: {
       classContent:
@@ -284,6 +323,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   accumulation: {
     label: '积累打卡',
     group: '常规类',
+    point: '说明今天积累了什么、多少量、完成得怎么样。',
     scene: '每天一点小量的积累打卡，贵在坚持。反馈今天攒了什么、明天接着做什么。',
     sections: {
       classContent:
@@ -300,6 +340,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   exam_prep: {
     label: '备考资料',
     group: '常规类',
+    point: '说明发了什么备考资料、覆盖什么范围、孩子该怎么用。',
     scene: '备考阶段发放资料，说明资料是什么、覆盖什么范围、孩子怎么用。',
     sections: {
       classContent:
@@ -317,6 +358,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   grade_analysis: {
     label: '成绩分析',
     group: '非常规类',
+    point: '说明这次成绩从哪来、丢分集中在哪、接下来怎么提。',
     scene: '针对某次考试或测评的成绩做分析反馈，回答「分数怎么来的、接下来怎么提」。',
     sections: {
       classContent:
@@ -333,6 +375,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   stage_test: {
     label: '阶测反馈',
     group: '非常规类',
+    point: '说明这次阶段测评的完成情况、哪块扎实、哪块还弱。',
     scene: '一次阶段性测评后的整体反馈，要体现「阶段」的视角，而不是一次课。',
     sections: {
       classContent:
@@ -349,6 +392,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   plan_adjust: {
     label: '规划调整',
     group: '非常规类',
+    point: '说明调整了什么、为什么改、改完之后按什么节奏走。',
     scene: '原来的学习规划要改：调整了什么、为什么改、改完之后孩子和家长分别要怎么做。',
     sections: {
       classContent:
@@ -365,6 +409,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   student_request: {
     label: '学生要求',
     group: '非常规类',
+    point: '说明孩子提了什么诉求、老师怎么回应、接下来怎么落实。',
     scene: '孩子自己提出了诉求（想加练、想了解某个方向、对学习安排有想法），重点写怎么回应他。',
     sections: {
       classContent:
@@ -381,6 +426,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   academic_assist: {
     label: '学管协助',
     group: '非常规类',
+    point: '说明这次配合处理了什么事务（排课、上课方式等）、进展到哪一步。',
     scene: '家校配合上的沟通：排课时间、上课方式、作业提交方式、家长反馈的问题，由学管侧协助推进。',
     sections: {
       classContent:
@@ -397,6 +443,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   extra_class: {
     label: '加课沟通',
     group: '非常规类',
+    point: '说明建议加哪一块的课、什么时间、为什么需要加。',
     scene: '沟通要不要多上一次课：加在哪一块、什么时间、为什么需要加。',
     sections: {
       classContent:
@@ -410,25 +457,10 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
       '【加课沟通】要写清加课原因与建议时间，【不要】写成教学成果总结，也不要评价成绩',
     ],
   },
-  leave: {
-    label: '请假处理',
-    group: '非常规类',
-    scene: '这堂课没上成：缺了哪部分内容、要不要补、怎么补，要给家长一个明确的安排。',
-    sections: {
-      classContent:
-        '说明孩子缺的是哪一节课、原本计划讲什么内容（涉及{topic}），以及这次缺课对进度的影响。约 50-65 字。',
-      gains:
-        '描述孩子请假的原因与当前掌握情况，说明这次缺的内容有没有落下、对后续的影响。约 50-65 字。',
-      homework:
-        '给出明确的补课安排：是自学补（写清任务与资料）还是安排补一次课，并说明下次课怎么衔接。约 35-50 字。',
-    },
-    rules: [
-      '【请假处理】要写清缺的是哪节课和具体的补课安排，【不要】写成正常上课后的教学总结',
-    ],
-  },
   makeup_plan: {
     label: '补课安排',
     group: '非常规类',
+    point: '说明补的是哪一块、补完之后掌握得怎么样、接下来怎么巩固。',
     scene: '需要补课：说明补的是哪一块、补完孩子掌握得怎么样、接下来怎么巩固。',
     sections: {
       classContent:
@@ -443,6 +475,13 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
     ],
   },
 };
+
+/* 多板块模式下【学生收获】与【课后任务】的收尾写法。
+ * 单板块模式仍用各类型自己的 sections.gains / sections.homework。 */
+const CLOSING_GAINS =
+  '结合上面这几个板块，说清{call}这次整体收获最大的一点，以及哪一块还卡着。约 30 字。';
+const CLOSING_HOMEWORK =
+  '把上面几个板块里提到的事合并成一份清晰的清单：做哪几项、大概花多久、完成后怎么反馈给老师。约 35 字。';
 
 /**
  * 构建提示词。correction 不为空时，追加纠偏指令（用于字数不达标时的重试）
@@ -462,8 +501,15 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
   // 亲切称呼：李一一 → 一一
   const nickname = deriveNickname(params.nickname || studentName);
 
-  // 流程打卡类型：决定三段的写法侧重。非法值按「课堂总结」处理。
-  const mod = MODULE_GUIDANCE[normalizeFollowUpModule(params.module)];
+  // 本次回访覆盖的板块：多选时每个板块在内容里单独成段；
+  // 只选 1 个（含老数据里只有单个 module 的记录）时保持原来的三段富写法。
+  const pickedMods = (params.modules && params.modules.length > 0
+    ? params.modules
+    : [normalizeFollowUpModule(params.module)]);
+  const selectedMods = pickedMods.filter((m, i, a) => a.indexOf(m) === i);
+  const multiBlock = selectedMods.length > 1;
+  const wordRange = followUpWordRange(selectedMods.length);
+  const mod = MODULE_GUIDANCE[selectedMods[0]];
 
   // 模板占位符。gainsDefault / gainsTail / homeworkDefault 把原有「1对1 与小组课、
   // 单次与多次」的分支收敛成字符串，模块模板只需要引用它们，不用各自重复分支逻辑。
@@ -524,7 +570,10 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
 
   lines.push(
     multi ? '- 涵盖课次：' + scope : '- 涵盖课次：本次课',
-    '- 打卡类型：' + mod.group + ' · ' + mod.label,
+    multiBlock
+      ? '- 覆盖板块（' + selectedMods.length + ' 个，都要写进内容）：' +
+        selectedMods.map((m) => MODULE_GUIDANCE[m].label).join('、')
+      : '- 打卡类型：' + mod.group + ' · ' + mod.label,
     '- 课程内容：' + topic,
     '- 课堂表现：' + performance,
     '- 掌握程度（整体评价）：' + masteryLabel,
@@ -543,14 +592,17 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     );
   }
 
-  // 打卡类型定位：让模型先明白「这是哪种打卡」，再决定三段怎么写
-  if (mod.scene) {
-    lines.push(
-      '# 本次打卡类型：' + mod.group + ' · ' + mod.label,
-      mod.scene,
-      ''
-    );
-  }
+  // 打卡类型定位：让模型先明白「这次要覆盖哪几块」，再决定内容怎么写
+  lines.push(
+    multiBlock
+      ? '# 本次回访覆盖的板块（' + selectedMods.length + ' 个）'
+      : '# 本次打卡类型：' + mod.group + ' · ' + mod.label,
+    multiBlock
+      ? selectedMods.map((m) => MODULE_GUIDANCE[m].label).join('、') +
+        '（每个板块都要单独成一段，具体写法见下文「输出格式」）'
+      : selectedMods.map((m) => MODULE_GUIDANCE[m].label + '：' + MODULE_GUIDANCE[m].scene).join('\n'),
+    ''
+  );
 
   lines.push(
     '# 使用场景（很重要）',
@@ -580,21 +632,40 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     lines.push('# 风格偏好（老师自定义，优先遵循）', styleHint, '');
   }
 
-  // 三段的写法由打卡类型决定：课堂总结走通用写法，其余 15 种各有侧重
+  // 内容结构由覆盖的板块决定：多选时每个板块单独成段，末尾再接两段收尾
+  if (multiBlock) {
+    lines.push(
+      '# 输出格式（每个板块单独成段，段标题必须一字不差地原样保留，顺序也不要变）',
+      '本次回访覆盖 ' + selectedMods.length + ' 个板块，每个板块写一段。',
+      '一段只写它自己那个板块具体做了什么，不要在同一段里混写两三个板块。',
+      ''
+    );
+    selectedMods.forEach((m) => {
+      lines.push('【' + MODULE_GUIDANCE[m].label + '】', fill(MODULE_GUIDANCE[m].point), '');
+    });
+    lines.push('【学生收获】', fill(CLOSING_GAINS), '', '【课后任务】', fill(CLOSING_HOMEWORK), '');
+  } else {
+    lines.push(
+      '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
+      '【课堂内容】',
+      fill(mod.sections.classContent),
+      '',
+      '【学生收获】',
+      fill(mod.sections.gains),
+      '',
+      '【课后任务】',
+      fill(mod.sections.homework),
+      ''
+    );
+  }
+
   lines.push(
-    '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
-    '【课堂内容】',
-    fill(mod.sections.classContent),
-    '',
-    '【学生收获】',
-    fill(mod.sections.gains),
-    '',
-    '【课后任务】',
-    fill(mod.sections.homework),
-    '',
     '# 硬性要求（学校流程打卡标准）',
-    '1. 全文总字数必须控制在 ' + MIN_WORDS + '-' + MAX_WORDS +
-      ' 字之间（中文字符计，不含标点与空白）—— 学校要求「约 150 字」，写长了家长不看',
+    '1. 全文总字数必须控制在 ' + wordRange.min + '-' + wordRange.max +
+      ' 字之间（中文字符计，不含标点与空白）' +
+      (multiBlock
+        ? '—— 板块多时上下限已按板块数放宽，但每段仍然要写具体，不要为了塞进字数就写空话'
+        : '—— 学校要求「约 150 字」，写长了家长不看'),
     '2. 语气专业、温和、以鼓励为主',
     '3. 通俗易懂：用家长日常能听懂的话写，不用学科术语和教研行话；确需保留的术语' +
       '（如"通分""异分母"）紧跟一句大白话解释',
@@ -604,17 +675,23 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     '6. 无错误：不出现错别字，句子读起来通顺，标点使用正确',
     '7. 全程使用中文',
     '8. 直接输出正文，不要任何前言、总结或额外说明',
-    '9. 三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号',
+    '9. ' + (multiBlock
+      ? '段标题必须原样写成 ' +
+        selectedMods.map((m) => '【' + MODULE_GUIDANCE[m].label + '】').join('') +
+        '、【学生收获】、【课后任务】，' + selectedMods.length + ' 个板块一段都不能少，不得改用 # 号或其他符号'
+      : '三个段标题必须写成【课堂内容】【学生收获】【课后任务】，不得改用 # 号或其他符号'),
     '10. 【严禁】出现"图中""图片中""如图所示""照片里"这类指代图片的字眼',
     isGroup
       ? '11. 【严禁】出现任何学生姓名、昵称，一律使用通用称呼'
       : '11. 行文使用亲切称呼，不要反复使用学生全名'
   );
 
-  // 打卡类型专属要求：追加在通用硬性要求之外，不动通用条目的序号
-  if (mod.rules.length > 0) {
-    lines.push('', '# 本模块专属要求（' + mod.label + '）');
-    mod.rules.forEach((r, i) => lines.push(String(i + 1) + '. ' + r));
+  // 板块专属要求：追加在通用硬性要求之外，不动通用条目的序号
+  const allRules = selectedMods.flatMap((m) => MODULE_GUIDANCE[m].rules);
+  if (allRules.length > 0) {
+    // 单板块沿用原标题（老调用方的提示词形状完全不变）
+    lines.push('', multiBlock ? '# 各板块专属要求' : '# 本模块专属要求（' + mod.label + '）');
+    allRules.forEach((r, i) => lines.push(String(i + 1) + '. ' + r));
   }
 
   if (correction) {
@@ -622,7 +699,8 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
       '',
       '# 重要修正',
       '你上一次的输出是 ' + correction + '，不符合字数要求。',
-      '请重新撰写，确保总字数落在 ' + MIN_WORDS + '-' + MAX_WORDS + ' 字之间，同时保持三段结构与内容质量。'
+      '请重新撰写，确保总字数落在 ' + wordRange.min + '-' + wordRange.max +
+        ' 字之间，同时保持原有段落结构与内容质量。'
     );
   }
 

@@ -8,6 +8,8 @@ import {
   normalizeSessionCount,
   normalizeCourseType,
   normalizeFollowUpModule,
+  normalizeFollowUpModules,
+  serializeFollowUpModules,
 } from '../utils/mappers.js';
 import { countWords } from '../services/ai.js';
 import { commitImages } from '../services/imageLifecycle.js';
@@ -40,8 +42,9 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
       req.body as FollowUpCreate;
     const sessionCount = normalizeSessionCount(req.body.sessionCount);
     const courseType = normalizeCourseType(req.body.courseType);
-    // 流程打卡类型：决定生成内容侧重哪个模块，非法值回落「课堂总结」
-    const module = normalizeFollowUpModule(req.body.module);
+    // 覆盖的板块：多选。列里存 JSON 数组串，老数据是单值串，读取侧都兼容。
+    const modules = normalizeFollowUpModules(req.body.modules ?? req.body.module);
+    const module = serializeFollowUpModules(modules);
 
     // 小组课不需要 studentName；1对1 必须提供
     if (!grade || !subject || !topic || !performance || !mastery || !content) {

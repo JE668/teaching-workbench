@@ -1,7 +1,9 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount, normalizeCourseType, normalizeFollowUpModule, FOLLOWUP_TYPES, WEEKLY_FOLLOWUP_QUOTA } from '../utils/mappers.js';
+import { mapFollowUp, mapFollowUps, parseImages,    normalizeSessionCount, normalizeCourseType, normalizeFollowUpModule,
+    normalizeFollowUpModules, FOLLOWUP_TYPES, WEEKLY_FOLLOWUP_QUOTA
+  } from '../utils/mappers.js';
 
 /**
  * 只读查询路由：列表 / 统计 / 历史建议 / 单条。
@@ -122,8 +124,10 @@ function weeklyModuleProgress(rows: any[]): {
 
   const counts = new Map<string, number>();
   for (const r of inWeek) {
-    const key = normalizeFollowUpModule(r.module);
-    counts.set(key, (counts.get(key) || 0) + 1);
+    // 一条回访可以覆盖多个板块，每个板块都各计 1 次
+    for (const key of normalizeFollowUpModules(r.module)) {
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
   }
 
   const types = FOLLOWUP_TYPES.map((t) => ({

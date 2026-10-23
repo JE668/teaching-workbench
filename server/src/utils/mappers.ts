@@ -44,7 +44,8 @@ export function mapFollowUp(row: any): FollowUp {
     mastery: row.mastery,
     sessionCount: normalizeSessionCount(row.session_count),
     courseType: normalizeCourseType(row.course_type),
-    module: normalizeFollowUpModule(row.module),
+    module: normalizeFollowUpModules(row.module)[0],
+    modules: normalizeFollowUpModules(row.module),
     images: parseImages(row.images),
     content: row.content,
     wordCount: row.word_count,
@@ -83,7 +84,6 @@ export const FOLLOWUP_MODULES: FollowUpModule[] = [
   'student_request',
   'academic_assist',
   'extra_class',
-  'leave',
   'makeup_plan',
 ];
 
@@ -91,6 +91,35 @@ export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
 
 export function normalizeFollowUpModule(value: any): FollowUpModule {
   return FOLLOWUP_MODULES.includes(value) ? value : DEFAULT_FOLLOWUP_MODULE;
+}
+
+/**
+ * 本次回访覆盖的板块清单归一化。
+ * 列里存的是 JSON 数组串（如 '["preview","class_summary"]'），
+ * 存量数据是单个模块串（'class_summary'），也兼容直接传数组。
+ * 非法值**直接丢弃**（不回落默认值，否则一个乱值会凭空多出一个板块），
+ * 全部丢弃后才回落单板块课堂总结。
+ */
+export function normalizeFollowUpModules(value: any): FollowUpModule[] {
+  let raw: any = value;
+  if (typeof value === 'string' && value.trim().startsWith('[')) {
+    try {
+      raw = JSON.parse(value);
+    } catch {
+      raw = undefined;
+    }
+  }
+  const arr: any[] = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+  const valid = arr.filter(
+    (m): m is FollowUpModule => typeof m === 'string' && FOLLOWUP_MODULES.includes(m as FollowUpModule)
+  );
+  const deduped = valid.filter((m, i, a) => a.indexOf(m) === i);
+  return deduped.length > 0 ? deduped : [DEFAULT_FOLLOWUP_MODULE];
+}
+
+/** 板块清单序列化落库 */
+export function serializeFollowUpModules(modules: FollowUpModule[]): string {
+  return JSON.stringify(modules);
 }
 
 /**
@@ -112,7 +141,6 @@ export const FOLLOWUP_TYPES: { value: FollowUpModule; label: string; group: 'reg
   { value: 'student_request', label: '学生要求', group: 'unusual' },
   { value: 'academic_assist', label: '学管协助', group: 'unusual' },
   { value: 'extra_class', label: '加课沟通', group: 'unusual' },
-  { value: 'leave', label: '请假处理', group: 'unusual' },
   { value: 'makeup_plan', label: '补课安排', group: 'unusual' },
 ];
 
