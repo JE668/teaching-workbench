@@ -3,9 +3,10 @@ import ExcelJS from 'exceljs';
 /**
  * 月度总结与课程规划 → Excel（.xlsx），每个学生一份文件。
  *
- * 版式 1:1 对齐「2026 年秋季学生月度总结和规划」模板：
- *   第 1 块  {月}月总结：标题行 + 摘要 + 表头 + 课程明细（11 列）
- *   第 2 块  {月}月规划：标题行 + 摘要 + 表头 + 课程明细（阶测行按日期插进课程中间）
+ * 版式沿用「2026 年秋季学生月度总结和规划」模板，但去掉了「计划上课时间」列
+ * （版面上不再需要课程日期），表头变成 10 列：
+ *   第 1 块  {月}月总结：标题行 + 摘要 + 表头 + 课程明细
+ *   第 2 块  {月}月规划：标题行 + 摘要 + 表头 + 课程明细 + 阶测行
  *   末尾      结尾祝福语
  * 颜色、字号、列宽、行高都按模板实测值取，改样式只需要改下面的常量。
  */
@@ -17,7 +18,6 @@ export const REPORT_COLUMNS = [
   '课程类型',
   '期末考\n分值占比',
   '学习难度',
-  '计划上课时间',
   '出勤',
   '笔记整理',
   '错题整理',
@@ -25,8 +25,11 @@ export const REPORT_COLUMNS = [
   '考试情况',
 ] as const;
 
-/** 列宽（模板实测；第 11 列模板未单独给，取末列量级） */
-export const REPORT_COL_WIDTHS = [4.4, 31.6, 9.3, 9.7, 13.8, 13.0, 7.8, 9.7, 9.9, 9.7];
+/**
+ * 列宽（模板实测）。去掉「计划上课时间」后把那 13 个字符宽补给课程内容，
+ * 总宽保持 ~128，摘要行的换行高度估算（estimateWrapHeight）才不用跟着改。
+ */
+export const REPORT_COL_WIDTHS = [4.4, 44.6, 9.3, 9.7, 13.8, 7.8, 9.7, 9.9, 9.7, 9.7];
 
 /** 模板配色 */
 const GREEN = 'FFC3EAD5'; // 标题行、序号表头
@@ -50,6 +53,7 @@ export interface ReportExcelItem {
   type?: string;
   score?: string;
   difficulty?: string;
+  /** 只有阶测用它（课程不再有日期列），导出时拼回阶测文案末尾 */
   scheduledAt?: string;
   attendance?: string;
   notesDone?: string;
@@ -80,7 +84,7 @@ export interface ReportExcelInput {
   farewell?: string;
   summaryItems?: ReportExcelItem[];
   planItems?: ReportExcelItem[];
-  /** 阶测安排，按 scheduledAt 插进规划课程之间 */
+  /** 阶测安排，排在规划课程之后 */
   examItems?: ReportExcelItem[];
 }
 
@@ -119,7 +123,7 @@ function applyStyle(cell: RowCell, style: PStyle): void {
   };
 }
 
-/** 整行铺样式（11 列全部） */
+/** 整行铺样式（10 列全部） */
 function paintRow(row: ExcelJS.Row, style: PStyle, height?: number): void {
   if (height !== undefined) row.height = height;
   for (let c = 1; c <= COLS; c++) {
@@ -166,7 +170,7 @@ function writeIntro(ws: ExcelJS.Worksheet, row: ExcelJS.Row, text: string): void
   ws.mergeCells(row.number, 1, row.number, COLS);
 }
 
-/** 摘要 / 祝福语行高估算：11 列合并宽度约 128 个字符宽，字号 10 时一行约能放 60 个全角字 */
+/** 摘要 / 祝福语行高估算：10 列合并宽度约 128 个字符宽，字号 10 时一行约能放 60 个全角字 */
 export function estimateWrapHeight(text: string): number {
   let lines = 0;
   for (const para of text.split('\n')) {
@@ -174,24 +178,6 @@ export function estimateWrapHeight(text: string): number {
     lines += Math.max(1, Math.ceil(len / 60));
   }
   return Math.min(420, 21 * lines + 14);
-}
-
-/**
- * 从阶测文案里抠出日期，用来把它排进规划课程的正确位置。
- * 模板里阶测的日期只写在文案中，例如「秋季度第一次阶测安排：时间10月7日」，
- * 没有结构化字段；拿不到就用 yearMonth 补年份。
- */
-export function parseExamDate(text: string | undefined, yearMonth: string | undefined): string | undefined {
-  const s = String(text || '');
-  const ym = String(yearMonth || '');
-  const year = /^\d{4}-\d{2}$/.test(ym) ? ym.slice(0, 4) : String(new Date().getFullYear());
-  const md = s.match(/(\d{1,2})\s*[月/.]\s*(\d{1,2})/);
-  if (!md) return undefined;
-  const m = Number(md[1]);
-  const d = Number(md[2]);
-  return m >= 1 && m <= 12 && d >= 1 && d <= 31
-    ? `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    : undefined;
 }
 
 /** 课程明细行。withDetails=false 时清空出勤~考试情况那 5 列（规划块模板里是空的） */
@@ -206,7 +192,6 @@ function writeCourse(ws: ExcelJS.Worksheet, row: ExcelJS.Row, seq: number, item:
     item.type ?? '',
     item.score ?? '',
     item.difficulty ?? '',
-    formatDay(item.scheduledAt),
     withDetails ? item.attendance ?? '' : '',
     withDetails ? item.notesDone ?? '' : '',
     withDetails ? item.mistakesDone ?? '' : '',
@@ -227,40 +212,40 @@ function writeExamRow(ws: ExcelJS.Worksheet, row: ExcelJS.Row, text: string): vo
   }, REPORT_HEIGHTS.exam);
 }
 
-/** '2026-10-07' → '10月7日'；不认识的格式原样返回 */
+/** '2026-10-07' → '10月7日'；空值返回空串 */
 export function formatDay(iso: string | undefined): string {
-  const m = String(iso || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  return m ? `${Number(m[2])}月${Number(m[3])}日` : String(iso || '');
-}
-
-function dayKey(iso: string | undefined): number {
-  const t = Date.parse(String(iso || '').slice(0, 10));
-  return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  const m = String(iso || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  return m ? `${Number(m[2])}月${Number(m[3])}日` : '';
 }
 
 /**
- * 把规划课程与阶测按上课日期合成一条渲染序列。
- * 阶测插在「日期不早于它的第一节课」之前，对齐模板里
- * 「10 月 7 日阶测排在 10 月 3 日课程之后、10 月 18 日课程之前」的写法。
+ * 阶测行的导出文案。
+ *
+ * 页面上阶测的日期是单独一个日期框，表里又没有日期列，所以导出时把它拼回文案末尾，
+ * 免得老师填的时间在 Excel 里凭空消失；文案里已经写了日期就不重复拼。
+ */
+export function examText(item: ReportExcelItem): string {
+  const base = (item.content || '').trim();
+  const day = formatDay(item.scheduledAt);
+  if (!day || /\d{1,2}\s*月\s*\d{1,2}/.test(base)) return base;
+  return base ? `${base}（${day}）` : day;
+}
+
+/**
+ * 规划块的渲染顺序：课程按老师写入的顺序排，阶测统一排在课程之后。
+ *
+ * 「计划上课时间」列下线之后课程没有日期，阶测没法再按日期插进课程中间，
+ * 就老实接在最后——老师扫一眼就知道「课都排完了，最后还有一次阶测」。
+ * 阶测自己的日期写在文案里（「时间10月7日」），不单独占一列。
  */
 export function mergePlanSequence(
   courses: ReportExcelItem[],
   exams: ReportExcelItem[]
 ): { kind: 'course' | 'exam'; item: ReportExcelItem }[] {
-  const byDate = (a: ReportExcelItem, b: ReportExcelItem) => dayKey(a.scheduledAt) - dayKey(b.scheduledAt);
-  const cs = [...courses].sort(byDate);
-  const es = [...exams].sort(byDate);
-
-  const out: { kind: 'course' | 'exam'; item: ReportExcelItem }[] = [];
-  let ei = 0;
-  for (const course of cs) {
-    while (ei < es.length && dayKey(es[ei].scheduledAt) < dayKey(course.scheduledAt)) {
-      out.push({ kind: 'exam', item: es[ei++] });
-    }
-    out.push({ kind: 'course', item: course });
-  }
-  while (ei < es.length) out.push({ kind: 'exam', item: es[ei++] });
-  return out;
+  return [
+    ...courses.map((item) => ({ kind: 'course' as const, item })),
+    ...exams.map((item) => ({ kind: 'exam' as const, item })),
+  ];
 }
 
 function sectionTitle(input: ReportExcelInput, kind: 'summary' | 'plan'): string {
@@ -310,7 +295,6 @@ export async function buildReportXlsx(input: ReportExcelInput): Promise<Buffer> 
   REPORT_COL_WIDTHS.forEach((w, i) => {
     ws.getColumn(i + 1).width = w;
   });
-  ws.getColumn(COLS).width = REPORT_COL_WIDTHS[REPORT_COL_WIDTHS.length - 1];
 
   const titleStyle: PStyle = {
     font: { name: FONT_NAME, size: HEADING_SIZE, bold: true },
@@ -338,14 +322,11 @@ export async function buildReportXlsx(input: ReportExcelInput): Promise<Buffer> 
     const planHeaderRow = ws.rowCount;
     const examRows: number[] = [];
     let seq = 0;
-    const exams = (input.examItems || []).map((e) => ({
-      ...e,
-      scheduledAt: e.scheduledAt || parseExamDate(e.content, input.yearMonth),
-    }));
+    const exams = input.examItems || [];
     for (const entry of mergePlanSequence(input.planItems || [], exams)) {
       const row = ws.addRow([]);
       if (entry.kind === 'exam') {
-        writeExamRow(ws, row, entry.item.content ?? '');
+        writeExamRow(ws, row, examText(entry.item));
         examRows.push(row.number);
       } else {
         seq++;

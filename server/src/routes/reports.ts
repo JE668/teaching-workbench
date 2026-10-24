@@ -8,6 +8,7 @@ import {
   type ReportExcelItem,
   type ReportExcelInput,
 } from '../utils/reportExcel.js';
+import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
 
 /**
  * 月度总结与课程规划。
@@ -578,21 +579,6 @@ function toExcelItem(row: any): ReportExcelItem {
     homeworkDone: str(row.homework_done),
     exam: str(row.exam),
   };
-}
-
-/** '2026-09' → '9月' */
-function monthLabel(yearMonth: string): string {
-  const m = /^(\d{4})-(\d{1,2})/.exec(String(yearMonth || ''));
-  return m ? `${Number(m[2])}月` : '';
-}
-
-/** '2026-09' → '2026-10'（总结是本月、规划是下个月的场景） */
-function nextYearMonth(yearMonth: string): string {
-  const m = /^(\d{4})-(\d{1,2})$/.exec(String(yearMonth || ''));
-  if (!m) return String(yearMonth || '');
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
 }
 
 function str(v: unknown): string {

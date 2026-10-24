@@ -287,7 +287,7 @@ describe('月度报告编辑器', () => {
     mockStore();
     const user = userEvent.setup();
     render();
-    await screen.findByText('自动推算阶测');
+    await screen.findByText('手动加阶测');
 
     const [, planSwitch] = screen.getAllByRole('switch');
     await user.click(planSwitch);
@@ -296,7 +296,7 @@ describe('月度报告编辑器', () => {
       const patch = last(patchCalls());
       expect(JSON.parse(patch![1].body)).toEqual({ planEnabled: false });
     });
-    expect(screen.queryByText('自动推算阶测')).not.toBeInTheDocument();
+    expect(screen.queryByText('手动加阶测')).not.toBeInTheDocument();
   });
 
   it('加空行会带上当前序号 + 1', async () => {
@@ -360,38 +360,55 @@ describe('月度报告编辑器', () => {
     });
   });
 
-  it('自动推算阶测先预览，确认后才加入', async () => {
+  it('不再提供「自动推算阶测」——课程日期列下线后没有数据源', async () => {
+    mockStore();
+    render();
+    await screen.findByText('李小明');
+
+    expect(screen.queryByText('自动推算阶测')).not.toBeInTheDocument();
+    expect(screen.queryByText('自动推算的阶测安排')).not.toBeInTheDocument();
+    expect(request.mock.calls.find(([p]) => p === `/reports/${REPORT_ID}/exams`)).toBeUndefined();
+  });
+
+  it('总结块新增的课默认出勤/笔记/错题/作业填 ✅，考试情况填 /', async () => {
     mockStore();
     const user = userEvent.setup();
     render();
-    await screen.findByText('自动推算阶测');
+    await screen.findByText('李小明');
 
-    await user.click(screen.getByRole('button', { name: /自动推算阶测/ }));
-
-    const dialog = (await screen.findByText('自动推算的阶测安排')).closest('.fixed') as HTMLElement;
-    // 覆盖写进阶测行文案里，老师一眼能看到这次考哪些课
-    expect(
-      within(dialog).getByText('秋季度第一次阶测安排：覆盖凸透镜成像、眼睛与眼镜（共2课）；时间11月8日：')
-    ).toBeInTheDocument();
-    // 覆盖不到课的那场保持老文案，并提示可能要调排期
-    expect(within(dialog).getByText('秋季度第二次阶测安排：时间11月29日：')).toBeInTheDocument();
-    expect(within(dialog).getByText('这段跨度里没有计划上课时间，可能要调整排期')).toBeInTheDocument();
-    // 有覆盖的那场不该出现这条提示
-    expect(within(dialog).getAllByText('这段跨度里没有计划上课时间，可能要调整排期')).toHaveLength(1);
-    // 只预览时不应插库
-    expect(
-      request.mock.calls.find(([p, init]) => p === `/reports/${REPORT_ID}/exams` && JSON.parse(init.body).insert === true)
-    ).toBeUndefined();
-
-    await user.click(within(dialog).getByRole('button', { name: '全部加入规划' }));
+    // 第一块是月度总结
+    await user.click(screen.getAllByRole('button', { name: /加空行/ })[0]);
 
     await waitFor(() => {
-      const post = request.mock.calls.find(
-        ([p, init]) => p === `/reports/${REPORT_ID}/exams` && JSON.parse(init.body).insert === true
-      );
-      expect(post).toBeDefined();
+      const post = last(itemPostCalls());
+      expect(JSON.parse(post![1].body)).toMatchObject({
+        kind: 'summary',
+        attendance: '✅️',
+        notes_done: '✅️',
+        mistakes_done: '✅️',
+        homework_done: '✅️',
+        exam: '/',
+      });
     });
-    expect(await screen.findByText('阶测安排（2）')).toBeInTheDocument();
+  });
+
+  it('规划块新增的课不带总结块的默认值', async () => {
+    mockStore();
+    const user = userEvent.setup();
+    render();
+    await screen.findByText('李小明');
+
+    // 第二块是课程规划
+    await user.click(screen.getAllByRole('button', { name: /加空行/ })[1]);
+
+    await waitFor(() => {
+      const post = last(itemPostCalls());
+      const body = JSON.parse(post![1].body);
+      expect(body.kind).toBe('plan');
+      for (const k of ['attendance', 'notes_done', 'mistakes_done', 'homework_done', 'exam']) {
+        expect(body[k]).toBeUndefined();
+      }
+    });
   });
 
   it('可以手动加一条阶测', async () => {
@@ -414,7 +431,7 @@ describe('月度报告编辑器', () => {
     mockStore();
     const user = userEvent.setup();
     render();
-    await screen.findByText('自动推算阶测');
+    await screen.findByText('李小明');
 
     // 规划面板的「从课程目录添加」在第二个
     const pickerButtons = screen.getAllByRole('button', { name: /从课程目录添加/ });
@@ -605,13 +622,15 @@ describe('月度报告 · 导出', () => {
     // 区块标题必须跟 year_month 走（明细可被手动拖排序，不能靠它推月份）。
     expect(input.blocks[0].heading).toBe('10月总结');
     expect(input.blocks[0].entries.map((e: any) => e.text)).toEqual(['凸透镜成像', '平面镜成像']);
+    // 版面上已经没有课程日期列，条目不该再带 date
+    for (const e of input.blocks[0].entries as any[]) expect(e).not.toHaveProperty('date');
     expect(downloadReportCardMock.mock.calls[0][1]).toBe('李小明 10月月度报告.png');
   });
 
-  it('规划块保留时，课程和阶测按日期排在一起', async () => {
+  it('规划块保留时，课程在前、阶测排在后面', async () => {
     mockStore({
       items: [
-        makeItem({ kind: 'summary', content: '凸透镜成像', scheduled_at: '2026-09-06' }),
+        makeItem({ kind: 'summary', content: '凸透镜成像' }),
         makeItem({ kind: 'plan', content: '密度的测量', scheduled_at: '2026-10-18' }),
         makeItem({ kind: 'plan', content: '质量和体积', scheduled_at: '2026-10-01' }),
         makeItem({ kind: 'exam', content: '秋季度第一次阶测安排：时间10月7日', scheduled_at: '2026-10-07' }),
@@ -628,7 +647,12 @@ describe('月度报告 · 导出', () => {
     const plan = input.blocks[1];
     // 规划明细都是 10 月的课，但报告是 year_month=2026-10 → 规划块讲下月，标题应为 11月
     expect(plan.heading).toBe('11月规划');
-    expect(plan.entries.map((e: any) => e.text)).toEqual(['质量和体积', '秋季度第一次阶测安排：时间10月7日', '密度的测量']);
-    expect(plan.entries.map((e: any) => !!e.highlight)).toEqual([false, true, false]);
+    // 日期列下线后不再按日期插排，课程按写入顺序、阶测统一在最后
+    expect(plan.entries.map((e: any) => e.text)).toEqual([
+      '密度的测量',
+      '质量和体积',
+      '秋季度第一次阶测安排：时间10月7日',
+    ]);
+    expect(plan.entries.map((e: any) => !!e.highlight)).toEqual([false, false, true]);
   });
 });

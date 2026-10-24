@@ -57,6 +57,25 @@ const OBSERVATION_REPLY = [
   '四、总体评价等级：良好',
 ].join('\n');
 
+// —— 月度总结的「AI 编写」：7 行 emoji 段落，跟输入框占位符一一对应。
+const REPORT_SUMMARY_REPLY = [
+  '📚课堂情况：本月计划5次课，实际完成5次，出勤正常，节奏稳定。',
+  '📖学习内容：围绕异分母分数加减法展开，从通分原理讲到独立计算，逐步进入练习巩固。',
+  '🎯本月收获：这次通分原理理解得比较到位，是收获最大的一点，通分的道理能自己讲出来。',
+  '🏆进步表现：课堂专注度明显提升，主动回应的次数比以前多，讲题时愿意先说思路再动笔。',
+  '📝本月不足：独立计算速度还卡着，通分那一步容易漏乘分子，做完习惯不回读检查。',
+  '💡建议：每天10道口算保持手感，错的两类题各整理一遍，做题时提醒自己回头核对分子。',
+  '🎯下月目标：把通分计算做稳，练习册相关题目独立完成，错漏率明显降下来。',
+].join('\n');
+
+// —— 月度规划的「AI 编写」：第一行总括，后面按课程内容分点。
+const REPORT_PLAN_REPLY = [
+  '本月计划完成5次课，重点在把通分计算做稳，并进入新的分数运算内容。',
+  '1. 异分母分数加减法练习巩固，让孩子独立完成练习册对应题目，通分步骤不漏分子。',
+  '2. 分数混合运算入门，先掌握运算顺序，再结合通分做分步练习。',
+  '3. 每天10道口算保持手感，错题当天订正并回读核对。',
+].join('\n');
+
 /** 按提示词挑对应的一份回复；提示词里取不到内容时退回回访那份 */
 function replyFor(payload) {
   const prompt = (payload.messages || [])
@@ -64,6 +83,8 @@ function replyFor(payload) {
     .join('\n');
 
   if (prompt.includes('评课维度') || prompt.includes('被听课老师')) return OBSERVATION_REPLY;
+  if (prompt.includes('请写这一块报告的本月总结')) return REPORT_SUMMARY_REPLY;
+  if (prompt.includes('请写这一块报告的课程规划说明')) return REPORT_PLAN_REPLY;
   return FOLLOWUP_REPLY;
 }
 
@@ -161,6 +182,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(
     '[mock-sensenova] listening on 127.0.0.1:' + PORT +
     ' | 回访回复 ' + countWords(FOLLOWUP_REPLY) + ' 字 / 评课回复 ' + countWords(OBSERVATION_REPLY) + ' 字' +
+    ' / 月度总结 ' + countWords(REPORT_SUMMARY_REPLY) + ' 字 / 月度规划 ' + countWords(REPORT_PLAN_REPLY) + ' 字' +
     ' | 分片间隔 ' + CHUNK_DELAY_MS + 'ms'
   );
 });

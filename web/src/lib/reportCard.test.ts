@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { drawReportCard, downloadReportCard, mmdd, entryText } from './reportCard';
+import { drawReportCard, downloadReportCard, entryText } from './reportCard';
 
 /** jsdom 的 canvas.getContext('2d') 返回 null，这里用只记录调用的替身上下文 */
 function stubContext(canvas: HTMLCanvasElement) {
@@ -36,57 +36,38 @@ const FULL = {
       heading: '9月总结',
       intro: '9月整体学习情况：出勤正常，笔记整理完成。',
       entries: [
-        { date: '2026-09-06', text: '平面镜成像规律和透镜认识' },
-        { date: '2026-09-13', text: '凸透镜成像的规律探究' },
+        { text: '平面镜成像规律和透镜认识' },
+        { text: '凸透镜成像的规律探究' },
       ],
     },
     {
       heading: '10月规划',
       intro: '国庆期间安排3节课，巩固透镜的规律应用。',
       entries: [
-        { date: '2026-10-01', text: '凸透镜成像的规律应用' },
-        { date: '2026-10-07', text: '秋季度第一次阶测安排', highlight: true },
-        { date: '2026-10-18', text: '质量和体积的测量和关系' },
+        { text: '凸透镜成像的规律应用' },
+        { text: '秋季度第一次阶测安排', highlight: true },
+        { text: '质量和体积的测量和关系' },
       ],
     },
   ],
   farewell: '感谢一可一整个学期的坚持和努力，继续保持！',
 };
 
-describe('mmdd', () => {
-  it('标准日期转成 MM.DD', () => {
-    expect(mmdd('2026-09-06')).toBe('09.06');
-    expect(mmdd('2026-12-25')).toBe('12.25');
-  });
-
-  it('单位数补零', () => {
-    expect(mmdd('2026-1-5')).toBe('01.05');
-  });
-
-  it('拿不到日期就返回空串', () => {
-    expect(mmdd('')).toBe('');
-    expect(mmdd(undefined)).toBe('');
-    expect(mmdd('2026年9月6日')).toBe('');
-  });
-});
-
 describe('entryText', () => {
-  it('课程行用「· 日期  内容」', () => {
-    expect(entryText({ date: '2026-09-06', text: '凸透镜成像' })).toBe('· 09.06  凸透镜成像');
+  it('课程行用「· 内容」', () => {
+    expect(entryText({ text: '凸透镜成像' })).toBe('· 凸透镜成像');
   });
 
   it('阶测行用 ★ 前缀', () => {
-    expect(entryText({ date: '2026-10-07', text: '第一次阶测', highlight: true })).toBe(
-      '★ 10.07  第一次阶测'
-    );
+    expect(entryText({ text: '第一次阶测', highlight: true })).toBe('★ 第一次阶测');
   });
 
-  it('没有日期时只留前缀和内容', () => {
-    expect(entryText({ text: '阶段测试' })).toBe('· 阶段测试');
+  it('两侧空白会被裁掉', () => {
+    expect(entryText({ text: '  阶段测试  ' })).toBe('· 阶段测试');
   });
 
   it('空内容返回空串，不画空行', () => {
-    expect(entryText({ date: '2026-10-01', text: '' })).toBe('');
+    expect(entryText({ text: '' })).toBe('');
     expect(entryText({ text: '   ' })).toBe('');
   });
 });
@@ -117,8 +98,8 @@ describe('drawReportCard', () => {
     expect(text).toContain('【9月总结】');
     expect(text).toContain('【10月规划】');
     expect(text).toContain('出勤正常');
-    expect(text).toContain('· 09.06  平面镜成像规律和透镜认识');
-    expect(text).toContain('★ 10.07  秋季度第一次阶测安排');
+    expect(text).toContain('· 平面镜成像规律和透镜认识');
+    expect(text).toContain('★ 秋季度第一次阶测安排');
     expect(text).toContain('感谢一可一整个学期的坚持和努力，继续保持！');
     expect(text).toContain('星火个性化教学');
   });
@@ -127,10 +108,10 @@ describe('drawReportCard', () => {
     const canvas = document.createElement('canvas');
     const { calls } = stubContext(canvas);
     drawReportCard(canvas, {
-      blocks: [{ heading: '10月规划', entries: [{ date: '', text: '' }, { date: '2026-10-01', text: '真内容' }] }],
+      blocks: [{ heading: '10月规划', entries: [{ text: '' }, { text: '真内容' }] }],
     });
     const text = drawnText(calls);
-    expect(text).toContain('· 10.01  真内容');
+    expect(text).toContain('· 真内容');
     expect(text).not.toContain('· \n');
     expect(calls.map((a) => a[0]).filter((t) => t === '· ' || t === '· \n')).toHaveLength(0);
   });
@@ -150,7 +131,7 @@ describe('drawReportCard', () => {
 
     const farewellY = yOf('感谢一可一整个学期的坚持和努力，继续保持！');
     const footerY = yOf('星火个性化教学 · 月度总结与课程规划');
-    const lastEntryY = yOf('· 10.18  质量和体积的测量和关系');
+    const lastEntryY = yOf('· 质量和体积的测量和关系');
 
     expect(lastEntryY).toBeLessThan(farewellY);
     expect(farewellY).toBeLessThan(footerY);

@@ -14,6 +14,7 @@ import {
 import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule, normalizeFollowUpModules } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
+import { openSse } from '../utils/sse.js';
 import { followUpGenerateSchema } from '../utils/schemas.js';
 
 /**
@@ -31,44 +32,6 @@ function wordsDistance(
   if (n < range.min) return range.min - n;
   if (n > range.max) return n - range.max;
   return 0;
-}
-
-/**
- * 打开一条 SSE 响应并返回写接口。
- *
- * 客户端提前断开检测的坑：不能用 req.on('close') —— 请求体读完后它就触发，
- * 会误判为断连。res 的 'close' 在响应结束或连接断开时触发，
- * 配合 writableEnded 才能区分"正常结束"和"中途掉线"。
- */
-function openSse(res: Response) {
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  // 关键：禁用 nginx 缓冲，否则流式会被攒成一坨再下发
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders?.();
-
-  let clientGone = false;
-  res.on('close', () => {
-    if (!res.writableEnded) clientGone = true;
-  });
-
-  const send = (event: string, data: any) => {
-    if (clientGone || res.writableEnded) return;
-    try {
-      res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
-    } catch {
-      clientGone = true;
-    }
-  };
-
-  return {
-    send,
-    isGone: () => clientGone,
-    end: () => {
-      if (!res.writableEnded) res.end();
-    },
-  };
 }
 
 /** 校验 AI 生成入参（年级/学科/主题/表现/掌握程度必填，小组课可免姓名） */

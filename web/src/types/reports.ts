@@ -48,6 +48,8 @@ export interface CatalogCourseOption {
   type: string;
   score: string;
   difficulty: string;
+  /** 目录里的学期 / 轮次（暑假 / 秋季 / 寒假…） */
+  term: string;
   textbook: string;
   track: string;
 }

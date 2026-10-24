@@ -22,10 +22,8 @@ import {
   paintFooter,
 } from './canvasCard';
 
-/** 一个「日期 + 文案」的条目（课程行或阶测行） */
+/** 一条课程 / 阶测文案（版面上不再有课程日期，条目只留文字） */
 export interface ReportCardEntry {
-  /** 'YYYY-MM-DD'，渲染成 MM.DD */
-  date?: string;
   text: string;
   /** 阶测等需要强调的条目，用红色 + ★ 前缀 */
   highlight?: boolean;
@@ -75,18 +73,11 @@ interface Para {
   lines: string[];
 }
 
-/** '2026-09-06' → '09.06'；取不到月份日就返回空串 */
-export function mmdd(iso: string | undefined): string {
-  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(iso || ''));
-  return m ? `${m[2].padStart(2, '0')}.${m[3].padStart(2, '0')}` : '';
-}
-
-/** 条目渲染成一行文本：`· 09.06  课程内容` / `★ 10.07  阶测安排` */
+/** 条目渲染成一行文本：`· 课程内容` / `★ 阶测安排` */
 export function entryText(entry: ReportCardEntry): string {
-  const date = mmdd(entry.date);
   const body = (entry.text || '').trim();
   if (!body) return '';
-  return `${entry.highlight ? '★ ' : '· '}${date ? date + '  ' : ''}${body}`;
+  return (entry.highlight ? '★ ' : '· ') + body;
 }
 
 function blockParas(block: ReportCardBlock): Para[] {

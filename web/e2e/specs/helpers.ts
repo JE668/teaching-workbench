@@ -173,6 +173,45 @@ export async function seedReportItem(
   return (await res.json()).item as { id: number };
 }
 
+/**
+ * 删掉工作台里全部的月度报告（连带明细）。
+ *
+ * e2e 库是共享的，跑几轮会攒出好几份「同一个学生同一个月」的报告。目录页的
+ * 「已上 N」是按 course_id 跨学生聚合的，残留报告会把这个数越攒越大，
+ * 断言写死的「已上1」就翻了。
+ */
+export async function clearAllReports(page: Page) {
+  const token = await getToken(page);
+  const res = await page.request.get('/api/reports', {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  const { reports } = (await res.json()) as { reports: { id: number }[] };
+  for (const report of reports || []) {
+    await page.request
+      .delete('/api/reports/' + report.id, { headers: { Authorization: 'Bearer ' + token } })
+      .catch(() => {});
+  }
+}
+
+/**
+ * 取出同名学生里最新的那一条。
+ *
+ * seedStudent 每次都会新建学生，跑几轮之后库里会有好几个同名「报告同学」。
+ * 报告列表和目录的「看谁进度」下拉都是按 name 匹配的，点错一个就会读到别人那份
+ * 报告的课程，目录页的「已上 / 计划」标签就对不上。
+ */
+export async function latestStudentId(page: Page, name: string): Promise<number> {
+  const token = await getToken(page);
+  const res = await page.request.get('/api/students', {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  const { students } = (await res.json()) as { students: { id: number; name: string }[] };
+  const hits = (students || []).filter((s) => s.name === name);
+  expect(hits.length, '找不到学生: ' + name).toBeGreaterThan(0);
+  // 不按数组顺序猜，直接取 id 最大的那条——就是刚 seed 出来的那个
+  return hits.reduce((max, s) => Math.max(max, s.id), 0);
+}
+
 /** 上传一份课程目录 Excel（走真实导入接口），返回导入结果 */
 export async function importCatalog(page: Page, file: { name: string; buffer: Buffer }, band = '小初') {
   const token = await getToken(page);

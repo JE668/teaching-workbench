@@ -19,6 +19,7 @@ import teacherRoutes from './routes/teachers.js';
 import observationRoutes from './routes/observations.js';
 import catalogRoutes from './routes/catalog.js';
 import reportRoutes from './routes/reports.js';
+import reportAiRoutes from './routes/reports.ai.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -144,6 +145,7 @@ export function createApp() {
   app.use('/api/observations', authMiddleware, observationRoutes);
   app.use('/api/catalog', authMiddleware, catalogRoutes);
   app.use('/api/reports', authMiddleware, reportRoutes);
+  app.use('/api/reports', authMiddleware, reportAiRoutes);
   app.use('/api/draft', authMiddleware, draftRoutes);
   app.use('/api', authMiddleware, uploadRoutes);
 

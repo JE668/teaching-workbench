@@ -1,0 +1,165 @@
+import { runChatStream, runChatOnce, type ChatMessage, type ChatOptions } from './ai.js';
+import { deriveNickname } from '../utils/nickname.js';
+import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
+
+/**
+ * 月度总结与课程规划的 AI 编写。
+ *
+ * 材料只有两样：这块报告自己填的课程明细，和这个学生最近的课后回访正文。
+ * 课程明细负责「上了什么 / 打算上什么」，回访正文负责「孩子哪里好、哪里要补」——
+ * 这两样合起来才够写一份家长看得下去的总结，只给课程内容清单写出来是干瘪的。
+ */
+
+export type ReportAiField = 'summary' | 'plan';
+
+export interface ReportAiCourse {
+  content: string;
+  type?: string;
+  difficulty?: string;
+}
+
+export interface ReportAiFollowUp {
+  topic: string;
+  content: string;
+}
+
+export interface ReportAiParams {
+  field: ReportAiField;
+  studentName: string;
+  /** 前端设置里的称呼；缺省从姓名推导 */
+  nickname?: string;
+  grade: string;
+  subject: string;
+  term: string;
+  yearMonth: string;
+  summaryCourses: ReportAiCourse[];
+  planCourses: ReportAiCourse[];
+  followUps: ReportAiFollowUp[];
+}
+
+/** 1对1 + 家长视角的公共红线，回访 / 月度总结口径一致 */
+const COMMON_RULES = [
+  '2. 只有一对一教学。严禁出现「小组讨论」「小组合作」「同学们」「多名学生」「全班」等集体表述。',
+  '3. 不要出现学生的全名，也不要出现别的学生。',
+  '4. 只写上面给到的内容。不要编造具体分数、考试排名、名次变化、课堂纪律细节，' +
+    '没有回访记录时收获和不足就只依据课程内容清单来写。',
+  '5. 收获和进步要落到具体课程内容上，不足要写成家长可以配合的动作，不要情绪化、不要指责孩子。',
+  '6. 直接输出正文，不要前言、不要「以下是」这类话，不要重复段落小标题以外的任何说明。',
+];
+
+function who(p: ReportAiParams): string {
+  const name = (p.studentName || '').trim();
+  return (p.nickname && p.nickname.trim()) || deriveNickname(name) || name || '孩子';
+}
+
+/** '9月' → '（9月）'；空串原样返回 */
+function suffix(month: string): string {
+  return month ? '\uFF08' + month + '\uFF09' : '';
+}
+
+function courseLines(courses: ReportAiCourse[]): string {
+  const rows = courses.map((c) => ({ ...c, content: (c.content || '').trim() })).filter((c) => c.content);
+  if (!rows.length) return '（没有课程内容）';
+  return rows
+    .map((c, i) => {
+      const attrs = [c.type, c.difficulty].map((v) => (v || '').trim()).filter(Boolean);
+      return (i + 1) + '. ' + c.content + (attrs.length ? '（' + attrs.join('，') + '）' : '');
+    })
+    .join('\n');
+}
+
+function followUpLines(items: ReportAiFollowUp[]): string {
+  if (!items.length) return '（没有回访记录）';
+  return items
+    .map((f) => '【' + ((f.topic || '').trim() || '课后回访') + '】\n' + (f.content || '').trim())
+    .join('\n\n');
+}
+
+/** 写给家长的月度总结：7 个 emoji 段落，跟输入框占位符一一对应 */
+export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
+  const w = who(p);
+  const month = monthLabel(p.yearMonth);
+  const user = [
+    '请写这一块报告的本月总结。',
+    '',
+    '# 学生情况',
+    w + '，' + [p.grade, p.subject, p.term].filter(Boolean).join('·'),
+    '总结月份：' + (p.yearMonth || '') + suffix(month),
+    '',
+    '# ' + (month || '本月') + '上过的内容',
+    courseLines(p.summaryCourses),
+    '',
+    '# 这个学生最近的课后回访（收获 / 进步 / 不足的素材）',
+    followUpLines(p.followUps),
+    '',
+    '# 硬性要求',
+    '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格。emoji 只用在段落开头的小标题上。',
+    ...COMMON_RULES,
+    '',
+    '# 输出格式（务必按此排版，正好 7 行，每行一个段落，总长 240-340 字）',
+    '📚课堂情况：' + (p.summaryCourses.filter((c) => (c.content || '').trim()).length || '若干') + ' 次课，……',
+    '📖学习内容：',
+    '🎯本月收获：',
+    '🏆进步表现：',
+    '📝本月不足：',
+    '💡建议：',
+    '🎯下月目标：',
+  ].join('\n');
+
+  return [
+    { role: 'system', content: '你是一位1对1教育培训机构的教学顾问，写给家长的月度总结要温暖、具体、有分寸。' },
+    { role: 'user', content: user },
+  ];
+}
+
+/** 写给家长的课程规划：一句总括 + 分点，不带 emoji（跟输入框占位符口径一致） */
+export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
+  const w = who(p);
+  const month = monthLabel(nextYearMonth(p.yearMonth));
+  const planCount = p.planCourses.filter((c) => (c.content || '').trim()).length;
+  const user = [
+    '请写这一块报告的课程规划说明。',
+    '',
+    '# 学生情况',
+    w + '，' + [p.grade, p.subject, p.term].filter(Boolean).join('·'),
+    '规划月份：' + nextYearMonth(p.yearMonth) + suffix(month),
+    '',
+    '# ' + (month || '下月') + '计划上的内容',
+    courseLines(p.planCourses),
+    '',
+    '# 本月总结里已写的收获和不足（规划要顺着它往下接）',
+    p.summaryCourses.length
+      ? '本月上过：\n' + courseLines(p.summaryCourses)
+      : '（本月还没有内容）',
+    '',
+    '# 硬性要求',
+    '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格，也**不要用 emoji**。',
+    ...COMMON_RULES,
+    '',
+    '# 输出格式（务必按此排版，总长 90-160 字）',
+    '第一行：一句话总括，形如「本月计划完成 ' + (planCount || '若干') + ' 次课，重点在……」。',
+    '后面按课程内容分点，每点一行，用「1.」「2.」这样的序号起头，说清这一步要让孩子会什么。',
+    '只有 1 点时不要加序号，直接写内容。',
+  ].join('\n');
+
+  return [
+    { role: 'system', content: '你是一位1对1教育培训机构的教学顾问，写给家长的课程规划要简短、可执行。' },
+    { role: 'user', content: user },
+  ];
+}
+
+export function buildReportAiMessages(p: ReportAiParams): ChatMessage[] {
+  return p.field === 'plan' ? buildReportPlanMessages(p) : buildReportSummaryMessages(p);
+}
+
+const AI_OPTIONS: ChatOptions = { temperature: 0.7, maxTokens: 1400 };
+
+/** 流式产出总结 / 规划的正文增量 */
+export async function* streamReportAi(p: ReportAiParams): AsyncGenerator<string> {
+  yield* runChatStream(buildReportAiMessages(p), AI_OPTIONS);
+}
+
+/** 非流式，供单测与兜底 */
+export async function generateReportAiOnce(p: ReportAiParams): Promise<string> {
+  return runChatOnce(buildReportAiMessages(p), AI_OPTIONS);
+}
