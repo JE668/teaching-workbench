@@ -151,7 +151,7 @@ test.describe('月度总结与课程规划', () => {
 
     await picker.locator('tr', { hasText: '空气的成分' }).click();
     await picker.getByText('氧气', { exact: true }).click();
-    await expect(picker.getByText('已选 2 门')).toBeVisible();
+    await expect(picker.getByText('已选 2 门课')).toBeVisible();
     await picker.getByRole('button', { name: /添加 2 门/ }).click();
     await expect(page.getByText(/已添加 2 门课/)).toBeVisible();
     // 表格里课程内容是 <input> 的值，不是文本节点，所以断言要看 value
@@ -188,7 +188,7 @@ test.describe('月度总结与课程规划', () => {
     await expect(addedRow.getByText('已添加')).toBeVisible();
     await expect(addedRow.getByLabel('选择')).toBeDisabled();
     await addedRow.click({ force: true });
-    await expect(picker3.getByText('已选 0 门')).toBeVisible();
+    await expect(picker3.getByText('已选 0 门课')).toBeVisible();
     await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: '手动加阶测' }).click();
