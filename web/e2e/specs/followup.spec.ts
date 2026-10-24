@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { loginViaApi, loginAsNewUser, seedStudent, seedFollowUp } from './helpers';
+import { loginViaApi, seedStudent, seedFollowUp } from './helpers';
 
 /** 填好生成回访所需的最小表单 */
 async function fillForm(page: Page, opts: { name: string; topic: string; performance?: string }) {
@@ -245,57 +245,5 @@ test.describe('分页', () => {
 
     await page.getByRole('button', { name: '上一页' }).click();
     await expect(page.getByText(/第\s*1\s*\/\s*\d+\s*页/)).toBeVisible();
-  });
-});
-
-test.describe('本周流程打卡', () => {
-  test('工作台主指标是板块服务总次数，回访条数与覆盖种类走副指标', async ({ page }) => {
-    // 统计类断言依赖干净数据，admin 下已被其他用例造了一堆回访
-    const token = await loginAsNewUser(page, 'weekly-probe-' + Date.now());
-
-    // 4 次回访：1 次覆盖 3 个板块、1 次覆盖 2 个板块、2 次各 1 个板块
-    // = 板块服务累计 7 次、覆盖 6 个板块、回访 4 次——三个数字各不相同，
-    // 锁住「主指标确实是服务总次数，而不是回访条数或覆盖种类」。
-    await seedFollowUp(
-      page,
-      {
-        studentName: '周测甲',
-        topic: '课题一',
-        modules: ['homework_review', 'class_content', 'class_performance'],
-      },
-      token
-    );
-    await seedFollowUp(
-      page,
-      {
-        studentName: '周测乙',
-        topic: '课题二',
-        modules: ['homework_review', 'mistake_drill'],
-      },
-      token
-    );
-    await seedFollowUp(page, { studentName: '周测丙', topic: '阶测一', module: 'stage_test' }, token);
-    await seedFollowUp(page, { studentName: '周测丁', topic: '笔记一', module: 'note_trace' }, token);
-
-    await page.goto('/');
-    const card = page.getByTestId('weekly-progress');
-    await expect(card).toBeVisible();
-
-    // 主指标是板块服务总次数 7
-    await expect(card.locator('span.font-mono')).toHaveText('7');
-    await expect(card).toContainText('板块服务总次数');
-    await expect(card).not.toContainText('/ 5 种');
-    await expect(card).toContainText('本周 4 次回访 · 覆盖 6 个板块');
-    // 拆「课堂总结」后的两个环节都在列表里
-    await expect(card).toContainText('课堂内容总结');
-    await expect(card).toContainText('课堂表现总结');
-    await expect(card).toContainText('作业批改');
-    await expect(card).toContainText('错题专练');
-    // 未打卡的类型仍在列表里，不会消失
-    await expect(card).toContainText('预习资料');
-    await expect(card).toContainText('笔记/解题痕迹');
-    // 非常规类单独成组，自己带条数
-    await expect(card).toContainText('阶测反馈');
-    await expect(card).toContainText('1 条');
   });
 });

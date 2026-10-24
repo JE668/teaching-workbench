@@ -1,9 +1,8 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { mapFollowUp, mapFollowUps, parseImages,    normalizeSessionCount, normalizeCourseType, normalizeFollowUpModule,
-    normalizeFollowUpModules, FOLLOWUP_TYPES, WEEKLY_FOLLOWUP_QUOTA
-  } from '../utils/mappers.js';
+import { mapFollowUp, mapFollowUps, parseImages, normalizeSessionCount, normalizeCourseType,
+  normalizeFollowUpModule } from '../utils/mappers.js';
 
 /**
  * 只读查询路由：列表 / 统计 / 历史建议 / 单条。
@@ -67,7 +66,7 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
 
     // 仅取需要的列，避免把全文都拉出来
     const rows = db
-      .prepare('SELECT images, subject, module, created_at FROM followups WHERE user_id = ?')
+      .prepare('SELECT images, subject FROM followups WHERE user_id = ?')
       .all(userId) as any[];
 
     const totalImages = rows.reduce((sum, r) => sum + parseImages(r.images).length, 0);
@@ -80,77 +79,12 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
       totalFollowUps: rows.length,
       totalImages,
       subjects: [...new Set(rows.map((r) => r.subject))].length,
-      weekly: weeklyModuleProgress(rows),
       recent: mapFollowUps(recent),
     });
   } catch (error: any) {
     res.status(500).json({ error: '获取统计失败', message: error.message });
   }
 });
-
-/**
- * 本周流程打卡进度。
- *
- * 学校要求「每周完成不少于 5 项流程打卡」。一次回访的内容本身就要覆盖 5 个以上
- * 流程环节，所以「覆盖的种类数」不再适合当达标口径——只要回访过一次就必然 ≥5。
- * 看板改用**板块服务总次数**（totalModuleHits）：本周所有回访里板块被覆盖的总次数，
- * 反映这周的教学服务量；回访条数 records 与覆盖种类数 covered 仍然返回做副指标。
- * 每条回访覆盖几个板块就计几次。
- *
- * 周界：北京周一 00:00 到周日 24:00。数据库时间列存的是北京时间串
- * （datetime('now', '+8 hours')），直接拼「周一 00:00:00」做字符串比较即可。
- */
-function weeklyModuleProgress(rows: any[]): {
-  weekStart: string;
-  weekEnd: string;
-  quota: number;
-  covered: number;
-  records: number;
-  totalModuleHits: number;
-  types: { value: string; label: string; group: string; count: number }[];
-} {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const today = new Date();
-  // JS getDay(): 周日=0，故「到周一的天数」为 (d + 6) % 7
-  const sinceMonday = (today.getDay() + 6) % 7;
-  const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - sinceMonday);
-  const nextMonday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
-  const sunday = new Date(nextMonday.getFullYear(), nextMonday.getMonth(), nextMonday.getDate() - 1);
-  const iso = (d: Date) => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-  const startStr = iso(monday) + ' 00:00:00';
-  const endStr = iso(nextMonday) + ' 00:00:00';
-
-  const inWeek = rows.filter((r) => {
-    const ts = String(r.created_at || '');
-    return ts.length >= 10 && ts >= startStr && ts < endStr;
-  });
-
-  const counts = new Map<string, number>();
-  for (const r of inWeek) {
-    // 一条回访可以覆盖多个板块，每个板块都各计 1 次
-    for (const key of normalizeFollowUpModules(r.module)) {
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-  }
-
-  const types = FOLLOWUP_TYPES.map((t) => ({
-    value: t.value,
-    label: t.label,
-    group: t.group,
-    count: counts.get(t.value) || 0,
-  }));
-
-  return {
-    weekStart: iso(monday),
-    weekEnd: iso(sunday),
-    quota: WEEKLY_FOLLOWUP_QUOTA,
-    covered: types.filter((t) => t.count > 0).length,
-    records: inWeek.length,
-    // 本周板块被覆盖的总次数，看板主指标
-    totalModuleHits: types.reduce((sum, t) => sum + t.count, 0),
-    types,
-  };
-}
 
 /** 历史联想：从该用户自己的历史记录里提取常用主题与高频表现短语 */
 router.get('/suggestions', (req: AuthenticatedRequest, res: Response) => {

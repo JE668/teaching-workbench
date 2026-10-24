@@ -168,7 +168,9 @@ export const FOLLOWUP_TYPES: { value: FollowUpModule; label: string; group: 'reg
  * 常规类与非常规类**合并**统计——任何 5 种各打过一次就算达标。
  * 不写成常量推导：常规类现在是 8 种，从分组数量推导会得到 8，与学校的 5 项不符。
  */
-export const WEEKLY_FOLLOWUP_QUOTA = 5;
+// 「每周 5 项流程打卡」是学校的口径要求，已在表单侧用软提示实现
+// （少于 5 个板块照常生成，只 toast 提醒）。看板不再按周统计覆盖率，
+// 所以这里不再导出周配额常量。
 
 export function normalizeSessionCount(value: any): number {
   const n = parseInt(value, 10);

@@ -15,7 +15,7 @@ import {
   ImageIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
-import { Student, FollowUp, FollowUpWeeklyStats } from '../types/index';
+import { Student, FollowUp } from '../types/index';
 import { Card, CardHeader } from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
@@ -42,8 +42,7 @@ export default function Dashboard() {
   const [summary, setSummary] = useState<{
     totalFollowUps: number;
     totalImages: number;
-    weekly: FollowUpWeeklyStats | null;
-  }>({ totalFollowUps: 0, totalImages: 0, weekly: null });
+  }>({ totalFollowUps: 0, totalImages: 0 });
   /** 超过 N 天没回访的学生（含从未回访过的） */
   const [pending, setPending] = useState<any[]>([]);
   const { preferences, update: updatePreferences } = usePreferences();
@@ -69,7 +68,6 @@ export default function Dashboard() {
       setSummary({
         totalFollowUps: st.totalFollowUps || 0,
         totalImages: st.totalImages || 0,
-        weekly: st.weekly && Array.isArray(st.weekly.types) ? st.weekly : null,
       });
       setRecent(st.recent || []);
     } catch (err) {
@@ -80,12 +78,6 @@ export default function Dashboard() {
   };
 
   if (loading) return <PageSkeleton />;
-
-  const weekly = summary.weekly;
-  /** 看板主指标：本周板块被覆盖的总次数（服务量） */
-  const moduleHits = weekly ? weekly.totalModuleHits : 0;
-  const regularTypes = (weekly?.types || []).filter((t) => t.group === 'regular');
-  const unusualTypes = (weekly?.types || []).filter((t) => t.group === 'unusual');
 
   const stats = [
     {
@@ -158,79 +150,6 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* 本周流程打卡：主指标是板块服务总次数，回访条数与覆盖种类是副指标 */}
-      <Card className="animate-fade-up" style={{ animationDelay: '200ms' }} data-testid="weekly-progress">
-        <CardHeader
-          title="本周流程打卡"
-          description={
-            weekly
-              ? '板块服务总次数 · ' + weekly.weekStart.slice(5) + ' ~ ' + weekly.weekEnd.slice(5)
-              : '本周各流程环节被覆盖的总次数'
-          }
-          icon={<CheckCircle2 className="h-4 w-4" />}
-          action={
-            <div className="flex items-baseline gap-1">
-              <span
-                className={
-                  'font-mono text-2xl font-bold tabular-nums ' +
-                  (moduleHits > 0 ? 'text-emerald-600' : 'text-slate-700')
-                }
-              >
-                {moduleHits}
-              </span>
-              <span className="text-xs text-slate-400">次</span>
-            </div>
-          }
-        />
-        <div className="px-5 pb-5">
-          <span className="text-[11px] font-medium text-slate-400">常规类</span>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {regularTypes.map((t) => (
-              <span
-                key={t.value}
-                className={
-                  'flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium ring-1 ' +
-                  (t.count > 0
-                    ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                    : 'bg-slate-50 text-slate-400 ring-slate-200')
-                }
-              >
-                {t.count > 0 ? (
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                ) : (
-                  <span className="inline-block h-3.5 w-3.5 rounded-full border border-slate-300" />
-                )}
-                {t.label}
-                {t.count > 0 && (
-                  <span className="rounded bg-emerald-100 px-1 text-[11px] tabular-nums">{t.count}</span>
-                )}
-              </span>
-            ))}
-          </div>
-
-          <span className="mt-3 block text-[11px] font-medium text-slate-400">非常规类</span>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
-            {unusualTypes.map((t) => (
-              <span
-                key={t.value}
-                className={
-                  'flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium ring-1 ' +
-                  (t.count > 0
-                    ? 'bg-violet-50 text-violet-700 ring-violet-200'
-                    : 'bg-slate-50 text-slate-300 ring-slate-100')
-                }
-              >
-                {t.label}
-                <span className="tabular-nums">{t.count > 0 ? t.count + ' 条' : '0'}</span>
-              </span>
-            ))}
-            <span className="ml-auto text-[11px] text-slate-400 tabular-nums">
-              本周 {weekly ? weekly.records : 0} 次回访 · 覆盖{' '}
-              {weekly ? weekly.covered : 0} 个板块
-            </span>
-          </div>
-        </div>
-      </Card>
 
       <div className="grid gap-6 lg:grid-cols-5">
         {/* 待回访 —— 老师最怕漏掉某个孩子 */}

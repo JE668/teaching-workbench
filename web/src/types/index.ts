@@ -199,41 +199,6 @@ export function sortFollowUpModules(mods: FollowUpModule[]): FollowUpModule[] {
   return [...mods].sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99));
 }
 
-/**
- * 学校要求的「每周 5 项流程打卡」口径。
- *
- * 注意：这个值现在**只作口径说明**，看板不再用它判断达标——
- * 一次回访的内容本身就要覆盖 5 个以上板块，只要回访过一次就必然 ≥5，
- * 「覆盖种类数」已经失去了区分度。看板主指标改成 totalModuleHits（板块服务总次数）。
- * 字面量 5，别写成从分组数量推导（常规类现在是 9 种，推导会得到 9）。
- */
-export const WEEKLY_FOLLOWUP_QUOTA = 5;
-
-/** 本周流程打卡进度里的单个类型 */
-export interface FollowUpWeeklyType {
-  value: FollowUpModule;
-  label: string;
-  group: 'regular' | 'unusual';
-  count: number;
-}
-
-/**
- * 本周流程打卡进度。
- *
- * 主指标是 **totalModuleHits**（板块服务总次数）：本周所有回访里板块被覆盖的总次数，
- * 每条回访覆盖几个板块就计几次，反映这周的教学服务量。
- * covered（覆盖的板块种类数）与 records（回访条数）是副指标。
- */
-export interface FollowUpWeeklyStats {
-  weekStart: string; // 北京周一 YYYY-MM-DD
-  weekEnd: string; // 北京周日 YYYY-MM-DD
-  quota: number; // 学校口径的 5 项，仅作参考
-  covered: number; // 本周覆盖的板块种类数
-  records: number; // 本周回访条数
-  totalModuleHits: number; // 本周板块被覆盖的总次数（看板主指标）
-  types: FollowUpWeeklyType[];
-}
-
 // 单次回访可涵盖的课次数
 export const SESSION_COUNTS = [1, 2, 3];
 

@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event';
 import Dashboard from './Dashboard';
 import { renderWithProviders, makeStudent, makeFollowUp } from '../test/test-utils';
 import { api } from '../api/client';
-import { FOLLOWUP_MODULE_GROUPS, WEEKLY_FOLLOWUP_QUOTA } from '../types/index';
 
 vi.mock('../api/client', () => ({
   api: {
@@ -171,116 +170,5 @@ describe('工作台 · 加载失败', () => {
     expect(screen.getByText('学生总数')).toBeInTheDocument();
 
     spy.mockRestore();
-  });
-});
-
-describe('工作台 · 本周流程打卡', () => {
-  /** 用前端自己的类型清单（FOLLOWUP_MODULE_GROUPS）拼出全部 16 个类型 */
-  const ALL_TYPES = FOLLOWUP_MODULE_GROUPS.flatMap((g) =>
-    g.modules.map((m) => ({
-      value: m.value,
-      label: m.label,
-      group: (g.group === '常规类' ? 'regular' : 'unusual') as 'regular' | 'unusual',
-    }))
-  );
-
-  /** counts 只写有打卡的类型；records 单独给，模拟「一次回访覆盖多个板块」 */
-  function makeWeekly(counts: Record<string, number> = {}, records = 1) {
-    const types = ALL_TYPES.map((t) => ({ ...t, count: counts[t.value] || 0 }));
-    return {
-      weekStart: '2026-10-19',
-      weekEnd: '2026-10-25',
-      quota: WEEKLY_FOLLOWUP_QUOTA,
-      covered: types.filter((t) => t.count > 0).length,
-      records,
-      totalModuleHits: types.reduce((sum, t) => sum + t.count, 0),
-      types,
-    };
-  }
-
-  function mockWeekly(weekly?: object) {
-    mockApi([], {
-      totalFollowUps: 0,
-      totalImages: 0,
-      subjects: 0,
-      recent: [],
-      weekly: weekly || makeWeekly(),
-    });
-  }
-
-  function card(): HTMLElement {
-    return screen.getByText('本周流程打卡').closest('.rounded-2xl') as HTMLElement;
-  }
-
-  it('主指标是板块服务总次数，回访条数与覆盖种类走副指标', async () => {
-    // 2 次回访、覆盖 3 个板块、板块服务累计 6 次
-    mockWeekly(makeWeekly({ class_content: 3, homework_review: 1, preview: 2 }, 2));
-    renderWithProviders(<Dashboard />);
-    await screen.findByText('本周流程打卡');
-    const el = card();
-    expect(el.querySelector('span.font-mono')?.textContent).toBe('6');
-    expect(el.textContent).toContain('板块服务总次数');
-    expect(el.textContent).toContain('本周 2 次回访 · 覆盖 3 个板块');
-    expect(el.textContent).toContain('10-19 ~ 10-25');
-    expect(el.textContent).not.toContain('/ ' + WEEKLY_FOLLOWUP_QUOTA + ' 种');
-  });
-
-  it('回访只有 1 次也能覆盖多个板块，服务量按板块数如实显示', async () => {
-    mockWeekly(
-      makeWeekly(
-        {
-          homework_review: 1,
-          class_content: 1,
-          class_performance: 1,
-          note_trace: 1,
-          homework_assign: 1,
-        },
-        1
-      )
-    );
-    renderWithProviders(<Dashboard />);
-    await screen.findByText('本周流程打卡');
-    const el = card();
-    expect(el.querySelector('span.font-mono')?.textContent).toBe('5');
-    expect(el.textContent).toContain('本周 1 次回访 · 覆盖 5 个板块');
-    expect(el.querySelector('span.text-emerald-600')).toBeTruthy();
-  });
-
-  it('常规类与非常规类各自成组，覆盖过的打勾标绿', async () => {
-    mockWeekly(makeWeekly({ class_content: 1, stage_test: 2, makeup_plan: 1 }, 3));
-    renderWithProviders(<Dashboard />);
-    await screen.findByText('本周流程打卡');
-    const el = card();
-    expect(el.textContent).toContain('常规类');
-    expect(el.textContent).toContain('非常规类');
-    expect(el.textContent).toContain('课堂内容总结');
-    expect(el.textContent).toContain('课堂表现总结');
-    expect(el.textContent).toContain('笔记/解题痕迹');
-    expect(el.textContent).toContain('阶测反馈');
-    expect(el.textContent).toContain('补课安排');
-    expect(el.textContent).toContain('2 条');
-    expect(el.textContent).toContain('本周 3 次回访 · 覆盖 3 个板块');
-    expect(el.querySelector('span.font-mono')?.textContent).toBe('4');
-  });
-
-  it('本周还没有任何板块被覆盖时，主指标是 0 且不用绿色强调', async () => {
-    mockWeekly(makeWeekly({}, 0));
-    renderWithProviders(<Dashboard />);
-    await screen.findByText('本周流程打卡');
-    const el = card();
-    expect(el.querySelector('span.font-mono')?.textContent).toBe('0');
-    expect(el.textContent).toContain('本周 0 次回访 · 覆盖 0 个板块');
-    expect(el.querySelector('span.text-emerald-600')).toBeFalsy();
-  });
-
-  it('后端没有返回 weekly 时显示 0，页面不崩', async () => {
-    mockWeekly(undefined);
-    renderWithProviders(<Dashboard />);
-
-    expect(await screen.findByText('本周流程打卡')).toBeInTheDocument();
-    const el = card();
-    expect(el.querySelector('span.font-mono')?.textContent).toBe('0');
-    expect(el.textContent).toContain('本周 1 次回访 · 覆盖 0 个板块');
-    expect(el.textContent).toContain('课堂内容总结');
   });
 });
