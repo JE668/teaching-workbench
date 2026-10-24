@@ -19,9 +19,6 @@ const sizes = {
   xl: 'max-w-4xl',
 };
 
-/** 弹窗关闭时重置拖拽位置，下次打开回到居中 */
-const dragState: { pos: { x: number; y: number } | null } = { pos: null };
-
 export default function Modal({
   open,
   onClose,
@@ -32,14 +29,16 @@ export default function Modal({
   size = 'md',
 }: ModalProps) {
   const boxRef = useRef<HTMLDivElement>(null);
-  const [offset, setOffset] = useState<{ x: number; y: number } | null>(dragState.pos);
+  /** 拖拽位置：组件级 ref，每个弹窗实例独立，互不干扰 */
+  const dragState = useRef<{ pos: { x: number; y: number } | null }>({ pos: null });
+  const [offset, setOffset] = useState<{ x: number; y: number } | null>(dragState.current.pos);
   const [dragging, setDragging] = useState(false);
   const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
 
   // 弹窗关闭时重置
   useEffect(() => {
     if (!open) {
-      dragState.pos = null;
+      dragState.current.pos = null;
       setOffset(null);
       setDragging(false);
     }
@@ -67,7 +66,7 @@ export default function Modal({
       if (!s) return;
       const nx = s.ox + (e.clientX - s.mx);
       const ny = s.oy + (e.clientY - s.my);
-      dragState.pos = { x: nx, y: ny };
+      dragState.current.pos = { x: nx, y: ny };
       setOffset({ x: nx, y: ny });
     };
     const onUp = () => {
