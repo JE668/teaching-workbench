@@ -737,8 +737,67 @@ function ItemTable({
   onRemove: (id: number) => Promise<void>;
   onMove: (id: number, dir: 'up' | 'down') => Promise<void>;
 }) {
+  const [batchUpdating, setBatchUpdating] = useState<string | null>(null);
+
+  const batchUpdate = async (field: 'attendance' | 'notes_done' | 'mistakes_done' | 'homework_done', value: string) => {
+    if (items.length === 0) return;
+    setBatchUpdating(field);
+    try {
+      await Promise.all(
+        items.map((item) => onPatch(item.id, field, value))
+      );
+    } finally {
+      setBatchUpdating(null);
+    }
+  };
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-100">
+    <div>
+      {/* 批量操作栏（仅当有出勤/作业等列时显示） */}
+      {items.length > 1 && cols.some((c) => ['attendance', 'notes_done', 'mistakes_done', 'homework_done'].includes(c.key)) && (
+        <div className="flex items-center justify-between mb-2 px-1">
+          <span className="text-xs text-slate-400">
+            {items.length} 条课程
+          </span>
+          <div className="flex items-center gap-1.5">
+            {cols.some((c) => c.key === 'attendance') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('attendance', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为已出勤"
+              >
+                {batchUpdating === 'attendance' ? '处理中…' : '✓ 全部出勤'}
+              </button>
+            )}
+            {cols.some((c) => c.key === 'notes_done') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('notes_done', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为笔记已完成"
+              >
+                {batchUpdating === 'notes_done' ? '处理中…' : '📝 全部笔记'}
+              </button>
+            )}
+            {cols.some((c) => c.key === 'homework_done') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('homework_done', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为作业已完成"
+              >
+                {batchUpdating === 'homework_done' ? '处理中…' : '📚 全部作业'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
       {cols.map((c) =>
         c.list ? (
           <datalist key={'dl-' + c.key} id={`list-${c.list.join()}`}>
@@ -790,6 +849,7 @@ function ItemTable({
           ))}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
