@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  TrendingUp,
   Users,
 } from 'lucide-react';
 import { api } from '../api/client';
@@ -24,6 +25,7 @@ import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { cn } from '../lib/utils';
+import { computeTrajectory, summarizeTrajectory, type MonthTrajectory } from '../lib/reportProgress';
 import { MonthlyReport, ReportItem, TERM_OPTIONS, formatYearMonth } from '../types/reports';
 
 const selectCls = 'w-full';
@@ -72,6 +74,8 @@ export default function Reports() {
   const [cloning, setCloning] = useState(false);
   const [toDelete, setToDelete] = useState<MonthlyReport | null>(null);
   const [deleting, setDeleting] = useState(false);
+  /** 跨月进度弹窗当前看的学生 */
+  const [progressStudent, setProgressStudent] = useState<{ id: number; name: string } | null>(null);
 
   const loadReports = useCallback(async (stu = '') => {
     const query = stu ? '?studentId=' + encodeURIComponent(stu) : '';
@@ -335,6 +339,15 @@ export default function Reports() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            title="跨月进度：上月规划 vs 本月总结的达成轨迹"
+                            aria-label="跨月进度"
+                            onClick={() => setProgressStudent({ id: r.student_id, name: r.student_name })}
+                          >
+                            <TrendingUp className="h-4 w-4 text-brand-400" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             title="克隆到下月"
                             aria-label="克隆"
                             onClick={() => setShowClone(r)}
@@ -404,6 +417,8 @@ export default function Reports() {
         }
         confirmText="克隆"
       />
+
+      <StudentProgressModal student={progressStudent} onClose={() => setProgressStudent(null)} />
     </div>
   );
 }
@@ -480,6 +495,157 @@ function NewReportModal({
           </Button>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+/**
+ * 跨月进度弹窗：把一个学生所有月份的报告，按「上一份报告的规划 → 这份报告的总结」
+ * 换算成达成轨迹——完成率、漏上的课、额外补上的课，一眼看出规划跟没跟住。
+ */
+function StudentProgressModal({
+  student,
+  onClose,
+}: {
+  student: { id: number; name: string } | null;
+  onClose: () => void;
+}) {
+  const toast = useToast();
+  const [rows, setRows] = useState<MonthTrajectory[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!student) {
+      setRows(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setRows(null);
+    void (async () => {
+      try {
+        const res = await api.request<{ reports: MonthlyReport[] }>('/reports?studentId=' + student.id);
+        const reports = [...(res.reports || [])].sort((a, b) => a.year_month.localeCompare(b.year_month));
+        const months = await Promise.all(
+          reports.map(async (r) => {
+            const d = await api.request<{ items: ReportItem[] }>(`/reports/${r.id}`);
+            return { yearMonth: r.year_month, term: r.term, items: d.items || [] };
+          })
+        );
+        if (!cancelled) setRows(computeTrajectory(months));
+      } catch (e) {
+        if (!cancelled) toast.error(e instanceof Error ? e.message : '加载跨月进度失败');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [student?.id]);
+
+  const summary = rows ? summarizeTrajectory(rows) : null;
+
+  const rateTone = (rate: number | null) =>
+    rate == null ? 'text-slate-300' : rate >= 80 ? 'text-emerald-600' : rate >= 50 ? 'text-amber-600' : 'text-red-500';
+
+  return (
+    <Modal open={!!student} onClose={onClose} title={'跨月进度 · ' + (student?.name || '')} size="lg">
+      {loading ? (
+        <div className="p-10 text-center text-sm text-slate-400">加载中…</div>
+      ) : !rows || rows.length === 0 ? (
+        <div className="p-10 text-center">
+          <p className="text-sm text-slate-400">这个学生还没有月度报告，先新建一份再来看进度。</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* 汇总 */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl bg-slate-50 px-4 py-3 text-sm">
+            <span className="text-slate-500">
+              报告 <b className="text-slate-800">{summary!.months}</b> 份
+            </span>
+            <span className="text-slate-500">
+              规划合计 <b className="text-slate-800">{summary!.planned}</b> 门
+            </span>
+            <span className="text-slate-500">
+              已完成 <b className="text-slate-800">{summary!.completed}</b> 门
+            </span>
+            <span className="text-slate-500">
+              完成率 <b className={rateTone(summary!.rate)}>{summary!.rate == null ? '—' : summary!.rate + '%'}</b>
+            </span>
+            <span className="text-slate-500">
+              累计漏上 <b className="text-red-500">{summary!.missed}</b> 门
+            </span>
+            <span className="text-slate-500">
+              累计补上 <b className="text-slate-800">{summary!.extraTaught}</b> 门
+            </span>
+          </div>
+
+          {/* 月度轨迹表 */}
+          <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-100">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-xs text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">月份</th>
+                  <th className="px-3 py-2 text-left font-medium">规划 → 完成</th>
+                  <th className="px-3 py-2 text-left font-medium">完成率</th>
+                  <th className="px-3 py-2 text-left font-medium">漏上的课</th>
+                  <th className="px-3 py-2 text-left font-medium">额外补上</th>
+                  <th className="px-3 py-2 text-left font-medium">阶测</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.yearMonth} className="border-b border-slate-50 last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2.5">
+                      <div className="font-medium text-slate-800">{formatYearMonth(r.yearMonth)}</div>
+                      {r.term && <div className="text-xs text-slate-400">{r.term}</div>}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">
+                      {r.planned > 0 ? (
+                        <span>
+                          {r.completed}/{r.planned}
+                          {r.baseMonth && (
+                            <span className="ml-1 text-xs text-slate-400">（基准 {formatYearMonth(r.baseMonth)}）</span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-300" title="上一份报告里没有规划课程">
+                          无规划基准
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5">
+                      <span className={'font-semibold ' + rateTone(r.rate)}>{r.rate == null ? '—' : r.rate + '%'}</span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {r.missed.length === 0 ? (
+                        <span className="text-slate-300">—</span>
+                      ) : (
+                        <span className="text-red-500">{r.missed.join('、')}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {r.extraTaught.length === 0 ? (
+                        <span className="text-slate-300">—</span>
+                      ) : (
+                        <span className="text-slate-500">{r.extraTaught.join('、')}</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">
+                      {r.examCount > 0 ? r.examCount : <span className="text-slate-300">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-400">
+            对比基准是上一份报告的课程规划：先按来源课程匹配，手输的课按内容文本匹配。跳月时以实际存在的上一份报告为准。
+          </p>
+        </div>
+      )}
     </Modal>
   );
 }

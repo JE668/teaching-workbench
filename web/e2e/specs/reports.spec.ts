@@ -388,4 +388,52 @@ test.describe('月度总结与课程规划', () => {
     ]);
     expect(download.suggestedFilename()).toBe('只出总结同学 6月月度报告.png');
   });
+
+  test('跨月进度：上月规划 vs 本月总结的达成轨迹', async ({ page }) => {
+    await loginViaApi(page);
+    const studentId = await seedStudent(page, '进度同学', { grade: '初三', subject: '化学' });
+    await clearAllReports(page);
+    await importCatalog(page, { name: CATALOG.filename, buffer: (await buildCatalogFixture(CATALOG)).buffer });
+
+    // 从目录里查出「金属活动性」的 id：规划/总结都带 id，走 course_id 匹配路径
+    const token = await getToken(page);
+    const coursesRes = await page.request.get(
+      '/api/catalog/courses?q=' + encodeURIComponent('金属活动性'),
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const courseList = await coursesRes.json();
+    const courseId = (courseList.courses.find((c: any) => c.content === '金属活动性') || {}).id as number;
+
+    // 8 月报告：规划两门——一门从目录取（带 id），一门手输（走文本匹配路径）
+    const aug = await seedReport(page, { studentId, yearMonth: '2026-08', term: '春季', grade: '初三', subject: '化学' });
+    await seedReportItem(page, aug, { kind: 'plan', seq: 1, content: '金属活动性', type: '专题', courseId });
+    await seedReportItem(page, aug, { kind: 'plan', seq: 2, content: '手输规划课' });
+    // 9 月报告：只上了「金属活动性」，另补了一门计划外的「氧气」，还排了一次阶测
+    const sep = await seedReport(page, { studentId, yearMonth: '2026-09', term: '秋季', grade: '初三', subject: '化学' });
+    await seedReportItem(page, sep, { kind: 'summary', seq: 1, content: '金属活动性', type: '专题', courseId, attendance: '✅️' });
+    await seedReportItem(page, sep, { kind: 'summary', seq: 2, content: '氧气' });
+    await seedReportItem(page, sep, { kind: 'exam', seq: 1, content: '阶测安排：第一次月考' });
+
+    await page.goto('/reports');
+    const row = page.locator('tr').filter({ hasText: '进度同学' }).first();
+    await expect(row.getByRole('button', { name: '跨月进度' })).toBeVisible();
+    await row.getByRole('button', { name: '跨月进度' }).click();
+
+    const dlg = page.locator('div.fixed.inset-0.z-50').last();
+    await expect(dlg.getByText('跨月进度 · 进度同学')).toBeVisible();
+    // 9 月：2 门规划完成 1 门 → 完成率 50%
+    await expect(dlg.getByText('50%').first()).toBeVisible();
+    // 漏上的课（8 月规划了、9 月没上）和额外补上的课都要点名
+    await expect(dlg.getByText('手输规划课')).toBeVisible();
+    await expect(dlg.getByText('氧气', { exact: true })).toBeVisible();
+    // 汇总区
+    await expect(dlg.getByText(/累计漏上/)).toBeVisible();
+    await expect(dlg.getByText(/累计补上/)).toBeVisible();
+    // 8 月那行是首月，没有上一份报告做基准
+    await expect(dlg.getByText('无规划基准')).toBeVisible();
+    // 阶测表头存在（表格只显示次数，不显示阶测内容）
+    await expect(dlg.getByRole('columnheader', { name: '阶测' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dlg).toHaveCount(0);
+  });
 });
