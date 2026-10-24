@@ -13,6 +13,7 @@ import studentRoutes from './routes/students.js';
 import followupRoutes from './routes/followups.js';
 import uploadRoutes from './routes/uploads.js';
 import draftRoutes from './routes/draft.js';
+import observationDraftRoutes from './routes/observations.draft.js';
 import groupRoutes from './routes/groups.js';
 import settingsRoutes from './routes/settings.js';
 import teacherRoutes from './routes/teachers.js';
@@ -143,6 +144,7 @@ export function createApp() {
   app.use('/api/groups', authMiddleware, groupRoutes);
   app.use('/api/teachers', authMiddleware, teacherRoutes);
   app.use('/api/observations', authMiddleware, observationRoutes);
+  app.use('/api/observations', authMiddleware, observationDraftRoutes);
   app.use('/api/catalog', authMiddleware, catalogRoutes);
   app.use('/api/reports', authMiddleware, reportRoutes);
   app.use('/api/reports', authMiddleware, reportAiRoutes);

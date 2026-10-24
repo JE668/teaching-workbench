@@ -215,6 +215,19 @@ export function initDatabase() {
     )
   `);
 
+  // 进行中的听评课草稿（跨设备实时同步，按记录 ID 隔离）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS observation_drafts (
+      user_id INTEGER NOT NULL,
+      observation_id INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      PRIMARY KEY (user_id, observation_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (observation_id) REFERENCES observations(id) ON DELETE CASCADE
+    )
+  `);
+
   // 应用级设置（可在前端设置页修改，覆盖 .env 的默认值）
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (

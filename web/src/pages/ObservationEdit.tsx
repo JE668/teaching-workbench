@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
   Search,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useObservationDraftSync, ObservationDraftPayload } from '../hooks/useObservationDraftSync';
 import {
   Observation,
   Teacher,
@@ -189,6 +190,44 @@ export default function ObservationEdit() {
   /** 刚因「记录建好了」而跳转过来的那一次加载：跳过，否则拉回的空报告会盖掉流式内容 */
   const skipLoadRef = useRef(false);
 
+  // ========== 跨设备实时同步 ==========
+  const targetId = recordId ?? localId;
+  const draftPayload: ObservationDraftPayload = {
+    form,
+    report,
+    reportAt,
+  };
+
+  const applyRemote = useCallback(
+    (remote: ObservationDraftPayload, skipFields: string[]) => {
+      // 应用远端的 form 字段（跳过正在编辑的）
+      if (remote.form) {
+        setForm((prev) => {
+          const next = { ...prev };
+          Object.keys(remote.form).forEach((k) => {
+            if (!skipFields.includes(k)) {
+              next[k as keyof typeof next] = remote.form[k];
+            }
+          });
+          return next;
+        });
+      }
+      // 应用远端的 report 字段
+      if (skipFields.indexOf('report') === -1) {
+        setReport(remote.report);
+        setReportAt(remote.reportAt);
+      }
+    },
+    []
+  );
+
+  const { connected: syncConnected, peerCount, markLocalEdit, clearRemote } = useObservationDraftSync({
+    state: draftPayload,
+    observationId: targetId ?? 0,
+    applyRemote,
+    paused: generating || saving || !targetId,
+  });
+
   // 载入老师列表
   useEffect(() => {
     api
@@ -288,6 +327,8 @@ export default function ObservationEdit() {
     setSaving(true);
     try {
       const tid = await save();
+      // 保存成功后清空服务端草稿（已归档）
+      if (targetId) clearRemote();
       toast.success(isNew ? '听课记录已保存' : '已保存');
       if (isNew) navigate('/observations/' + tid, { replace: true });
     } catch (err: any) {
@@ -424,7 +465,7 @@ export default function ObservationEdit() {
         <Link to="/observations" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold tracking-tight text-slate-800">
             {isNew ? '新建听课记录' : '听课记录详情'}
           </h1>
@@ -432,6 +473,19 @@ export default function ObservationEdit() {
             记录课堂实录 → AI 生成评课 → 复制进「星火个性化教学听评课表」
           </p>
         </div>
+        {/* 同步状态指示器 */}
+        {!isNew && targetId && (
+          <div className="flex items-center gap-1.5 text-xs">
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                syncConnected ? 'bg-green-500' : 'bg-slate-300'
+              }`}
+            />
+            <span className="text-slate-500">
+              {syncConnected ? (peerCount > 0 ? `已同步 · ${peerCount} 台设备在线` : '已同步') : '同步中…'}
+            </span>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -491,8 +545,9 @@ export default function ObservationEdit() {
               <Input
                 label="课题"
                 required
+                data-sync-field="topic"
                 value={form.topic}
-                onChange={(e) => set('topic', e.target.value)}
+                onChange={(e) => { markLocalEdit('topic'); set('topic', e.target.value); }}
                 placeholder="如：分数加减法运算"
               />
               <Select
@@ -553,8 +608,9 @@ export default function ObservationEdit() {
             <div className="p-5">
               <Textarea
                 rows={6}
+                data-sync-field="classNotes"
                 value={form.classNotes}
-                onChange={(e) => set('classNotes', e.target.value)}
+                onChange={(e) => { markLocalEdit('classNotes'); set('classNotes', e.target.value); }}
                 placeholder="如：导入用生活实例引入分数加减法，讲解通分时结合图形演示，学生主动回应三次，练习环节节奏偏快…"
                 hint={
                   <VoiceButton
@@ -667,10 +723,11 @@ export default function ObservationEdit() {
                 {/* 报告正文：可编辑，改完保存/导出即生效 */}
                 <textarea
                   value={report}
-                  onChange={(e) => setReport(e.target.value)}
+                  onChange={(e) => { markLocalEdit('report'); setReport(e.target.value); }}
                   rows={16}
                   disabled={generating}
                   spellCheck={false}
+                  data-sync-field="report"
                   className="w-full rounded-xl bg-slate-50 p-4 font-sans text-sm leading-relaxed text-slate-700 ring-1 ring-slate-100 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:opacity-60"
                   style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}
                 />
