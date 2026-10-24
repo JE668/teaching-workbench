@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loginViaApi, getToken, importCatalog } from './helpers';
+import { loginViaApi, getToken, importCatalog, seedStudent, seedReport, seedReportItem } from './helpers';
 import { buildCatalogFixture } from './catalog-fixture';
 
 /**
@@ -275,5 +275,56 @@ test.describe('批量删除导入', () => {
     for (const k of ['groups', 'removed', 'reassigned', 'importsRemoved']) {
       expect(typeof body[k]).toBe('number');
     }
+  });
+
+  test('课程使用分析：「只看未使用」过滤和统计条', async ({ page }) => {
+    await loginViaApi(page);
+    // 独特课程名：这条用例的数据跟其他用例、其他轮次互不干扰
+    const marker = '使用分析' + Date.now().toString().slice(-6);
+    // 学科用「历史」：主用例（reports.spec）筛 subject=化学 统计「未上」数字，
+    // 这里绝不往化学目录里添课，免得共享 e2e 库的数据把那边的断言带跑
+    const fixture = await buildCatalogFixture({
+      sheet: '初二历史',
+      term: '秋季',
+      courses: [
+        [1, marker + '甲', '同步', '★★'],
+        [2, marker + '乙', '专题', '★★★'],
+      ] as [number, string, string, string][],
+      filename: marker + '课程目录.xlsx',
+    });
+    await importCatalog(page, { name: fixture.filename, buffer: fixture.buffer });
+
+    await page.goto('/catalog');
+    // 统计条存在（全局视角的三个口径）
+    await expect(page.getByText(/已上过 \d+/).first()).toBeVisible();
+    await expect(page.getByText(/从未使用 \d+/).first()).toBeVisible();
+
+    // 刚导入的两门课没人用过：开着「只看未使用」也得能看到
+    await page.getByRole('button', { name: '只看未使用' }).click();
+    await expect(page.getByText(marker + '甲', { exact: true })).toBeVisible();
+    await expect(page.getByText(marker + '乙', { exact: true })).toBeVisible();
+
+    // 把「甲」记到一份月度报告的总结里（已上）
+    const token = await getToken(page);
+    const coursesRes = await page.request.get('/api/catalog/courses?q=' + encodeURIComponent(marker + '甲'), {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    const courseList = await coursesRes.json();
+    const courseId = (courseList.courses.find((c: any) => c.content === marker + '甲') || {}).id as number;
+
+    const sid = await seedStudent(page, '使用分析同学', { grade: '初二', subject: '历史' });
+    const rid = await seedReport(page, { studentId: sid, yearMonth: '2026-09', term: '秋季', grade: '初二', subject: '历史' });
+    await seedReportItem(page, rid, { kind: 'summary', seq: 1, content: marker + '甲', courseId, attendance: '✅️' });
+
+    // 重新进目录页（拉新的使用数据），再开「只看未使用」：
+    // 上过的「甲」被滤掉，没用过的「乙」还在
+    await page.goto('/catalog');
+    await page.getByRole('button', { name: '只看未使用' }).click();
+    await expect(page.getByText(marker + '甲', { exact: true })).toHaveCount(0);
+    await expect(page.getByText(marker + '乙', { exact: true })).toBeVisible();
+
+    // 关掉开关，两门都回来了
+    await page.getByRole('button', { name: /只看未使用/ }).click();
+    await expect(page.getByText(marker + '甲', { exact: true })).toBeVisible();
   });
 });

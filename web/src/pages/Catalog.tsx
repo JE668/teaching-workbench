@@ -337,6 +337,8 @@ export default function Catalog() {
   // 目录 ↔ 报告打通：course_id → 已上/计划次数
   const [usage, setUsage] = useState<Record<string, CourseUsage>>({});
   const [usageCourse, setUsageCourse] = useState<CatalogCourse | null>(null);
+  /** 「只看未使用」开关：从未出现在任何学生报告 / 听评课里的课程 */
+  const [onlyUnused, setOnlyUnused] = useState(false);
   // 按学生看进度：校区里的学生列表
   const [students, setStudents] = useState<{ id: number; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -371,7 +373,8 @@ export default function Catalog() {
   const hasFilter = !!(grade || subject || term || type || track || textbook || q);
   // 清筛选只清筛选：选中的学生属于「看进度模式」，不该被一起清掉
   const clearFilters = useCallback(
-    () =>
+    () => {
+      setOnlyUnused(false);
       setParams(
         (prev) => {
           const next = new URLSearchParams();
@@ -380,7 +383,8 @@ export default function Catalog() {
           return next;
         },
         { replace: true }
-      ),
+      );
+    },
     [setParams]
   );
 
@@ -554,6 +558,11 @@ export default function Catalog() {
     if (type && c.type !== type) return false;
     if (track && c.track !== track) return false;
     if (textbook && c.textbook !== textbook) return false;
+    if (onlyUnused) {
+      // 从未使用：没上过、没排进过规划、也没被听评课关联过
+      const u = usage[String(c.id)];
+      if (u && u.taught + u.planned + u.observed > 0) return false;
+    }
     if (!q) return true;
     return [c.content, c.textbook, c.type, c.difficulty].some((f) => f.includes(q));
   });
@@ -583,6 +592,20 @@ export default function Catalog() {
   const activeStudentName = (() => {
     if (!student) return null;
     return students.find((s) => String(s.id) === student)?.name || '未知学生';
+  })();
+
+  // 课程使用分析（全局视角，不随筛选变）：已上过 / 仅规划或旁听 / 从未使用
+  const usageStats = (() => {
+    let taught = 0;
+    let partial = 0;
+    let unused = 0;
+    for (const c of courses) {
+      const u = usage[String(c.id)];
+      if (u && u.taught > 0) taught++;
+      else if (u && u.planned + u.observed > 0) partial++;
+      else unused++;
+    }
+    return { total: courses.length, taught, partial, unused };
   })();
 
   const anyImported = imports.length > 0;
@@ -783,6 +806,13 @@ export default function Catalog() {
                 清空筛选
               </Button>
             ) : null}
+            <Button
+              variant={onlyUnused ? 'primary' : 'outline'}
+              onClick={() => setOnlyUnused((v) => !v)}
+              title="只显示从未出现在任何学生报告 / 听评课里的课程"
+            >
+              {onlyUnused ? '只看未使用：开' : '只看未使用'}
+            </Button>
           </div>
         </Card>
       )}
@@ -809,7 +839,7 @@ export default function Catalog() {
           <EmptyState
             icon={<Search size={28} />}
             title="没有匹配的课程"
-            description="换个筛选条件试试"
+            description={onlyUnused ? '当前筛选范围内没有从未使用的课程，试试关掉「只看未使用」' : '换个筛选条件试试'}
             action={
               <Button variant="outline" onClick={() => clearFilters()}>
                 <RotateCcw size={16} />
@@ -832,7 +862,16 @@ export default function Catalog() {
                   {' · '}
                   <span className="font-medium text-slate-400">未上 {progressCounts.none}</span>
                 </span>
-              ) : null}
+              ) : (
+                <span className="ml-1" data-testid="usage-stats">
+                  ·{' '}
+                  <span className="font-medium text-emerald-600">已上过 {usageStats.taught}</span>
+                  {' · '}
+                  <span className="font-medium text-info-600">仅规划/旁听 {usageStats.partial}</span>
+                  {' · '}
+                  <span className="font-medium text-slate-400">从未使用 {usageStats.unused}</span>
+                </span>
+              )}
             </p>
           </div>
 
