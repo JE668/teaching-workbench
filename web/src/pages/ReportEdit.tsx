@@ -630,6 +630,10 @@ export default function ReportEdit() {
         reportTerm={report.term}
         addedIds={pickerAddedIds}
         onClose={() => setShowPicker(null)}
+        onCoursesUsed={(courseIds) => {
+          // 课程使用记录回调（可用于后续统计）
+          console.debug('[CoursePicker] 常用课程已更新', courseIds.length, '门');
+        }}
         onPick={async (courses) => {
           const kind = showPicker || 'plan';
           let base = kind === 'plan' ? nextSeq(planItems) : nextSeq(summaryItems);
@@ -838,6 +842,8 @@ function ExamRows({
  * 往里塞寒假的课，目录那边「引用」也跟着对不上。年级 / 学期 / 类型可以再收窄，
  * 「查看全部」一键放开所有条件。已经加进当前面板的课标灰、不能再选，
  * 免得同一门课在总结里写两遍。
+ *
+ * 新增：常用课程缓存 - 记录最近使用的课程，下次打开时优先展示
  */
 function CoursePicker({
   open,
@@ -848,6 +854,7 @@ function CoursePicker({
   addedIds,
   onClose,
   onPick,
+  onCoursesUsed,
 }: {
   open: boolean;
   kind: 'summary' | 'plan';
@@ -857,6 +864,7 @@ function CoursePicker({
   addedIds: Set<number>;
   onClose: () => void;
   onPick: (courses: CatalogCourseOption[]) => Promise<void>;
+  onCoursesUsed?: (courseIds: number[]) => void;
 }) {
   const [courses, setCourses] = useState<CatalogCourseOption[]>([]);
   const [total, setTotal] = useState(0);
@@ -871,8 +879,25 @@ function CoursePicker({
   const [busy, setBusy] = useState(false);
   const [grades, setGrades] = useState<string[]>([]);
   const [terms, setTerms] = useState<string[]>([]);
+  const [recentCourses, setRecentCourses] = useState<CatalogCourseOption[]>([]);
+  const [showRecent, setShowRecent] = useState(false);
   /** 自动展开标记：「同步」类型无结果时自动放开，避免用户看到空列表 */
   const autoClearedType = useRef(false);
+
+  // 加载常用课程（localStorage 缓存）
+  useEffect(() => {
+    if (!open) return;
+    const key = `recent-courses-${subject}`;
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || '[]');
+      if (Array.isArray(saved) && saved.length > 0) {
+        setRecentCourses(saved);
+        setShowRecent(true);
+      }
+    } catch {
+      // 解析失败忽略
+    }
+  }, [open, subject]);
 
   useEffect(() => {
     if (!open) {
@@ -998,7 +1023,23 @@ function CoursePicker({
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await onPick(courses.filter((c) => picked.has(c.id)));
+                  const pickedCourses = courses.filter((c) => picked.has(c.id));
+                  // 保存常用课程到 localStorage
+                  if (pickedCourses.length > 0) {
+                    const key = `recent-courses-${subject}`;
+                    const ids = pickedCourses.map((c) => c.id);
+                    let prev: number[] = [];
+                    try {
+                      prev = JSON.parse(localStorage.getItem(key) || '[]');
+                    } catch {
+                      // 忽略解析错误
+                    }
+                    // 去重 + 去已添加的，最多保留 20 个
+                    const merged = [...ids, ...prev.filter((id) => !ids.includes(id) && !addedIds.has(id))].slice(0, 20);
+                    localStorage.setItem(key, JSON.stringify(merged));
+                    onCoursesUsed?.(ids);
+                  }
+                  await onPick(pickedCourses);
                 } finally {
                   setBusy(false);
                 }
@@ -1040,6 +1081,49 @@ function CoursePicker({
             aria-label="课程类型"
           />
         </div>
+
+        {/* 常用课程快捷栏 */}
+        {showRecent && recentCourses.length > 0 && !showAll && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-slate-500">
+                <span className="mr-1">📌</span>常用课程（点击快速选择）
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowRecent(false)}
+                className="text-xs text-slate-400 hover:text-slate-600"
+              >
+                收起
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {recentCourses.map((c) => {
+                const isAdded = addedIds.has(c.id);
+                const isPicked = picked.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    disabled={isAdded}
+                    onClick={() => toggle(c)}
+                    className={cn(
+                      'rounded-lg px-2 py-1 text-xs transition',
+                      isAdded
+                        ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                        : isPicked
+                        ? 'bg-brand-100 text-brand-700 ring-1 ring-brand-300'
+                        : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-brand-50'
+                    )}
+                  >
+                    {c.content.length > 20 ? c.content.slice(0, 20) + '…' : c.content}
+                    {isAdded && <span className="ml-1 text-[10px]">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-2 text-xs">
           <span className="truncate text-slate-400">
