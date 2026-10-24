@@ -981,6 +981,21 @@ function ExamRows({
  *
  * 新增：常用课程缓存 - 记录最近使用的课程，下次打开时优先展示
  */
+
+/**
+ * localStorage 常用课程条目校验：必须是完整课程对象（id + content 都是合法类型）。
+ * 缓存里历史上存过纯 id 数字数组，渲染端一旦当对象用会直接白屏，
+ * 所以读取端统一先过这道校验，不合法的条目一律丢弃。
+ */
+function isRecentCourseEntry(v: unknown): v is CatalogCourseOption {
+  return (
+    !!v &&
+    typeof v === 'object' &&
+    typeof (v as CatalogCourseOption).id === 'number' &&
+    typeof (v as CatalogCourseOption).content === 'string'
+  );
+}
+
 function CoursePicker({
   open,
   kind,
@@ -1020,13 +1035,14 @@ function CoursePicker({
   /** 自动展开标记：「同步」类型无结果时自动放开，避免用户看到空列表 */
   const autoClearedType = useRef(false);
 
-  // 加载常用课程（localStorage 缓存）
+  // 加载常用课程（localStorage 缓存）。存的是完整课程对象，脏数据（含旧版的纯 id 数组）一律过滤
   useEffect(() => {
     if (!open) return;
     const key = `recent-courses-${subject}`;
     try {
-      const saved = JSON.parse(localStorage.getItem(key) || '[]');
-      if (Array.isArray(saved) && saved.length > 0) {
+      const raw = JSON.parse(localStorage.getItem(key) || '[]');
+      const saved = Array.isArray(raw) ? raw.filter(isRecentCourseEntry) : [];
+      if (saved.length > 0) {
         setRecentCourses(saved);
         setShowRecent(true);
       }
@@ -1139,6 +1155,42 @@ function CoursePicker({
     });
   };
 
+  // 选中课程的候选池：当前筛选结果 + 不在其中的常用课程。
+  // 常用课程可能被学期 / 类型筛选挡在列表外，但点它的快捷按钮就是要加它。
+  const pickedPool = useMemo(
+    () => [...courses, ...recentCourses.filter((rc) => !courses.some((c) => c.id === rc.id))],
+    [courses, recentCourses]
+  );
+
+  /** 点「添加 N 门」：把选中的课交给回调，并把它们记进常用课程缓存（存完整课程对象） */
+  const commitPick = async () => {
+    if (picked.size === 0) return;
+    setBusy(true);
+    try {
+      const pickedCourses = pickedPool.filter((c) => picked.has(c.id));
+      if (pickedCourses.length > 0) {
+        const key = `recent-courses-${subject}`;
+        let prev: CatalogCourseOption[] = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem(key) || '[]');
+          if (Array.isArray(raw)) prev = raw.filter(isRecentCourseEntry);
+        } catch {
+          // 解析失败忽略
+        }
+        // 新选的排前面 + 去重 + 去已添加的，最多保留 20 个
+        const merged = [
+          ...pickedCourses,
+          ...prev.filter((p) => !pickedCourses.some((c) => c.id === p.id) && !addedIds.has(p.id)),
+        ].slice(0, 20);
+        localStorage.setItem(key, JSON.stringify(merged));
+        onCoursesUsed?.(pickedCourses.map((c) => c.id));
+      }
+      await onPick(pickedCourses);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       open={open}
@@ -1152,7 +1204,7 @@ function CoursePicker({
               <span className="font-medium text-slate-700">已选 {picked.size} 门课</span>
               {picked.size > 1 && (
                 <span className="text-xs text-slate-400">
-                  {courses.filter((c) => picked.has(c.id)).slice(0, 3).map((c) => c.content).join('、')}
+                  {pickedPool.filter((c) => picked.has(c.id)).slice(0, 3).map((c) => c.content).join('、')}
                   {picked.size > 3 && '…'}
                 </span>
               )}
@@ -1165,30 +1217,7 @@ function CoursePicker({
                 icon={<FilePlus2 className="h-4 w-4" />}
                 disabled={picked.size === 0}
                 loading={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    const pickedCourses = courses.filter((c) => picked.has(c.id));
-                    // 保存常用课程到 localStorage
-                    if (pickedCourses.length > 0) {
-                      const key = `recent-courses-${subject}`;
-                      const ids = pickedCourses.map((c) => c.id);
-                      let prev: number[] = [];
-                      try {
-                        prev = JSON.parse(localStorage.getItem(key) || '[]');
-                      } catch {
-                        // 忽略解析错误
-                      }
-                      // 去重 + 去已添加的，最多保留 20 个
-                      const merged = [...ids, ...prev.filter((id) => !ids.includes(id) && !addedIds.has(id))].slice(0, 20);
-                      localStorage.setItem(key, JSON.stringify(merged));
-                      onCoursesUsed?.(ids);
-                    }
-                    await onPick(pickedCourses);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
+                onClick={() => void commitPick()}
               >
                 添加 {picked.size} 门
               </Button>
@@ -1196,7 +1225,7 @@ function CoursePicker({
           </div>
         ) : (
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-slate-400">已选 {picked.size} 门</span>
+            <span className="text-xs text-slate-400">已选 {picked.size} 门课</span>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={onClose}>
                 取消
@@ -1205,30 +1234,7 @@ function CoursePicker({
                 icon={<FilePlus2 className="h-4 w-4" />}
                 disabled={picked.size === 0}
                 loading={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    const pickedCourses = courses.filter((c) => picked.has(c.id));
-                    // 保存常用课程到 localStorage
-                    if (pickedCourses.length > 0) {
-                      const key = `recent-courses-${subject}`;
-                      const ids = pickedCourses.map((c) => c.id);
-                      let prev: number[] = [];
-                      try {
-                        prev = JSON.parse(localStorage.getItem(key) || '[]');
-                      } catch {
-                        // 忽略解析错误
-                      }
-                      // 去重 + 去已添加的，最多保留 20 个
-                      const merged = [...ids, ...prev.filter((id) => !ids.includes(id) && !addedIds.has(id))].slice(0, 20);
-                      localStorage.setItem(key, JSON.stringify(merged));
-                      onCoursesUsed?.(ids);
-                    }
-                    await onPick(pickedCourses);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
+                onClick={() => void commitPick()}
               >
                 添加 {picked.size} 门
               </Button>
