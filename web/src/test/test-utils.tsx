@@ -69,7 +69,7 @@ export function makeFollowUp(overrides: Record<string, unknown> = {}) {
     mastery: 'good',
     sessionCount: 1,
     courseType: 'one_on_one',
-    module: 'class_summary',
+    module: 'class_content',
     images: [],
     content,
     wordCount: 175,

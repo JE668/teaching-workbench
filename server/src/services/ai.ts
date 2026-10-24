@@ -199,10 +199,11 @@ function imageToBase64DataUrl(imagePath: string): string {
 
 // ============ 流程打卡类型（模块）=
 //
-// 学校新规把流程打卡分成常规类 8 种和非常规类 8 种，每种的家长关注点完全不同：
-// 「作业批改」关心错在哪，「笔记痕迹」关心课堂吸收，「加课沟通」关心加哪块、什么时候加。
-// 每周配额按「覆盖的种类数」算，两组合并统计，5 种以上即达标。
-// 所以三段（课堂内容 / 学生收获 / 课后任务）的写法要跟着模块变，而不是永远写同一套。
+// 回访内容本质是向家长展示教学服务流程，一次回访要覆盖 5 个以上流程环节。
+// 学校清单里的「课堂总结」已拆成课堂内容总结 + 课堂表现总结，
+// 现在共 16 种（常规类 9 + 非常规类 7），每种的家长关注点完全不同：
+// 「作业批改」关心错在哪，「笔记/解题痕迹」关心课堂吸收，「加课沟通」关心加哪块、什么时候加。
+// 所以每个板块的写法要跟着模块变，而不是永远写同一套。
 //
 // 模板用 {占位符} 表达，由 buildPrompt 里的 fill() 替换；占位符清单见那里的 vars。
 interface ModuleGuidance {
@@ -222,18 +223,36 @@ interface ModuleGuidance {
 
 export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
   // ---------- 常规类 ----------
-  class_summary: {
-    label: '课堂总结',
+  class_content: {
+    label: '课堂内容总结',
     group: '常规类',
-    point: '说明这堂课讲了什么内容、重点在哪、孩子听得怎么样。',
-    scene: '一次普通课程后的常规总结打卡：这节课讲了什么、孩子有什么收获、回家练什么。',
+    point: '说明这堂课讲了哪些内容、重点在哪，教学进度到哪了。',
+    scene: '反馈这堂课具体教了什么：知识点、教学重点、教学进度，让家长知道孩子这一节课学了什么。',
     sections: {
       classContent:
         '说明{scopePhrase}讲授的知识点、教学重点与进度{multiRecap}，要与{grade}{subject}的课程标准相衔接。约 50-65 字。',
-      gains: '{gainsDefault}{gainsTail}。约 50-65 字。',
-      homework: '{homeworkDefault}。任务要可落地，难度匹配{grade}水平。约 35-50 字。',
+      gains:
+        '从内容掌握角度写：{gainsDefault}{gainsTail}，并点出哪些知识点当场就接住了、哪些需要回家再消化。约 50-65 字。',
+      homework: '{homeworkDefault}，任务围绕这节课讲的内容展开。约 35-50 字。',
     },
     rules: [],
+  },
+  class_performance: {
+    label: '课堂表现总结',
+    group: '常规类',
+    point: '说明孩子这节课的听讲状态、参与度，以及卡在哪一步。',
+    scene:
+      '向家长反馈孩子的课堂状态：注意力、参与度、互动情况，孩子在哪一步开始卡住，方便家长在家配合。',
+    sections: {
+      classContent:
+        '交代本节内容背景：{scopePhrase}在讲什么、大概怎么推进的，让后面的表现描述有落脚点。约 50-65 字。',
+      gains:
+        '描述{call}这堂课的课堂状态：注意力持续多久、愿不愿意主动发言、哪一步开始跟不上。约 50-65 字。',
+      homework: '针对上面提到的课堂表现卡点安排一个配套练习，写明做什么、大概花多久。约 35-50 字。',
+    },
+    rules: [
+      '【课堂表现总结】要写具体的课堂行为细节，【不要】写成「表现良好」「认真听讲」这类空话',
+    ],
   },
   preview: {
     label: '预习资料',
@@ -287,7 +306,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
     ],
   },
   note_trace: {
-    label: '笔记痕迹',
+    label: '笔记/解题痕迹',
     group: '常规类',
     point: '说明笔记记得全不全、有没有自己的标注或提问。',
     scene: '翻看孩子这节课的笔记，反馈记录得怎么样、有没有自己补充和思考，判断他当时跟没跟上。',
@@ -300,7 +319,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
         '让孩子自己把笔记里缺的地方补上、给重点内容加标注，并对照笔记向家长讲一遍这节课的重点。约 35-50 字。',
     },
     rules: [
-      '【笔记痕迹】要写看到的具体笔记细节，【不要】只写「笔记写得不错」这种空话',
+      '【笔记/解题痕迹】要写看到的具体笔记细节，【不要】只写「笔记写得不错」这种空话',
     ],
   },
   homework_assign: {
@@ -520,6 +539,8 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
     subject,
     topic,
     masteryLabel,
+    performance:
+      params.performance?.trim() || '专注度尚可、能跟上教学节奏',
     sessionCount: String(sessionCount),
     call: isGroup ? '孩子们' : (nickname || '学生'),
     multiRecap: multi ? '，体现知识之间的递进关系' : '',

@@ -742,24 +742,27 @@ describe('课后回访 · 流程打卡新规达标线', () => {
   });
 });
 
-describe('课后回访 · 覆盖板块（多选，常规类 8 + 非常规类 7）', () => {
-  // 学校新规：一次回访内容里要覆盖 5 个以上板块，勾选几个内容里就写几段。
+describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7）', () => {
+  // 回访内容本质是向家长展示教学服务流程：一次回访要覆盖 5 个以上流程环节，
+  // 每次课的环节灵活变动，所以 5 个是「建议下限」而不是硬门槛——少了也能生成。
   // 这里只锁 UI 选择与请求载荷；提示词按板块换写法由服务端 followup-module.test.ts 锁。
-  it('默认勾选 5 个板块，两组类型与十五个选项都在', () => {
+
+  it('默认勾选 5 个板块，两组类型与十六个选项都在', () => {
     renderWithProviders(<FollowUp />);
 
     expect(screen.getByText('覆盖板块')).toBeInTheDocument();
-    expect(screen.getByText(/已选 5 个/)).toBeInTheDocument();
+    expect(screen.getByText(/已选 5 个，够用/)).toBeInTheDocument();
     expect(screen.getByText('常规类')).toBeInTheDocument();
     expect(screen.getByText(/日常回访的主体/)).toBeInTheDocument();
     expect(screen.getByText('非常规类')).toBeInTheDocument();
     expect(screen.getByText(/特殊情况的沟通/)).toBeInTheDocument();
 
     for (const label of [
-      '预习资料',
       '作业批改',
-      '课堂总结',
-      '笔记痕迹',
+      '课堂内容总结',
+      '课堂表现总结',
+      '笔记/解题痕迹',
+      '预习资料',
       '错题专练',
       '作业布置',
       '积累打卡',
@@ -770,11 +773,12 @@ describe('课后回访 · 覆盖板块（多选，常规类 8 + 非常规类 7�
       '学生要求',
       '学管协助',
       '加课沟通',
-            '补课安排',
+      '补课安排',
     ]) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
   });
+
   it('默认勾选 5 个板块，按声明顺序传给生成与保存载荷', async () => {
     const user = userEvent.setup();
     stubStream();
@@ -787,10 +791,10 @@ describe('课后回访 · 覆盖板块（多选，常规类 8 + 非常规类 7�
 
     // 按 FOLLOWUP_MODULES 声明顺序排列，而不是勾选顺序
     const expected = [
-      'preview',
       'homework_review',
-      'class_summary',
-      'mistake_drill',
+      'class_content',
+      'class_performance',
+      'note_trace',
       'homework_assign',
     ];
     expect(streamPost.mock.calls[0][1].modules).toEqual(expected);
@@ -805,46 +809,80 @@ describe('课后回访 · 覆盖板块（多选，常规类 8 + 非常规类 7�
     stubStream();
     renderWithProviders(<FollowUp />);
 
-    // 常规类：把「笔记痕迹」加上
-    await user.click(screen.getByRole('button', { name: '笔记痕迹' }));
+    // 常规类：把「错题专练」加上
+    await user.click(screen.getByRole('button', { name: '错题专练' }));
     // 非常规类：把「成绩分析」加上
     await user.click(screen.getByRole('button', { name: '成绩分析' }));
+    expect(screen.getByText(/已选 7 个，够用/)).toBeInTheDocument();
 
     await fillMinimalForm(user);
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
     await screen.findByTestId('generated-content');
 
     const sent = streamPost.mock.calls[0][1].modules;
-    expect(sent).toContain('note_trace');
+    expect(sent).toContain('mistake_drill');
     expect(sent).toContain('grade_analysis');
     expect(sent).toHaveLength(7);
   });
 
-  it('取消到 3 个板块时无法生成，并提示至少 5 个', async () => {
+  it('取消到 3 个板块时只做软提示，仍然能生成', async () => {
     const user = userEvent.setup();
     stubStream();
     renderWithProviders(<FollowUp />);
 
-    await user.click(screen.getByRole('button', { name: '课堂总结' }));
+    // 取消两个默认板块，只剩 3 个
+    await user.click(screen.getByRole('button', { name: '课堂内容总结' }));
     await user.click(screen.getByRole('button', { name: '作业布置' }));
+    expect(screen.getByText(/已选 3 个（建议 5 个以上）/)).toBeInTheDocument();
 
     await fillMinimalForm(user);
     await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
 
-    expect(await screen.findByText(/请至少勾选 5 个板块/)).toBeInTheDocument();
-    expect(screen.getByText(/已选 3 个/)).toBeInTheDocument();
-    expect(streamPost).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('generated-content')).not.toBeInTheDocument();
+    // 软提示而非硬拦：给出建议，但照常生成
+    expect(await screen.findByText(/建议一次回访覆盖 5 个以上板块/)).toBeInTheDocument();
+    expect(screen.queryByText(/请至少勾选 5 个板块/)).not.toBeInTheDocument();
+    expect(streamPost).toHaveBeenCalledTimes(1);
+    expect(streamPost.mock.calls[0][1].modules).toEqual([
+      'homework_review',
+      'class_performance',
+      'note_trace',
+    ]);
   });
 
-  it('勾选后计数实时更新，且计数面板用绿色标记达标', async () => {
+  it('板块数减少时，字数区间按实际板块数实时收紧', async () => {
+    const user = userEvent.setup();
+    stubStream(GENERATED + '补充说明'.repeat(60));
+    renderWithProviders(<FollowUp />);
+
+    await fillMinimalForm(user);
+    await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
+    await screen.findByTestId('generated-content');
+
+    // 5 个板块的区间是 200–300，415 字的内容超出上限
+    let body = document.body.textContent || '';
+    expect(body).toContain('需 200–300 字（5 个板块）');
+
+    // 取消两个板块后区间随实际板块数收紧到 170–250
+    await user.click(screen.getByRole('button', { name: '课堂内容总结' }));
+    await user.click(screen.getByRole('button', { name: '作业布置' }));
+    body = document.body.textContent || '';
+    expect(body).toContain('需 170–250 字（3 个板块）');
+  });
+
+  it('勾选后计数实时更新，5 个及以上用绿色标记', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FollowUp />);
 
-    const counter = screen.getByText(/已选 5 个，达标/);
+    const counter = screen.getByText(/已选 5 个，够用/);
     expect(counter.className).toContain('text-emerald-600');
 
     await user.click(screen.getByRole('button', { name: '成绩分析' }));
-    expect(screen.getByText(/已选 6 个，达标/)).toBeInTheDocument();
+    expect(screen.getByText(/已选 6 个，够用/)).toBeInTheDocument();
+
+    // 降到 5 个以下时退出绿色态
+    await user.click(screen.getByRole('button', { name: '作业批改' }));
+    expect(screen.getByText(/已选 5 个，够用/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '课堂表现总结' }));
+    expect(screen.getByText(/已选 4 个（建议 5 个以上）/)).toBeInTheDocument();
   });
 });

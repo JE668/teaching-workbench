@@ -82,7 +82,8 @@ export default function Dashboard() {
   if (loading) return <PageSkeleton />;
 
   const weekly = summary.weekly;
-  const weekReached = weekly ? weekly.covered >= weekly.quota : false;
+  /** 看板主指标：本周板块被覆盖的总次数（服务量） */
+  const moduleHits = weekly ? weekly.totalModuleHits : 0;
   const regularTypes = (weekly?.types || []).filter((t) => t.group === 'regular');
   const unusualTypes = (weekly?.types || []).filter((t) => t.group === 'unusual');
 
@@ -157,14 +158,14 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* 本周流程打卡：学校要求每周覆盖不少于 5 种打卡类型，常规类与非常规类合并统计 */}
+      {/* 本周流程打卡：主指标是板块服务总次数，回访条数与覆盖种类是副指标 */}
       <Card className="animate-fade-up" style={{ animationDelay: '200ms' }} data-testid="weekly-progress">
         <CardHeader
           title="本周流程打卡"
           description={
             weekly
-              ? '按覆盖的打卡类型统计 · ' + weekly.weekStart.slice(5) + ' ~ ' + weekly.weekEnd.slice(5)
-              : '学校要求每周覆盖不少于 5 种打卡类型'
+              ? '板块服务总次数 · ' + weekly.weekStart.slice(5) + ' ~ ' + weekly.weekEnd.slice(5)
+              : '本周各流程环节被覆盖的总次数'
           }
           icon={<CheckCircle2 className="h-4 w-4" />}
           action={
@@ -172,12 +173,12 @@ export default function Dashboard() {
               <span
                 className={
                   'font-mono text-2xl font-bold tabular-nums ' +
-                  (weekReached ? 'text-emerald-600' : 'text-slate-700')
+                  (moduleHits > 0 ? 'text-emerald-600' : 'text-slate-700')
                 }
               >
-                {weekly ? weekly.covered : 0}
+                {moduleHits}
               </span>
-              <span className="text-xs text-slate-400">/ {weekly ? weekly.quota : 5} 种</span>
+              <span className="text-xs text-slate-400">次</span>
             </div>
           }
         />
@@ -224,7 +225,8 @@ export default function Dashboard() {
               </span>
             ))}
             <span className="ml-auto text-[11px] text-slate-400 tabular-nums">
-              本周共 {weekly ? weekly.records : 0} 条打卡
+              本周 {weekly ? weekly.records : 0} 次回访 · 覆盖{' '}
+              {weekly ? weekly.covered : 0} 个板块
             </span>
           </div>
         </div>

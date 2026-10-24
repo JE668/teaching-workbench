@@ -68,24 +68,26 @@ describe('本周流程打卡进度 · 口径', () => {
     assert.equal(WEEKLY_FOLLOWUP_QUOTA, 5);
     assert.equal(w.covered, 0);
     assert.equal(w.records, 0);
+    assert.equal(w.totalModuleHits, 0);
     assert.equal(w.types.length, FOLLOWUP_TYPES.length);
     assert.ok(w.types.every((t: any) => t.count === 0), '没有任何记录，每个类型的条数都该是 0');
   });
 
   test('同一种类型打三次只算覆盖 1 种，不按条数计', async () => {
     reset();
-    seed('class_summary', 0);
-    seed('class_summary', 1);
-    seed('class_summary', 2);
+    seed('class_content', 0);
+    seed('class_content', 1);
+    seed('class_content', 2);
     const w = await weekly();
     assert.equal(w.covered, 1, '三次课堂总结只覆盖 1 种类型');
     assert.equal(w.records, 3, '但打卡条数照实记 3 条');
-    assert.equal(w.types.find((t: any) => t.value === 'class_summary').count, 3);
+    assert.equal(w.types.find((t: any) => t.value === 'class_content').count, 3);
+    assert.equal(w.totalModuleHits, 3, '每条只覆盖 1 个板块，板块服务总次数等于条数');
   });
 
   test('任意 5 种类型各打一次即为达标', async () => {
     reset();
-    seed('class_summary', 0);
+    seed('class_content', 0);
     seed('homework_review', 1);
     seed('preview', 2);
     seed('note_trace', 3);
@@ -96,9 +98,20 @@ describe('本周流程打卡进度 · 口径', () => {
     assert.ok(w.covered >= w.quota, '覆盖 5 种应达标');
   });
 
+  test('一条回访覆盖多个板块时，板块服务总次数按板块数累加', async () => {
+    reset();
+    // 一次回访勾选了 5 个板块（多选板块后的真实写法：JSON 数组串）
+    seed('["homework_review","class_content","class_performance","note_trace","homework_assign"]', 0);
+    seed('["grade_analysis","stage_test"]', 1);
+    const w = await weekly();
+    assert.equal(w.records, 2, '只有 2 条回访');
+    assert.equal(w.totalModuleHits, 7, '5 个板块 + 2 个板块 = 7 次板块服务');
+    assert.equal(w.covered, 7, '覆盖的板块种类同样是 7 种');
+  });
+
   test('只打 4 种不达标，但非常规类同样计入覆盖种类', async () => {
     reset();
-    seed('class_summary', 0);
+    seed('class_content', 0);
     seed('homework_review', 1);
     seed('preview', 2);
     seed('note_trace', 3);
@@ -132,7 +145,7 @@ describe('本周流程打卡进度 · 周界', () => {
 
   test('上周的记录不计入本周，即使上周日在打', async () => {
     reset();
-    seed('class_summary', -1, 23);
+    seed('class_content', -1, 23);
     seed('homework_review', -3);
     const w = await weekly();
     assert.equal(w.covered, 0);
@@ -141,7 +154,7 @@ describe('本周流程打卡进度 · 周界', () => {
 
   test('本周一 00:00 与本周日 23:59 都算本周', async () => {
     reset();
-    seed('class_summary', 0, 0);
+    seed('class_content', 0, 0);
     seed('homework_review', 6, 23);
     seed('preview', 7); // 下一周周一，不算
     const w = await weekly();
@@ -149,11 +162,23 @@ describe('本周流程打卡进度 · 周界', () => {
     assert.equal(w.records, 2);
   });
 
-  test('存量记录没有 module 列时归入课堂总结再计数', async () => {
+  test('存量记录没有 module 列时归入课堂内容总结再计数', async () => {
     reset();
     seed('乱写的值', 0);
     const w = await weekly();
     assert.equal(w.covered, 1);
-    assert.equal(w.types.find((t: any) => t.value === 'class_summary').count, 1);
+    assert.equal(w.types.find((t: any) => t.value === 'class_content').count, 1);
+  });
+
+  test('拆「课堂总结」前的老值 class_summary 归入课堂内容总结计数', async () => {
+    reset();
+    seed('class_summary', 0);
+    seed('class_summary', 1);
+    const w = await weekly();
+    assert.equal(w.covered, 1);
+    assert.equal(w.types.find((t: any) => t.value === 'class_content').count, 2);
+    // 拆之前的值本身不该再出现在类型清单里
+    assert.equal(w.types.find((t: any) => t.value === 'class_summary'), undefined);
+    assert.equal(w.totalModuleHits, 2);
   });
 });

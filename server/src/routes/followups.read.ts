@@ -91,9 +91,11 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
 /**
  * 本周流程打卡进度。
  *
- * 学校要求「每周完成不少于 5 项流程打卡」，口径按**覆盖的打卡类型种类**算：
- * 常规类 8 种与非常规类 8 种**合并**统计，任何 5 种各打过一次即为达标。
- * 不按打卡条数算——同一个孩子一周回访三次课堂总结，也只算覆盖了 1 种。
+ * 学校要求「每周完成不少于 5 项流程打卡」。一次回访的内容本身就要覆盖 5 个以上
+ * 流程环节，所以「覆盖的种类数」不再适合当达标口径——只要回访过一次就必然 ≥5。
+ * 看板改用**板块服务总次数**（totalModuleHits）：本周所有回访里板块被覆盖的总次数，
+ * 反映这周的教学服务量；回访条数 records 与覆盖种类数 covered 仍然返回做副指标。
+ * 每条回访覆盖几个板块就计几次。
  *
  * 周界：北京周一 00:00 到周日 24:00。数据库时间列存的是北京时间串
  * （datetime('now', '+8 hours')），直接拼「周一 00:00:00」做字符串比较即可。
@@ -104,6 +106,7 @@ function weeklyModuleProgress(rows: any[]): {
   quota: number;
   covered: number;
   records: number;
+  totalModuleHits: number;
   types: { value: string; label: string; group: string; count: number }[];
 } {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -141,9 +144,10 @@ function weeklyModuleProgress(rows: any[]): {
     weekStart: iso(monday),
     weekEnd: iso(sunday),
     quota: WEEKLY_FOLLOWUP_QUOTA,
-    // 常规类与非常规类合并统计：任何 5 种各打过一次即达标
     covered: types.filter((t) => t.count > 0).length,
     records: inWeek.length,
+    // 本周板块被覆盖的总次数，看板主指标
+    totalModuleHits: types.reduce((sum, t) => sum + t.count, 0),
     types,
   };
 }

@@ -100,13 +100,20 @@ export interface FollowUpCreate {
 
 /**
  * 流程打卡类型（学校 2026 新规）。
- * 常规类 8 种 + 非常规类 8 种，每种的生成侧重不同，见 services/ai.ts 的 MODULE_GUIDANCE。
- * 每周配额按「覆盖的种类数」算，常规类与非常规类合并统计，5 种以上即达标。
+ * 常规类 9 种 + 非常规类 7 种，每种的生成侧重不同，见 services/ai.ts 的 MODULE_GUIDANCE。
+ *
+ * 回访内容本质是向家长展示教学服务流程：一次回访要覆盖 5 个以上流程环节，
+ * 老师可自由增减，AI 按勾选的板块逐段生成。
+ * 学校清单里的「课堂总结」已拆成课堂内容总结 + 课堂表现总结两个环节。
+ *
+ * 注意：`class_summary` 是拆之前的老值，不再出现在可选清单里，
+ * 但 normalizeFollowUpModule 会把它回落到 `class_content`，保证存量数据能读出来。
  */
 export type FollowUpModule =
   | 'preview'
   | 'homework_review'
-  | 'class_summary'
+  | 'class_content'
+  | 'class_performance'
   | 'note_trace'
   | 'mistake_drill'
   | 'homework_assign'

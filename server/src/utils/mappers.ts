@@ -72,7 +72,8 @@ export function normalizeCourseType(value: any): 'one_on_one' | 'group' {
 export const FOLLOWUP_MODULES: FollowUpModule[] = [
   'preview',
   'homework_review',
-  'class_summary',
+  'class_content',
+  'class_performance',
   'note_trace',
   'mistake_drill',
   'homework_assign',
@@ -87,10 +88,22 @@ export const FOLLOWUP_MODULES: FollowUpModule[] = [
   'makeup_plan',
 ];
 
-export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
+export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_content';
+
+/**
+ * 拆「课堂总结」之前的老值。DB 默认值和存量数据里都是 `class_summary`，
+ * 这里把它映射到新值，避免动 database.ts 的 schema 默认值（改默认值对存量列无效）。
+ */
+const LEGACY_FOLLOWUP_MODULE: Partial<Record<string, FollowUpModule>> = {
+  class_summary: 'class_content',
+};
 
 export function normalizeFollowUpModule(value: any): FollowUpModule {
-  return FOLLOWUP_MODULES.includes(value) ? value : DEFAULT_FOLLOWUP_MODULE;
+  if (FOLLOWUP_MODULES.includes(value)) return value;
+  if (typeof value === 'string' && LEGACY_FOLLOWUP_MODULE[value]) {
+    return LEGACY_FOLLOWUP_MODULE[value]!;
+  }
+  return DEFAULT_FOLLOWUP_MODULE;
 }
 
 /**
@@ -110,7 +123,11 @@ export function normalizeFollowUpModules(value: any): FollowUpModule[] {
     }
   }
   const arr: any[] = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-  const valid = arr.filter(
+  // 先过一遍老值映射，再判合法——否则 JSON 数组里的 class_summary 会被当乱值丢掉
+  const migrated = arr.map((v) =>
+    typeof v === 'string' && LEGACY_FOLLOWUP_MODULE[v] ? LEGACY_FOLLOWUP_MODULE[v] : v
+  );
+  const valid = migrated.filter(
     (m): m is FollowUpModule => typeof m === 'string' && FOLLOWUP_MODULES.includes(m as FollowUpModule)
   );
   const deduped = valid.filter((m, i, a) => a.indexOf(m) === i);
@@ -124,13 +141,15 @@ export function serializeFollowUpModules(modules: FollowUpModule[]): string {
 
 /**
  * 打卡类型的分组元信息（后端只用于统计，文案在前端 FOLLOWUP_MODULE_GROUPS）。
- * 常规类 8 种是日常回访的主体；非常规类 8 种是特殊情况的沟通。
+ * 常规类 9 种是日常回访的主体；非常规类 7 种是特殊情况的沟通。
+ * 学校清单里的「课堂总结」已拆成课堂内容总结 + 课堂表现总结。
  */
 export const FOLLOWUP_TYPES: { value: FollowUpModule; label: string; group: 'regular' | 'unusual' }[] = [
   { value: 'preview', label: '预习资料', group: 'regular' },
   { value: 'homework_review', label: '作业批改', group: 'regular' },
-  { value: 'class_summary', label: '课堂总结', group: 'regular' },
-  { value: 'note_trace', label: '笔记痕迹', group: 'regular' },
+  { value: 'class_content', label: '课堂内容总结', group: 'regular' },
+  { value: 'class_performance', label: '课堂表现总结', group: 'regular' },
+  { value: 'note_trace', label: '笔记/解题痕迹', group: 'regular' },
   { value: 'mistake_drill', label: '错题专练', group: 'regular' },
   { value: 'homework_assign', label: '作业布置', group: 'regular' },
   { value: 'accumulation', label: '积累打卡', group: 'regular' },

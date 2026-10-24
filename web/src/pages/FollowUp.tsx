@@ -352,13 +352,13 @@ export default function FollowUp() {
       toast.error('小组课请至少选择一名学生');
       return;
     }
-    // 学校口径：内容里要覆盖 5 个以上板块
+    // 学校口径建议一次回访覆盖 5 个以上板块。这里只做软提示不拦下——
+    // 每次课的环节本来就灵活变动，老师遇到特殊情况可以少选，不该被卡住交不出去。
     if (form.modules.length < FOLLOWUP_MIN_BLOCKS) {
-      toast.error(
-        '请至少勾选 ' + FOLLOWUP_MIN_BLOCKS + ' 个板块再生成（当前 ' +
-          form.modules.length + ' 个）'
+      toast.info(
+        '学校口径建议一次回访覆盖 ' + FOLLOWUP_MIN_BLOCKS +
+          ' 个以上板块，当前 ' + form.modules.length + ' 个，内容会更薄'
       );
-      return;
     }
 
     setGenerating(true);
@@ -625,8 +625,8 @@ export default function FollowUp() {
                     )}
                   >
                     {form.modules.length < FOLLOWUP_MIN_BLOCKS
-                      ? `已选 ${form.modules.length} 个（至少 ${FOLLOWUP_MIN_BLOCKS} 个）`
-                      : `已选 ${form.modules.length} 个，达标`}
+                      ? `已选 ${form.modules.length} 个（建议 ${FOLLOWUP_MIN_BLOCKS} 个以上）`
+                      : `已选 ${form.modules.length} 个，够用`}
                   </span>
                 </div>
                 {FOLLOWUP_MODULE_GROUPS.map((g) => (
@@ -660,7 +660,8 @@ export default function FollowUp() {
                   </div>
                 ))}
                 <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                  每个板块在内容里单独成一段；勾选 {FOLLOWUP_MIN_BLOCKS} 个及以上才能生成。
+                  每个板块在内容里单独成一段；建议勾选 {FOLLOWUP_MIN_BLOCKS} 个以上（学校口径），
+                  少于 {FOLLOWUP_MIN_BLOCKS} 个也能生成。
                 </p>
               </div>
 

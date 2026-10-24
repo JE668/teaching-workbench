@@ -53,7 +53,7 @@ const moduleBadgeTone = (m: FollowUpModule) =>
 const followUpModules = (f: FollowUp): FollowUpModule[] =>
   f.modules?.length ? f.modules : [f.module];
 const moduleLabel = (f: FollowUp) =>
-  followUpModules(f).map((m) => FOLLOWUP_MODULE_LABELS[m] ?? FOLLOWUP_MODULE_LABELS.class_summary).join('、');
+  followUpModules(f).map((m) => FOLLOWUP_MODULE_LABELS[m] ?? FOLLOWUP_MODULE_LABELS.class_content).join('、');
 
 export default function FollowUpList() {
   const [items, setItems] = useState<FollowUp[]>([]);

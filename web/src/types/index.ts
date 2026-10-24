@@ -87,15 +87,17 @@ export const COURSE_TYPES: { value: CourseType; label: string; hint: string }[] 
 
 // ============ 流程打卡类型（学校 2026 新规）============
 //
-// 常规类 8 种是日常回访的主体，非常规类 8 种是特殊情况的沟通。
-// 每周配额按「覆盖的种类数」算，两组合并统计，5 种以上即达标。
-// 选中哪种，AI 生成的三段（课堂内容 / 学生收获 / 课后任务）就侧重那个模块——
+// 回访内容本质是向家长展示教学服务流程：一次回访要覆盖 5 个以上流程环节，
+// 老师自由增减，AI 按勾选的板块逐段生成——勾了什么就写什么，每块单独成段。
+// 学校清单里的「课堂总结」已拆成课堂内容总结 + 课堂表现总结两个环节。
+// 共 16 种（常规类 9 + 非常规类 7）。
 // 服务端对应实现在 server/src/services/ai.ts 的 MODULE_GUIDANCE，key 必须保持一致。
 
 export type FollowUpModule =
   | 'preview'
   | 'homework_review'
-  | 'class_summary'
+  | 'class_content'
+  | 'class_performance'
   | 'note_trace'
   | 'mistake_drill'
   | 'homework_assign'
@@ -124,12 +126,13 @@ export interface FollowUpModuleGroup {
 export const FOLLOWUP_MODULE_GROUPS: FollowUpModuleGroup[] = [
   {
     group: '常规类',
-    hint: '日常回访的主体，与非常规类合并计入每周 5 种',
+    hint: '日常回访的主体，一次回访里最常覆盖的环节',
     modules: [
-      { value: 'preview', label: '预习资料', hint: '资料覆盖哪些知识点、孩子怎么用，任务要具体到页码题号' },
       { value: 'homework_review', label: '作业批改', hint: '完成质量、错在哪些知识点、怎么订正' },
-      { value: 'class_summary', label: '课堂总结', hint: '这节课讲了什么、孩子有什么收获、回家练什么' },
-      { value: 'note_trace', label: '笔记痕迹', hint: '板书有没有记全、有没有自己的补充和思考' },
+      { value: 'class_content', label: '课堂内容总结', hint: '这节课讲了哪些内容、重点在哪、进度到哪了' },
+      { value: 'class_performance', label: '课堂表现总结', hint: '孩子的听讲状态、参与度、卡在哪一步' },
+      { value: 'note_trace', label: '笔记/解题痕迹', hint: '笔记记没记全、解题思路写得对不对，有没有自己的补充' },
+      { value: 'preview', label: '预习资料', hint: '资料覆盖哪些知识点、孩子怎么用，任务要具体到页码题号' },
       { value: 'mistake_drill', label: '错题专练', hint: '哪几类错题专练了什么方法、现在掌握到什么程度' },
       { value: 'homework_assign', label: '作业布置', hint: '布置了什么、为什么做、预计花多久' },
       { value: 'accumulation', label: '积累打卡', hint: '今天攒了什么、多少量，明天接着做什么' },
@@ -138,7 +141,7 @@ export const FOLLOWUP_MODULE_GROUPS: FollowUpModuleGroup[] = [
   },
   {
     group: '非常规类',
-    hint: '特殊情况的沟通，与常规类合并计入每周 5 种',
+    hint: '特殊情况的沟通，需要时往上加',
     modules: [
       { value: 'grade_analysis', label: '成绩分析', hint: '成绩从哪来、丢分在哪、接下来怎么提分' },
       { value: 'stage_test', label: '阶测反馈', hint: '阶段性测评的整体反馈，体现板块与短板的变化' },
@@ -170,17 +173,20 @@ export const FOLLOWUP_MODULE_GROUPS_BY_VALUE: Record<
   return acc;
 }, {} as Record<FollowUpModule, '常规类' | '非常规类'>);
 
-export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_summary';
+export const DEFAULT_FOLLOWUP_MODULE: FollowUpModule = 'class_content';
 
 /** 学校新规：一次回访内容里要覆盖 5 个以上板块 */
 export const FOLLOWUP_MIN_BLOCKS = 5;
 
-/** 默认勾选的 5 个板块：一周一遍课最核心的流程（可自由增减） */
+/**
+ * 默认勾选的 5 个板块：一周一遍课最核心的服务流程（可自由增减）。
+ * 学校清单里这 5 个环节就够 5 项了，老师零操作也能出一份合格回访。
+ */
 export const DEFAULT_FOLLOWUP_MODULES: FollowUpModule[] = [
-  'class_summary',
-  'preview',
   'homework_review',
-  'mistake_drill',
+  'class_content',
+  'class_performance',
+  'note_trace',
   'homework_assign',
 ];
 
@@ -194,8 +200,12 @@ export function sortFollowUpModules(mods: FollowUpModule[]): FollowUpModule[] {
 }
 
 /**
- * 打卡类型的周配额：覆盖 5 种以上即视为本周达标，常规类与非常规类**合并**统计。
- * 不写成从分组数量推导：常规类现在是 8 种，推导会得到 8，与学校的 5 种不符。
+ * 学校要求的「每周 5 项流程打卡」口径。
+ *
+ * 注意：这个值现在**只作口径说明**，看板不再用它判断达标——
+ * 一次回访的内容本身就要覆盖 5 个以上板块，只要回访过一次就必然 ≥5，
+ * 「覆盖种类数」已经失去了区分度。看板主指标改成 totalModuleHits（板块服务总次数）。
+ * 字面量 5，别写成从分组数量推导（常规类现在是 9 种，推导会得到 9）。
  */
 export const WEEKLY_FOLLOWUP_QUOTA = 5;
 
@@ -209,15 +219,18 @@ export interface FollowUpWeeklyType {
 
 /**
  * 本周流程打卡进度。
- * 口径按**覆盖的打卡类型种类**统计，不按打卡条数——
- * 同一个孩子一周回访三次课堂总结，也只算覆盖了 1 种。
+ *
+ * 主指标是 **totalModuleHits**（板块服务总次数）：本周所有回访里板块被覆盖的总次数，
+ * 每条回访覆盖几个板块就计几次，反映这周的教学服务量。
+ * covered（覆盖的板块种类数）与 records（回访条数）是副指标。
  */
 export interface FollowUpWeeklyStats {
   weekStart: string; // 北京周一 YYYY-MM-DD
   weekEnd: string; // 北京周日 YYYY-MM-DD
-  quota: number; // 常规类配额
-  covered: number; // 本周覆盖的常规类种类数
-  records: number; // 本周打卡总条数
+  quota: number; // 学校口径的 5 项，仅作参考
+  covered: number; // 本周覆盖的板块种类数
+  records: number; // 本周回访条数
+  totalModuleHits: number; // 本周板块被覆盖的总次数（看板主指标）
   types: FollowUpWeeklyType[];
 }
 
