@@ -180,6 +180,8 @@ export default function ReportEdit() {
   const [aiField, setAiField] = useState<'summary' | 'plan' | null>(null);
   const aiAbort = useRef<AbortController | null>(null);
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
+  const [showImportLastMonth, setShowImportLastMonth] = useState(false);
+  const [importingLastMonth, setImportingLastMonth] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -330,6 +332,60 @@ export default function ReportEdit() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '添加失败');
       return null;
+    }
+  }
+
+  /**
+   * 从上月规划导入到本月总结。
+   * 上月规划里的课程默认都是已上的，所以导入到总结后自动标记出勤/笔记/作业完成。
+   */
+  async function importFromLastMonth() {
+    if (!report || !report.student_id) return;
+    setImportingLastMonth(true);
+    try {
+      // 查询该学生的所有报告，找到上个月的
+      const res = await api.request<{ reports: MonthlyReport[] }>(
+        `/reports?studentId=${report.student_id}`
+      );
+      // 按时间排序，找到当前报告的前一个月
+      const sorted = res.reports.sort((a, b) => a.year_month.localeCompare(b.year_month));
+      const currentIndex = sorted.findIndex((r) => r.id === report.id);
+      if (currentIndex === -1 || currentIndex === 0) {
+        toast.error('没有找到上月的报告');
+        return;
+      }
+      const lastReport = sorted[currentIndex - 1];
+
+      // 获取上月的报告详情
+      const lastReportData = await api.request<{ report: MonthlyReport; items: ReportItem[] }>(
+        `/reports/${lastReport.id}`
+      );
+      const planItems = lastReportData.items.filter((i) => i.kind === 'plan');
+
+      if (planItems.length === 0) {
+        toast.error('上月的规划里没有课程内容');
+        return;
+      }
+
+      // 导入到本月总结
+      let added = 0;
+      for (const item of planItems) {
+        await addItem('summary', {
+          content: item.content,
+          type: item.type,
+          score: item.score,
+          difficulty: item.difficulty,
+          course_id: item.course_id, // 保持目录关联
+        });
+        added++;
+      }
+
+      toast.success('已从上月规划导入 ' + added + ' 门课');
+      setShowImportLastMonth(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导入失败');
+    } finally {
+      setImportingLastMonth(false);
     }
   }
 
@@ -516,6 +572,16 @@ export default function ReportEdit() {
               <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setShowPicker('summary')}>
                 从课程目录添加
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<CalendarDays className="h-4 w-4" />}
+                loading={importingLastMonth}
+                onClick={() => setShowImportLastMonth(true)}
+                title="从上月规划导入到本月总结"
+              >
+                从上月导入
+              </Button>
             </div>
           )
         }
@@ -630,6 +696,10 @@ export default function ReportEdit() {
         reportTerm={report.term}
         addedIds={pickerAddedIds}
         onClose={() => setShowPicker(null)}
+        onCoursesUsed={(courseIds) => {
+          // 课程使用记录回调（可用于后续统计）
+          console.debug('[CoursePicker] 常用课程已更新', courseIds.length, '门');
+        }}
         onPick={async (courses) => {
           const kind = showPicker || 'plan';
           let base = kind === 'plan' ? nextSeq(planItems) : nextSeq(summaryItems);
@@ -660,6 +730,16 @@ export default function ReportEdit() {
         description={`${report.student_name} · ${formatYearMonth(report.year_month)} 及其 ${items.length} 条明细会一起删掉，不可恢复。`}
         confirmText="删除"
         danger
+      />
+
+      <ConfirmDialog
+        open={showImportLastMonth}
+        onCancel={() => setShowImportLastMonth(false)}
+        onConfirm={() => void importFromLastMonth()}
+        loading={importingLastMonth}
+        title="从上月规划导入？"
+        description="上月规划里的课程会导入到本月总结，并保持课程目录关联。导入后你可以手动调整课程内容。"
+        confirmText="导入"
       />
     </div>
   );
@@ -733,8 +813,67 @@ function ItemTable({
   onRemove: (id: number) => Promise<void>;
   onMove: (id: number, dir: 'up' | 'down') => Promise<void>;
 }) {
+  const [batchUpdating, setBatchUpdating] = useState<string | null>(null);
+
+  const batchUpdate = async (field: 'attendance' | 'notes_done' | 'mistakes_done' | 'homework_done', value: string) => {
+    if (items.length === 0) return;
+    setBatchUpdating(field);
+    try {
+      await Promise.all(
+        items.map((item) => onPatch(item.id, field, value))
+      );
+    } finally {
+      setBatchUpdating(null);
+    }
+  };
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-100">
+    <div>
+      {/* 批量操作栏（仅当有出勤/作业等列时显示） */}
+      {items.length > 1 && cols.some((c) => ['attendance', 'notes_done', 'mistakes_done', 'homework_done'].includes(c.key)) && (
+        <div className="flex items-center justify-between mb-2 px-1">
+          <span className="text-xs text-slate-400">
+            {items.length} 条课程
+          </span>
+          <div className="flex items-center gap-1.5">
+            {cols.some((c) => c.key === 'attendance') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('attendance', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为已出勤"
+              >
+                {batchUpdating === 'attendance' ? '处理中…' : '✓ 全部出勤'}
+              </button>
+            )}
+            {cols.some((c) => c.key === 'notes_done') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('notes_done', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为笔记已完成"
+              >
+                {batchUpdating === 'notes_done' ? '处理中…' : '📝 全部笔记'}
+              </button>
+            )}
+            {cols.some((c) => c.key === 'homework_done') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('homework_done', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为作业已完成"
+              >
+                {batchUpdating === 'homework_done' ? '处理中…' : '📚 全部作业'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
       {cols.map((c) =>
         c.list ? (
           <datalist key={'dl-' + c.key} id={`list-${c.list.join()}`}>
@@ -787,6 +926,7 @@ function ItemTable({
         </tbody>
       </table>
     </div>
+    </div>
   );
 }
 
@@ -838,7 +978,24 @@ function ExamRows({
  * 往里塞寒假的课，目录那边「引用」也跟着对不上。年级 / 学期 / 类型可以再收窄，
  * 「查看全部」一键放开所有条件。已经加进当前面板的课标灰、不能再选，
  * 免得同一门课在总结里写两遍。
+ *
+ * 新增：常用课程缓存 - 记录最近使用的课程，下次打开时优先展示
  */
+
+/**
+ * localStorage 常用课程条目校验：必须是完整课程对象（id + content 都是合法类型）。
+ * 缓存里历史上存过纯 id 数字数组，渲染端一旦当对象用会直接白屏，
+ * 所以读取端统一先过这道校验，不合法的条目一律丢弃。
+ */
+function isRecentCourseEntry(v: unknown): v is CatalogCourseOption {
+  return (
+    !!v &&
+    typeof v === 'object' &&
+    typeof (v as CatalogCourseOption).id === 'number' &&
+    typeof (v as CatalogCourseOption).content === 'string'
+  );
+}
+
 function CoursePicker({
   open,
   kind,
@@ -848,6 +1005,7 @@ function CoursePicker({
   addedIds,
   onClose,
   onPick,
+  onCoursesUsed,
 }: {
   open: boolean;
   kind: 'summary' | 'plan';
@@ -857,6 +1015,7 @@ function CoursePicker({
   addedIds: Set<number>;
   onClose: () => void;
   onPick: (courses: CatalogCourseOption[]) => Promise<void>;
+  onCoursesUsed?: (courseIds: number[]) => void;
 }) {
   const [courses, setCourses] = useState<CatalogCourseOption[]>([]);
   const [total, setTotal] = useState(0);
@@ -871,8 +1030,26 @@ function CoursePicker({
   const [busy, setBusy] = useState(false);
   const [grades, setGrades] = useState<string[]>([]);
   const [terms, setTerms] = useState<string[]>([]);
+  const [recentCourses, setRecentCourses] = useState<CatalogCourseOption[]>([]);
+  const [showRecent, setShowRecent] = useState(false);
   /** 自动展开标记：「同步」类型无结果时自动放开，避免用户看到空列表 */
   const autoClearedType = useRef(false);
+
+  // 加载常用课程（localStorage 缓存）。存的是完整课程对象，脏数据（含旧版的纯 id 数组）一律过滤
+  useEffect(() => {
+    if (!open) return;
+    const key = `recent-courses-${subject}`;
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || '[]');
+      const saved = Array.isArray(raw) ? raw.filter(isRecentCourseEntry) : [];
+      if (saved.length > 0) {
+        setRecentCourses(saved);
+        setShowRecent(true);
+      }
+    } catch {
+      // 解析失败忽略
+    }
+  }, [open, subject]);
 
   useEffect(() => {
     if (!open) {
@@ -978,6 +1155,42 @@ function CoursePicker({
     });
   };
 
+  // 选中课程的候选池：当前筛选结果 + 不在其中的常用课程。
+  // 常用课程可能被学期 / 类型筛选挡在列表外，但点它的快捷按钮就是要加它。
+  const pickedPool = useMemo(
+    () => [...courses, ...recentCourses.filter((rc) => !courses.some((c) => c.id === rc.id))],
+    [courses, recentCourses]
+  );
+
+  /** 点「添加 N 门」：把选中的课交给回调，并把它们记进常用课程缓存（存完整课程对象） */
+  const commitPick = async () => {
+    if (picked.size === 0) return;
+    setBusy(true);
+    try {
+      const pickedCourses = pickedPool.filter((c) => picked.has(c.id));
+      if (pickedCourses.length > 0) {
+        const key = `recent-courses-${subject}`;
+        let prev: CatalogCourseOption[] = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem(key) || '[]');
+          if (Array.isArray(raw)) prev = raw.filter(isRecentCourseEntry);
+        } catch {
+          // 解析失败忽略
+        }
+        // 新选的排前面 + 去重 + 去已添加的，最多保留 20 个
+        const merged = [
+          ...pickedCourses,
+          ...prev.filter((p) => !pickedCourses.some((c) => c.id === p.id) && !addedIds.has(p.id)),
+        ].slice(0, 20);
+        localStorage.setItem(key, JSON.stringify(merged));
+        onCoursesUsed?.(pickedCourses.map((c) => c.id));
+      }
+      await onPick(pickedCourses);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       open={open}
@@ -985,29 +1198,49 @@ function CoursePicker({
       title={'从课程目录添加 · ' + (kind === 'plan' ? '规划' : '总结')}
       size="lg"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-slate-400">已选 {picked.size} 门</span>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              取消
-            </Button>
-            <Button
-              icon={<FilePlus2 className="h-4 w-4" />}
-              disabled={picked.size === 0}
-              loading={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await onPick(courses.filter((c) => picked.has(c.id)));
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              添加 {picked.size} 门
-            </Button>
+        picked.size > 0 ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium text-slate-700">已选 {picked.size} 门课</span>
+              {picked.size > 1 && (
+                <span className="text-xs text-slate-400">
+                  {pickedPool.filter((c) => picked.has(c.id)).slice(0, 3).map((c) => c.content).join('、')}
+                  {picked.size > 3 && '…'}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                取消
+              </Button>
+              <Button
+                icon={<FilePlus2 className="h-4 w-4" />}
+                disabled={picked.size === 0}
+                loading={busy}
+                onClick={() => void commitPick()}
+              >
+                添加 {picked.size} 门
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">已选 {picked.size} 门课</span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                取消
+              </Button>
+              <Button
+                icon={<FilePlus2 className="h-4 w-4" />}
+                disabled={picked.size === 0}
+                loading={busy}
+                onClick={() => void commitPick()}
+              >
+                添加 {picked.size} 门
+              </Button>
+            </div>
+          </div>
+        )
       }
     >
       <div className="space-y-3">
@@ -1040,6 +1273,49 @@ function CoursePicker({
             aria-label="课程类型"
           />
         </div>
+
+        {/* 常用课程快捷栏 */}
+        {showRecent && recentCourses.length > 0 && !showAll && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-slate-500">
+                <span className="mr-1">📌</span>常用课程（点击快速选择）
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowRecent(false)}
+                className="text-xs text-slate-400 hover:text-slate-600"
+              >
+                收起
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {recentCourses.map((c) => {
+                const isAdded = addedIds.has(c.id);
+                const isPicked = picked.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    disabled={isAdded}
+                    onClick={() => toggle(c)}
+                    className={cn(
+                      'rounded-lg px-2 py-1 text-xs transition',
+                      isAdded
+                        ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                        : isPicked
+                        ? 'bg-brand-100 text-brand-700 ring-1 ring-brand-300'
+                        : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-brand-50'
+                    )}
+                  >
+                    {c.content.length > 20 ? c.content.slice(0, 20) + '…' : c.content}
+                    {isAdded && <span className="ml-1 text-[10px]">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-2 text-xs">
           <span className="truncate text-slate-400">
