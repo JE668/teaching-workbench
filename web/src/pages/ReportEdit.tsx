@@ -397,6 +397,10 @@ export default function ReportEdit() {
         {
           onDelta: (text) => appendIntro(introKey, text),
           onDone: ({ content }) => {
+            if (!content) {
+              toast.error('AI 未返回任何内容，请检查模型配置后重试');
+              return;
+            }
             void patchText(introKey, content);
             toast.success('AI 编写完成，可以直接改');
           },

@@ -78,7 +78,12 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
       full += delta;
       send('delta', { text: delta });
     }
-    send('done', { content: full.trim() });
+    if (!full.trim()) {
+      log.warn({ reportId: id, field }, 'AI 流式结束但未产出内容，发送 error 事件');
+      send('error', { error: 'AI 未返回任何内容，请检查模型配置后重试' });
+    } else {
+      send('done', { content: full.trim() });
+    }
   } catch (error: any) {
     const message = String(error?.message || 'AI 生成失败');
     log.error({ error: message, reportId: id, field }, '月度总结 / 规划 AI 生成失败');
