@@ -25,6 +25,9 @@ const router = Router();
 
 const STATUS_VALUES = new Set(['draft', 'sent', 'archived']);
 
+/** 手工保存评课报告的长度上限（和生成时的 max_tokens 同量级，防误贴大段无关文本） */
+const MAX_REPORT_LEN = 12000;
+
 function fetchWithTeacher(userId: number, id: number): any | undefined {
   return db
     .prepare(
@@ -522,6 +525,31 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
     send('error', { error: message });
   } finally {
     if (!res.writableEnded) res.end();
+  }
+});
+
+/** 手工编辑后保存评课报告。
+ *
+ * AI 生成 → 人工改字 → 再导出 Word 时，导出的是改过的这份：
+ * 这里只更新报告正文，不动 report_at（它仍记录 AI 生成的那一刻）。
+ */
+router.patch('/:id/report', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: '听评课记录 ID 无效' });
+
+    const existing = db.prepare('SELECT id FROM observations WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    if (!existing) return res.status(404).json({ error: '听评课记录不存在' });
+
+    const report = typeof req.body?.report === 'string' ? req.body.report : '';
+    if (!report.trim()) return res.status(400).json({ error: '评课报告不能为空' });
+    if (report.length > MAX_REPORT_LEN) return res.status(400).json({ error: '评课报告过长，请精简后再保存' });
+
+    db.prepare('UPDATE observations SET report = ? WHERE id = ? AND user_id = ?').run(report.trim(), id, userId);
+    res.json({ report: report.trim() });
+  } catch (error: any) {
+    res.status(500).json({ error: '保存评课报告失败', message: error.message });
   }
 });
 

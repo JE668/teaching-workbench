@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ObservationEdit from './ObservationEdit';
+import { Routes, Route } from 'react-router-dom';
 import { renderWithProviders } from '../test/test-utils';
 import { api } from '../api/client';
 
@@ -10,8 +11,10 @@ vi.mock('../api/client', () => ({
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
+    patch: vi.fn(),
     delete: vi.fn(),
     download: vi.fn(),
+    downloadFile: vi.fn(),
     streamPost: vi.fn(),
     getToken: vi.fn(() => 'test-token'),
   },
@@ -19,6 +22,9 @@ vi.mock('../api/client', () => ({
 
 const get = api.get as Mock;
 const put = api.put as Mock;
+const post = api.post as Mock;
+const patch = api.patch as Mock;
+const downloadFile = api.downloadFile as Mock;
 const streamPost = api.streamPost as Mock;
 
 const RECORD = {
@@ -119,5 +125,109 @@ describe('生成前选定总体评价等级', () => {
       ['优秀', '良好', '合格', '有待提高'].some((g) => b.textContent?.includes(g))
     );
     expect(gradeButtons).toHaveLength(4);
+  });
+});
+
+describe('评课报告可编辑', () => {
+  const savedRecord = { ...RECORD, report: REPORT, reportAt: '2026-10-17 09:30:00' };
+
+  beforeEach(() => {
+    get.mockImplementation(async (path: string) =>
+      path === '/teachers' ? { teachers: [] } : { observation: savedRecord }
+    );
+    patch.mockResolvedValue({ report: REPORT + '（改过）' });
+    downloadFile.mockResolvedValue({ blob: new Blob(['x']), filename: 'test.docx' });
+  });
+
+  it('生成后的报告是可编辑文本框，改字后才出现「保存报告修改」', async () => {
+    const user = userEvent.setup();
+    renderEdit();
+
+    const box = await screen.findByDisplayValue(/综合评价与建议/, {}, { timeout: 4000 });
+    expect(box).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /保存报告修改/ })).not.toBeInTheDocument();
+
+    await user.type(box, '（改过）');
+    expect(await screen.findByRole('button', { name: /保存报告修改/ })).toBeInTheDocument();
+  });
+
+  it('点「保存报告修改」提交 PATCH，成功后按钮消失', async () => {
+    const user = userEvent.setup();
+    renderEdit();
+
+    const box = await screen.findByDisplayValue(/综合评价与建议/, {}, { timeout: 4000 });
+    await user.type(box, '（改过）');
+    await user.click(await screen.findByRole('button', { name: /保存报告修改/ }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][0]).toBe('/observations/1/report');
+    expect(patch.mock.calls[0][1].report).toContain('（改过）');
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /保存报告修改/ })).not.toBeInTheDocument()
+    );
+  });
+
+  it('下载 Word 前先把未保存的手工改动落库，导出的才是改后版本', async () => {
+    const user = userEvent.setup();
+    renderEdit();
+
+    const box = await screen.findByDisplayValue(/综合评价与建议/, {}, { timeout: 4000 });
+    await user.type(box, '（改过）');
+    await user.click(screen.getByRole('button', { name: /下载 Word/ }));
+
+    await waitFor(() => expect(downloadFile).toHaveBeenCalledTimes(1));
+    expect(downloadFile.mock.calls[0][0]).toBe('/observations/1/docx');
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch.mock.calls[0][1].report).toContain('（改过）');
+  });
+});
+
+describe('新建记录生成报告：不重复建记录', () => {
+  function renderNew() {
+    return renderWithProviders(
+      <Routes>
+        <Route path="/observations/new" element={<ObservationEdit />} />
+        <Route path="/observations/:id" element={<ObservationEdit />} />
+      </Routes>,
+      { route: '/observations/new' }
+    );
+  }
+
+  beforeEach(() => {
+    post.mockResolvedValue({ observation: { ...RECORD, id: 7 } });
+    put.mockResolvedValue({ observation: { ...RECORD, id: 7 } });
+  });
+
+  it('点生成后自动跳到真实记录地址；再点保存走更新，不再新建', async () => {
+    const user = userEvent.setup();
+    renderNew();
+
+    await user.type(screen.getByLabelText(/课题/), '分数加减法');
+    await user.click(screen.getByRole('button', { name: /AI 生成评课/ }));
+    await waitFor(() => expect(streamPost).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledTimes(1);
+    // 流式地址就是刚建好的那条记录
+    expect(streamPost.mock.calls[0][0]).toBe('/observations/7/report/stream');
+
+    await user.click(await screen.findByRole('button', { name: /保存修改/ }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0][0]).toBe('/observations/7');
+  });
+
+  it('生成完再点重新生成，也只更新同一条记录', async () => {
+    const user = userEvent.setup();
+    renderNew();
+
+    await user.type(screen.getByLabelText(/课题/), '分数加减法');
+    await user.click(screen.getByRole('button', { name: /AI 生成评课/ }));
+    await waitFor(() => expect(streamPost).toHaveBeenCalledTimes(1));
+
+    await user.click(await screen.findByRole('button', { name: /重新生成/ }));
+    await waitFor(() => expect(streamPost).toHaveBeenCalledTimes(2));
+
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(streamPost.mock.calls[1][0]).toBe('/observations/7/report/stream');
   });
 });

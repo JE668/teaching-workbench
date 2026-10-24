@@ -342,7 +342,12 @@ function paraAt(s: string, from: number): { s: number; e: number } | null {
  * 紧跟不了 </w:p> 时继续向后扩张，越过段落边界把整段正文一起吞掉。
  * 这里按段落边界逐个取段、逐段判定，正则只用来数 run。
  */
-function dropAdjacentEmptyParagraphs(out: string, marker: string, side: 'before' | 'after'): string {
+function dropAdjacentEmptyParagraphs(
+  out: string,
+  marker: string,
+  side: 'before' | 'after',
+  keepEmpty: boolean = false
+): string {
   const at = out.indexOf(marker);
   if (at < 0) return out;
 
@@ -371,16 +376,58 @@ function dropAdjacentEmptyParagraphs(out: string, marker: string, side: 'before'
   }
 
   // after：从占位符段落末尾往后，逐个吃掉紧贴着的空段落
+  // （keepEmpty 时先让过第一个空段落——那行是块与块之间的视觉留白）
   const pEnd = cell.indexOf('</w:p>', local) + '</w:p>'.length;
-  let dropTo = pEnd;
+  let dropFrom = pEnd;
+  if (keepEmpty) {
+    const first = paraAt(cell, dropFrom);
+    if (first && first.s === dropFrom && isEmptyPara(cell.slice(first.s, first.e))) {
+      dropFrom = first.e;
+    }
+  }
+  let dropTo = dropFrom;
   for (;;) {
     const next = paraAt(cell, dropTo);
     if (!next || next.s !== dropTo) break; // 必须紧贴占位符段落，中间不能有别的内容
     if (!isEmptyPara(cell.slice(next.s, next.e))) break;
     dropTo = next.e;
   }
-  if (dropTo === pEnd) return out;
-  return out.slice(0, tcStart + pEnd) + out.slice(tcStart + dropTo);
+  if (dropTo === dropFrom) return out;
+  return out.slice(0, tcStart + dropFrom) + out.slice(tcStart + dropTo);
+}
+
+/**
+ * 把包含 anchor 的那个 <w:tc> 内**连续的空段落压成一行**（保留一个）。
+ *
+ * 某个综合块为空时，injectParagraph 会把占位段落换成一个空段落，
+ * 它紧跟着上一级留下的那行留白 → 空行翻倍。这里统一收口。
+ */
+function collapseEmptyRuns(out: string, cellAnchor: string): string {
+  const at = out.indexOf(cellAnchor);
+  if (at < 0) return out;
+  const tcStart = Math.max(out.lastIndexOf('<w:tc>', at), out.lastIndexOf('<w:tc ', at));
+  const tcEnd = out.indexOf('</w:tc>', at);
+  if (tcStart < 0 || tcEnd <= at) return out;
+
+  const cell = out.slice(tcStart, tcEnd);
+  const kept: string[] = [];
+  let prevEmpty = false;
+  let dropped = false;
+  let cursor = 0;
+  for (;;) {
+    const para = paraAt(cell, cursor);
+    if (!para) break;
+    const empty = isEmptyPara(cell.slice(para.s, para.e));
+    if (empty && prevEmpty) {
+      dropped = true; // 连续空行只留第一行
+    } else {
+      kept.push(cell.slice(para.s, para.e));
+    }
+    prevEmpty = empty;
+    cursor = para.e;
+  }
+  if (!dropped) return out;
+  return out.slice(0, tcStart) + kept.join('') + out.slice(tcEnd);
 }
 
 /** 渲染带占位符模板，返回已填充的 .docx（Node Buffer）。 */
@@ -393,8 +440,9 @@ export async function buildObservationDocx(d: ObservationDocxData): Promise<Buff
   (d.evals || []).forEach((_, i) => {
     xml = dropAdjacentEmptyParagraphs(xml, '{{eval' + (i + 1) + '}}', 'before');
   });
+  // 综合三块（亮点/优化/建议）之间保留一行空段当视觉留白：全删会挤成一片
   for (const tag of ['highlight', 'optimize', 'suggest']) {
-    xml = dropAdjacentEmptyParagraphs(xml, '{{' + tag + '}}', 'after');
+    xml = dropAdjacentEmptyParagraphs(xml, '{{' + tag + '}}', 'after', true);
   }
 
   // 等级：命中的那个填 ✓，其余保留空格
@@ -426,6 +474,9 @@ export async function buildObservationDocx(d: ObservationDocxData): Promise<Buff
   })) {
     xml = injectParagraph(xml, tag, lines);
   }
+
+  // 某块为空时会多出一个空段落，和上一级的留白粘成两行 → 压回一行
+  xml = collapseEmptyRuns(xml, '综合评价与建议');
 
   zip.file('word/document.xml', xml);
   return zip.generate({ type: 'nodebuffer' });

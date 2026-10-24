@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -165,18 +165,29 @@ const GRADE_HINTS: Record<string, string> = {
 export default function ObservationEdit() {
   const { id } = useParams();
   const recordId = id ? parseInt(id, 10) : null;
-  const isNew = recordId === null;
   const navigate = useNavigate();
   const toast = useToast();
+
+  /** 新建时 POST 成功拿到的记录 id —— 不记住的话，下次点保存/生成会再建一条记录 */
+  const [localId, setLocalId] = useState<number | null>(null);
+  /** URL 还是 /observations/new 但记录已建好：之后都是更新，不再新建 */
+  const isNew = recordId === null && localId === null;
 
   const [loading, setLoading] = useState(!isNew);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [report, setReport] = useState('');
   const [reportAt, setReportAt] = useState<string | null>(null);
+  /** 已落库的报告正文：和 report 比对就知道有没有未保存的手工改动 */
+  const [savedReport, setSavedReport] = useState('');
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [savingReport, setSavingReport] = useState(false);
+  /** 生成中标记：别把手中的半成品报告存进数据库 */
+  const generatingRef = useRef(false);
+  /** 刚因「记录建好了」而跳转过来的那一次加载：跳过，否则拉回的空报告会盖掉流式内容 */
+  const skipLoadRef = useRef(false);
 
   // 载入老师列表
   useEffect(() => {
@@ -191,6 +202,10 @@ export default function ObservationEdit() {
   // 编辑既有记录
   useEffect(() => {
     if (isNew) return;
+    if (skipLoadRef.current) {
+      skipLoadRef.current = false;
+      return; // 新建记录后自动跳转来的这一次：本地状态就是最新的，不必重拉
+    }
     (async () => {
       try {
         const r = await api.get('/observations/' + recordId);
@@ -212,6 +227,7 @@ export default function ObservationEdit() {
           teacherReply: o.teacherReply || '',
         });
         setReport(o.report || '');
+        setSavedReport(o.report || '');
         setReportAt(o.reportAt || null);
       } catch (err: any) {
         toast.error('加载失败：' + err.message);
@@ -250,14 +266,18 @@ export default function ObservationEdit() {
       teacherReply: form.teacherReply,
     };
 
-    if (isNew) {
-      const r = await api.post('/observations', payload);
-      return r.observation.id;
+    // URL 上还没有 id 但记录已经建过（新建后点了「AI 生成评课」）→ 走更新，不再新建
+    const targetId = recordId ?? localId;
+    if (targetId) {
+      const r = await api.put('/observations/' + targetId, payload);
+      setReport(r.observation.report || '');
+      setSavedReport(r.observation.report || '');
+      setReportAt(r.observation.reportAt || null);
+      return targetId;
     }
-    const r = await api.put('/observations/' + recordId, payload);
-    setReport(r.observation.report || '');
-    setReportAt(r.observation.reportAt || null);
-    return recordId as number;
+    const r = await api.post('/observations', payload);
+    setLocalId(r.observation.id);
+    return r.observation.id;
   };
 
   const handleSave = async () => {
@@ -279,14 +299,24 @@ export default function ObservationEdit() {
 
   const handleGenerate = async () => {
     setGenerating(true);
+    generatingRef.current = true;
     try {
       const tid = await save();
+      // 新建记录时自动跳到真实地址，刷新、重进都不会丢这条数据
+      if (recordId === null) {
+        skipLoadRef.current = true;
+        navigate('/observations/' + tid, { replace: true });
+      }
       setReport(''); // 清空旧报告，开始流式
+      setSavedReport('');
       // 生成前选定的等级一并下发：AI 据此写整份评课，而不只是改一行结论
       await api.streamPost('/observations/' + tid + '/report/stream', { overallGrade: form.overallGrade || undefined }, {
         onDelta: (text) => setReport((prev) => prev + text),
         onDone: (payload: any) => {
-          if (payload?.report) setReport(payload.report);
+          if (payload?.report) {
+            setReport(payload.report);
+            setSavedReport(payload.report);
+          }
           setReportAt(localNowISO());
           const grade = payload?.suggestedGrade || payload?.overallGrade;
           if (grade) setForm((f) => ({ ...f, overallGrade: f.overallGrade || grade }));
@@ -297,6 +327,7 @@ export default function ObservationEdit() {
     } catch (err: any) {
       toast.error('生成失败：' + err.message);
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
     }
   };
@@ -304,6 +335,8 @@ export default function ObservationEdit() {
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const { head, tail } = splitReport(report);
+  /** 本地正文和库里那份不一致 → 有未保存的手工改动 */
+  const reportDirty = report.trim() !== savedReport.trim();
   const teacherOptions = [
     ...teachers.map((t) => ({
       value: String(t.id),
@@ -311,6 +344,29 @@ export default function ObservationEdit() {
     })),
     { value: NEW, label: '＋ 新建老师' },
   ];
+
+  /** 把当前报告正文存进数据库。Word 是后端按库里那份渲染的，导出前先存一次 */
+  const persistReport = async (): Promise<void> => {
+    const targetId = recordId ?? localId;
+    if (!targetId || !report.trim() || generatingRef.current) return;
+    if (report.trim() === savedReport.trim()) return;
+    setSavingReport(true);
+    try {
+      const r = await api.patch('/observations/' + targetId + '/report', { report });
+      setSavedReport(r.report ?? report);
+    } finally {
+      setSavingReport(false);
+    }
+  };
+
+  const handleSaveReport = async () => {
+    try {
+      await persistReport();
+      toast.success('评课报告已保存');
+    } catch (err: any) {
+      toast.error('保存报告失败：' + err.message);
+    }
+  };
 
   const downloadTxt = () => {
     const blob = new Blob([report], { type: 'text/plain;charset=utf-8' });
@@ -321,11 +377,14 @@ export default function ObservationEdit() {
   };
 
   const downloadDocx = async () => {
-    if (!recordId) return;
+    const targetId = recordId ?? localId;
+    if (!targetId) return;
     setDownloading(true);
     try {
+      // 手工改过的话先落库，导出的 Word 才是改后的版本
+      await persistReport();
       // 文件名由后端给（星火个性化教学听评课表 10.17 周江凌.docx），前端别自己拼
-      const { blob, filename } = await api.downloadFile('/observations/' + recordId + '/docx');
+      const { blob, filename } = await api.downloadFile('/observations/' + targetId + '/docx');
       const display =
         form.newTeacherName || teachers.find((t: Teacher) => String(t.id) === form.teacherSel)?.name || '';
       saveBlob(blob, /\.docx$/i.test(filename) ? filename : buildReportFilename(display, form.observedAt, 'docx'));
@@ -547,7 +606,7 @@ export default function ObservationEdit() {
               title="评课报告"
               description={
                 report
-                  ? '已生成 · 复制进 Word 表即可。可随时重新生成'
+                  ? '已生成 · 可直接改字，导出 Word 就是改后的版本'
                   : '尚未生成 · 选好总体评价等级后点「AI 生成评课」'
               }
               icon={<FileText className="h-4 w-4" />}
@@ -562,12 +621,23 @@ export default function ObservationEdit() {
                   >
                     {report ? '重新生成' : 'AI 生成评课'}
                   </Button>
+                  {report && reportDirty ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<Save className="h-3.5 w-3.5" />}
+                      loading={savingReport}
+                      onClick={handleSaveReport}
+                    >
+                      保存报告修改
+                    </Button>
+                  ) : null}
                   {report ? (
                     <Button variant="outline" size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={downloadTxt}>
                       下载 .txt
                     </Button>
                   ) : null}
-                  {report && recordId ? (
+                  {report && (recordId ?? localId) ? (
                     <Button
                       variant="secondary"
                       size="sm"
@@ -594,10 +664,16 @@ export default function ObservationEdit() {
 
             {report ? (
               <div className="space-y-4 p-5">
-                {/* 报告正文（等宽保留换行，方便整段复制进 Word） */}
-                <pre className="whitespace-pre-wrap rounded-xl bg-slate-50 p-4 font-sans text-sm leading-relaxed text-slate-700 ring-1 ring-slate-100">
-                  {report}
-                </pre>
+                {/* 报告正文：可编辑，改完保存/导出即生效 */}
+                <textarea
+                  value={report}
+                  onChange={(e) => setReport(e.target.value)}
+                  rows={16}
+                  disabled={generating}
+                  spellCheck={false}
+                  className="w-full rounded-xl bg-slate-50 p-4 font-sans text-sm leading-relaxed text-slate-700 ring-1 ring-slate-100 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 disabled:opacity-60"
+                  style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}
+                />
 
                 {/* 分块复制 */}
                 <div className="flex flex-wrap gap-2">

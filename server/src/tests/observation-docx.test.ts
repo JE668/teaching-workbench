@@ -279,17 +279,26 @@ describe('听评课 Word 导出（docx）', () => {
     }
   });
 
-  test('综合三块之间不留空行（回归：亮点/优化/建议的占位符下方各多两个空段落）', async () => {
+  test('综合三块之间各留一行空行（回归：模板占位符下方各多两个空段落，要压到只剩一行）', async () => {
     const xml = await makeAndExport(REPORT);
 
-    // 综合三块在同一个大单元格里，取它的段落列表
+    // 综合四块在同一个大单元格里，取它的段落列表
     const paras = cellLines(xml, '二、有待优化的部分：');
 
-    // 每块的最后一条内容，后面都应该直接接下一块的提示语
+    // 每块的最后一条内容，后面都应正好有一个空行，再接下一块的提示语
     for (const value of ['板书清晰规范。', '练习梯度偏单一。', '分层布置练习。']) {
       const i = paras.findIndex((l) => l.includes(value));
       assert.ok(i >= 0, '综合区应能找到「' + value + '」');
-      assert.ok(paras[i + 1] && paras[i + 1].trim().length > 0, '「' + value + '」后面不应紧跟空行');
+      assert.equal((paras[i + 1] || '').trim(), '', '「' + value + '」后面应有一个空行做块间留白');
+      assert.ok(paras[i + 2] && paras[i + 2].trim().length > 0, '空行之后应直接接下一块提示语');
+    }
+
+    // 全单元格不允许出现连续两个空行（模板里每块下方多两个，多删少删都不对）
+    for (let k = 0; k + 1 < paras.length; k++) {
+      assert.ok(
+        !(paras[k].trim() === '' && paras[k + 1].trim() === ''),
+        '综合区第 ' + (k + 1) + ' 段不应出现连续空行'
+      );
     }
   });
 
@@ -385,5 +394,73 @@ describe('听评课 Word 导出（docx）', () => {
       headers: { Authorization: 'Bearer ' + other },
     });
     assert.equal(res.status, 404);
+  });
+
+  describe('手工编辑评课报告（PATCH /:id/report）', () => {
+    test('改完保存 → Word 导出取的是改后的内容', async () => {
+      resetObservationGenerator();
+      setObservationGenerator(async () => REPORT);
+      const o = await req('POST', '/api/observations', {
+        token,
+        body: { topic: '可编辑校验', lessonType: 'new', observedAt: '2026-10-17', classNotes: 'x' },
+      });
+      assert.equal(o.status, 200);
+      const id = o.body.observation.id;
+
+      const gen = await req('POST', `/api/observations/${id}/report`, { token, body: {} });
+      assert.equal(gen.status, 200);
+
+      // 听课人手工改了一段亮点
+      const edited = REPORT.replace('导入用生活实例唤起兴趣。', '手工改过的亮点描述。');
+      const p = await req('PATCH', `/api/observations/${id}/report`, { token, body: { report: edited } });
+      assert.equal(p.status, 200);
+      assert.ok(p.body.report.includes('手工改过的亮点描述'), '响应应回显保存后的正文');
+
+      // 落库
+      const got = await req('GET', `/api/observations/${id}`, { token });
+      assert.equal(got.status, 200);
+      assert.ok(got.body.observation.report.includes('手工改过的亮点描述'), '报告正文应已更新');
+
+      // 导出 Word：填进表格的是改后的文本，不是 AI 原文
+      const res = await fetch(url(`/api/observations/${id}/docx`), {
+        headers: { Authorization: 'Bearer ' + token },
+      });
+      assert.equal(res.status, 200);
+      const zip = await JSZip.loadAsync(Buffer.from(await res.arrayBuffer()));
+      const xml = await (zip.file('word/document.xml') as any).async('string');
+      assert.ok(xml.includes('手工改过的亮点描述'), 'Word 里应是手工改过的内容');
+      assert.ok(!xml.includes('导入用生活实例'), 'Word 里不应再有 AI 原文那句');
+    });
+
+    test('空报告 / 缺字段 → 400', async () => {
+      const o = await req('POST', '/api/observations', { token, body: { topic: '空报告' } });
+      assert.equal(o.status, 200);
+      const id = o.body.observation.id;
+      for (const body of [{}, { report: '' }, { report: '   ' }]) {
+        const res = await req('PATCH', `/api/observations/${id}/report`, { token, body });
+        assert.equal(res.status, 400, JSON.stringify(body) + ' 应被拒绝');
+      }
+    });
+
+    test('过长报告 → 400', async () => {
+      const o = await req('POST', '/api/observations', { token, body: { topic: '超长' } });
+      assert.equal(o.status, 200);
+      const res = await req('PATCH', `/api/observations/${o.body.observation.id}/report`, {
+        token,
+        body: { report: '评'.repeat(12001) },
+      });
+      assert.equal(res.status, 400);
+    });
+
+    test('他人记录 → 404（数据隔离）', async () => {
+      const o = await req('POST', '/api/observations', { token, body: { topic: '隔离报告' } });
+      assert.equal(o.status, 200);
+      const other = await createUser('docx-隔离-3');
+      const res = await req('PATCH', `/api/observations/${o.body.observation.id}/report`, {
+        token: other,
+        body: { report: '改不了别人的报告' },
+      });
+      assert.equal(res.status, 404);
+    });
   });
 });
