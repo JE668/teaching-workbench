@@ -180,6 +180,8 @@ export default function ReportEdit() {
   const [aiField, setAiField] = useState<'summary' | 'plan' | null>(null);
   const aiAbort = useRef<AbortController | null>(null);
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
+  const [showImportLastMonth, setShowImportLastMonth] = useState(false);
+  const [importingLastMonth, setImportingLastMonth] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -330,6 +332,60 @@ export default function ReportEdit() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '添加失败');
       return null;
+    }
+  }
+
+  /**
+   * 从上月规划导入到本月总结。
+   * 上月规划里的课程默认都是已上的，所以导入到总结后自动标记出勤/笔记/作业完成。
+   */
+  async function importFromLastMonth() {
+    if (!report || !report.student_id) return;
+    setImportingLastMonth(true);
+    try {
+      // 查询该学生的所有报告，找到上个月的
+      const res = await api.request<{ reports: MonthlyReport[] }>(
+        `/reports?studentId=${report.student_id}`
+      );
+      // 按时间排序，找到当前报告的前一个月
+      const sorted = res.reports.sort((a, b) => a.year_month.localeCompare(b.year_month));
+      const currentIndex = sorted.findIndex((r) => r.id === report.id);
+      if (currentIndex === -1 || currentIndex === 0) {
+        toast.error('没有找到上月的报告');
+        return;
+      }
+      const lastReport = sorted[currentIndex - 1];
+
+      // 获取上月的报告详情
+      const lastReportData = await api.request<{ report: MonthlyReport; items: ReportItem[] }>(
+        `/reports/${lastReport.id}`
+      );
+      const planItems = lastReportData.items.filter((i) => i.kind === 'plan');
+
+      if (planItems.length === 0) {
+        toast.error('上月的规划里没有课程内容');
+        return;
+      }
+
+      // 导入到本月总结
+      let added = 0;
+      for (const item of planItems) {
+        await addItem('summary', {
+          content: item.content,
+          type: item.type,
+          score: item.score,
+          difficulty: item.difficulty,
+          course_id: item.course_id, // 保持目录关联
+        });
+        added++;
+      }
+
+      toast.success('已从上月规划导入 ' + added + ' 门课');
+      setShowImportLastMonth(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '导入失败');
+    } finally {
+      setImportingLastMonth(false);
     }
   }
 
@@ -516,6 +572,16 @@ export default function ReportEdit() {
               <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setShowPicker('summary')}>
                 从课程目录添加
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<CalendarDays className="h-4 w-4" />}
+                loading={importingLastMonth}
+                onClick={() => setShowImportLastMonth(true)}
+                title="从上月规划导入到本月总结"
+              >
+                从上月导入
+              </Button>
             </div>
           )
         }
@@ -664,6 +730,16 @@ export default function ReportEdit() {
         description={`${report.student_name} · ${formatYearMonth(report.year_month)} 及其 ${items.length} 条明细会一起删掉，不可恢复。`}
         confirmText="删除"
         danger
+      />
+
+      <ConfirmDialog
+        open={showImportLastMonth}
+        onCancel={() => setShowImportLastMonth(false)}
+        onConfirm={() => void importFromLastMonth()}
+        loading={importingLastMonth}
+        title="从上月规划导入？"
+        description="上月规划里的课程会导入到本月总结，并保持课程目录关联。导入后你可以手动调整课程内容。"
+        confirmText="导入"
       />
     </div>
   );
