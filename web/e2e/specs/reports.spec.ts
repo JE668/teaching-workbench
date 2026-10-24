@@ -171,6 +171,9 @@ test.describe('月度总结与课程规划', () => {
     await page.getByRole('button', { name: '从课程目录添加' }).nth(1).click();
     const picker2 = page.locator('div.fixed.inset-0.z-50').last();
     await expect(picker2.getByText('从课程目录添加 · 规划')).toBeVisible();
+    // 等待加载完成
+    await expect(picker2.getByLabel('课程类型')).toBeVisible();
+    await expect(picker2.getByLabel('学期')).toBeVisible();
     await picker2.getByLabel('课程类型').selectOption('');
     await picker2.getByLabel('学期').selectOption('春季');
     await expect(picker2.locator('tr', { hasText: '金属活动性' })).toBeVisible();
