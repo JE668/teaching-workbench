@@ -440,7 +440,7 @@ describe('月度报告编辑器', () => {
     const dialog = (await screen.findByText('从课程目录添加 · 规划')).closest('.fixed') as HTMLElement;
     const rows = within(dialog).getAllByRole('checkbox');
     await user.click(rows[0]);
-    expect(within(dialog).getByText('已选 1 门')).toBeInTheDocument();
+    expect(within(dialog).getByText('已选 1 门课')).toBeInTheDocument();
 
     await user.click(within(dialog).getByRole('button', { name: '添加 1 门' }));
 

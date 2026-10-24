@@ -1070,45 +1070,95 @@ function CoursePicker({
       title={'从课程目录添加 · ' + (kind === 'plan' ? '规划' : '总结')}
       size="lg"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-slate-400">已选 {picked.size} 门</span>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose}>
-              取消
-            </Button>
-            <Button
-              icon={<FilePlus2 className="h-4 w-4" />}
-              disabled={picked.size === 0}
-              loading={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const pickedCourses = courses.filter((c) => picked.has(c.id));
-                  // 保存常用课程到 localStorage
-                  if (pickedCourses.length > 0) {
-                    const key = `recent-courses-${subject}`;
-                    const ids = pickedCourses.map((c) => c.id);
-                    let prev: number[] = [];
-                    try {
-                      prev = JSON.parse(localStorage.getItem(key) || '[]');
-                    } catch {
-                      // 忽略解析错误
+        picked.size > 0 ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium text-slate-700">已选 {picked.size} 门课</span>
+              {picked.size > 1 && (
+                <span className="text-xs text-slate-400">
+                  {courses.filter((c) => picked.has(c.id)).slice(0, 3).map((c) => c.content).join('、')}
+                  {picked.size > 3 && '…'}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                取消
+              </Button>
+              <Button
+                icon={<FilePlus2 className="h-4 w-4" />}
+                disabled={picked.size === 0}
+                loading={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const pickedCourses = courses.filter((c) => picked.has(c.id));
+                    // 保存常用课程到 localStorage
+                    if (pickedCourses.length > 0) {
+                      const key = `recent-courses-${subject}`;
+                      const ids = pickedCourses.map((c) => c.id);
+                      let prev: number[] = [];
+                      try {
+                        prev = JSON.parse(localStorage.getItem(key) || '[]');
+                      } catch {
+                        // 忽略解析错误
+                      }
+                      // 去重 + 去已添加的，最多保留 20 个
+                      const merged = [...ids, ...prev.filter((id) => !ids.includes(id) && !addedIds.has(id))].slice(0, 20);
+                      localStorage.setItem(key, JSON.stringify(merged));
+                      onCoursesUsed?.(ids);
                     }
-                    // 去重 + 去已添加的，最多保留 20 个
-                    const merged = [...ids, ...prev.filter((id) => !ids.includes(id) && !addedIds.has(id))].slice(0, 20);
-                    localStorage.setItem(key, JSON.stringify(merged));
-                    onCoursesUsed?.(ids);
+                    await onPick(pickedCourses);
+                  } finally {
+                    setBusy(false);
                   }
-                  await onPick(pickedCourses);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              添加 {picked.size} 门
-            </Button>
+                }}
+              >
+                添加 {picked.size} 门
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">已选 {picked.size} 门</span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                取消
+              </Button>
+              <Button
+                icon={<FilePlus2 className="h-4 w-4" />}
+                disabled={picked.size === 0}
+                loading={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const pickedCourses = courses.filter((c) => picked.has(c.id));
+                    // 保存常用课程到 localStorage
+                    if (pickedCourses.length > 0) {
+                      const key = `recent-courses-${subject}`;
+                      const ids = pickedCourses.map((c) => c.id);
+                      let prev: number[] = [];
+                      try {
+                        prev = JSON.parse(localStorage.getItem(key) || '[]');
+                      } catch {
+                        // 忽略解析错误
+                      }
+                      // 去重 + 去已添加的，最多保留 20 个
+                      const merged = [...ids, ...prev.filter((id) => !ids.includes(id) && !addedIds.has(id))].slice(0, 20);
+                      localStorage.setItem(key, JSON.stringify(merged));
+                      onCoursesUsed?.(ids);
+                    }
+                    await onPick(pickedCourses);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                添加 {picked.size} 门
+              </Button>
+            </div>
+          </div>
+        )
       }
     >
       <div className="space-y-3">
