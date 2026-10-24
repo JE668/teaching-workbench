@@ -897,8 +897,9 @@ function CoursePicker({
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    const params = new URLSearchParams({ limit: '1000' });
-    if (!showAll && subject) params.set('subject', subject);
+    const params = new URLSearchParams({ limit: '5000' });
+    // subject 始终带：「查看全部」只放开年级/学期/类型，学科范围不变
+    if (subject) params.set('subject', subject);
     if (grade) params.set('grade', grade);
     if (term) params.set('term', term);
     if (type) params.set('type', type);

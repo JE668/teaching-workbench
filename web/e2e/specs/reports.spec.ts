@@ -135,19 +135,22 @@ test.describe('月度总结与课程规划', () => {
 
     // 「查看全部」放开全部条件，春季的课就出来了；再点一次收回来
     await picker.getByRole('button', { name: '查看全部' }).click();
+    // 用搜索锁定春季课程（全部课程里数量多，不能靠默认分页碰运气）
+    await picker.getByLabel('搜索').fill('金属活动性');
     await expect(picker.locator('tr', { hasText: '金属活动性' })).toBeVisible();
+    await picker.getByLabel('搜索').fill('');
     await picker.getByRole('button', { name: '查看全部' }).click();
     await expect(picker.locator('tr', { hasText: '金属活动性' })).toHaveCount(0);
 
     // 搜一把，确认能按内容过滤（先清掉类型筛选，因为「氧气」是专题课）
     await picker.getByLabel('课程类型').selectOption('');
     await picker.getByLabel('搜索').fill('氧气');
-    await expect(picker.getByText('氧气')).toBeVisible();
+    await expect(picker.getByText('氧气', { exact: true })).toBeVisible();
     await expect(picker.locator('tr', { hasText: '空气的成分' })).toHaveCount(0);
     await picker.getByLabel('搜索').fill('');
 
     await picker.locator('tr', { hasText: '空气的成分' }).click();
-    await picker.locator('tr', { hasText: '氧气' }).click();
+    await picker.getByText('氧气', { exact: true }).click();
     await expect(picker.getByText('已选 2 门')).toBeVisible();
     await picker.getByRole('button', { name: /添加 2 门/ }).click();
     await expect(page.getByText(/已添加 2 门课/)).toBeVisible();
@@ -174,7 +177,7 @@ test.describe('月度总结与课程规划', () => {
     await picker2.locator('tr', { hasText: '金属活动性' }).click();
     await picker2.locator('tr', { hasText: '酸碱盐' }).click();
     await picker2.getByRole('button', { name: /添加 2 门/ }).click();
-    await expect(page.getByText(/已添加 2 门课/)).toBeVisible();
+    await expect(page.getByText(/已添加 2 门课/).last()).toBeVisible();
 
     // 已经加进总结的那门课，在总结弹窗里是灰掉的，不允许再加一遍。
     // 行上带 aria-disabled，Playwright 的普通 click 会一直重试到超时，所以这里用 force
