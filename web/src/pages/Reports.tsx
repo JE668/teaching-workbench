@@ -4,6 +4,7 @@ import {
   BookOpenCheck,
   CalendarRange,
   CheckCircle2,
+  Copy,
   FilePlus2,
   GraduationCap,
   ListTodo,
@@ -23,7 +24,7 @@ import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { cn } from '../lib/utils';
-import { MonthlyReport, TERM_OPTIONS, formatYearMonth } from '../types/reports';
+import { MonthlyReport, ReportItem, TERM_OPTIONS, formatYearMonth } from '../types/reports';
 
 const selectCls = 'w-full';
 
@@ -67,6 +68,8 @@ export default function Reports() {
   const [term, setTerm] = useState('');
 
   const [showNew, setShowNew] = useState(false);
+  const [showClone, setShowClone] = useState<MonthlyReport | null>(null);
+  const [cloning, setCloning] = useState(false);
   const [toDelete, setToDelete] = useState<MonthlyReport | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -116,6 +119,76 @@ export default function Reports() {
     } finally {
       setDeleting(false);
       setToDelete(null);
+    }
+  }
+
+  /**
+   * 克隆报告：复制基本信息和课程规划到新的月份。
+   * 上月规划 → 本月规划，上月总结 → 本月总结（带出勤标记）
+   */
+  async function cloneReport(source: MonthlyReport) {
+    if (!source.student_id) return;
+    setCloning(true);
+    try {
+      // 计算下个月份
+      const m = /^(\d{4})-(\d{1,2})$/.exec(source.year_month);
+      if (!m) throw new Error('月份格式错误');
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const nextYM = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
+
+      // 创建新报告
+      const newReport = await api.request<{ report: MonthlyReport; duplicated: boolean }>(
+        `/reports`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            studentId: source.student_id,
+            yearMonth: nextYM,
+            term: source.term,
+            grade: source.grade,
+            subject: source.subject,
+          }),
+        }
+      );
+
+      if (newReport.duplicated) {
+        toast.info('该学生该月份已有报告');
+        setShowClone(null);
+        return;
+      }
+
+      // 获取源报告的明细
+      const sourceData = await api.request<{ items: ReportItem[] }>(
+        `/reports/${source.id}`
+      );
+      const planItems = sourceData.items.filter((i) => i.kind === 'plan');
+
+      // 复制规划到新月
+      let added = 0;
+      for (const item of planItems) {
+        await api.request(`/reports/${newReport.report.id}/items`, {
+          method: 'POST',
+          body: JSON.stringify({
+            kind: 'plan',
+            seq: item.seq,
+            content: item.content,
+            type: item.type,
+            score: item.score,
+            difficulty: item.difficulty,
+            course_id: item.course_id,
+          }),
+        });
+        added++;
+      }
+
+      toast.success(`已克隆到 ${nextYM}，复制了 ${added} 门课程规划`);
+      setShowClone(null);
+      await loadReports(studentId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '克隆失败');
+    } finally {
+      setCloning(false);
     }
   }
 
@@ -262,6 +335,15 @@ export default function Reports() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            title="克隆到下月"
+                            aria-label="克隆"
+                            onClick={() => setShowClone(r)}
+                          >
+                            <Copy className="h-4 w-4 text-slate-400" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             title="删除"
                             aria-label="删除"
                             onClick={() => setToDelete(r)}
@@ -307,6 +389,20 @@ export default function Reports() {
         }
         confirmText="删除"
         danger
+      />
+
+      <ConfirmDialog
+        open={!!showClone}
+        onCancel={() => setShowClone(null)}
+        onConfirm={() => void cloneReport(showClone!)}
+        loading={cloning}
+        title="克隆到下月？"
+        description={
+          showClone
+            ? `将复制 ${showClone.student_name} · ${formatYearMonth(showClone.year_month)} 的课程规划到下一月份。基本信息（学生、学期、年级、学科）会一并复制。`
+            : ''
+        }
+        confirmText="克隆"
       />
     </div>
   );
