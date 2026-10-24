@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { env } from '../config/env.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { getAiConfig, getConfigVersion, getSetting, AiConfig } from '../config/settings.js';
-import { normalizeFollowUpModule } from '../utils/mappers.js';
+import { normalizeFollowUpModule, FOLLOWUP_MODULES } from '../utils/mappers.js';
 import type { FollowUpModule } from '../types/index.js';
 import fs from 'fs';
 import path from 'path';
@@ -81,7 +81,7 @@ export function isWordCountOk(n: number, min = MIN_WORDS, max = MAX_WORDS): bool
 export const WORDS_PER_EXTRA_BLOCK_MIN = 15;
 export const WORDS_PER_EXTRA_BLOCK_MAX = 25;
 export function followUpWordRange(blockCount: number): { min: number; max: number } {
-  const n = Math.max(1, Math.min(15, Math.round(blockCount)));
+  const n = Math.max(1, Math.min(FOLLOWUP_MODULES.length, Math.round(blockCount)));
   return {
     min: MIN_WORDS + (n - 1) * WORDS_PER_EXTRA_BLOCK_MIN,
     max: MAX_WORDS + (n - 1) * WORDS_PER_EXTRA_BLOCK_MAX,

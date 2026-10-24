@@ -44,10 +44,18 @@ test.describe('课后回访生成', () => {
       '文本应分多段逐步出现，实际采样: ' + lengths.join(',')
     ).toBeGreaterThanOrEqual(3);
 
-    // 最终内容应包含三段结构
-    await expect(content).toContainText('【课堂内容】');
-    await expect(content).toContainText('【学生收获】');
-    await expect(content).toContainText('【课后任务】');
+    // 最终内容应包含默认勾选的 5 个板块段 + 两段收尾
+    for (const sec of [
+      '【作业批改】',
+      '【课堂内容总结】',
+      '【课堂表现总结】',
+      '【笔记/解题痕迹】',
+      '【作业布置】',
+      '【学生收获】',
+      '【课后任务】',
+    ]) {
+      await expect(content).toContainText(sec);
+    }
   });
 
   test('生成结果可一键复制（含 Toast 反馈）', async ({ page, context }) => {
@@ -65,7 +73,7 @@ test.describe('课后回访生成', () => {
     await expect(page.getByText('已复制回访内容，可直接发送给家长')).toBeVisible();
 
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip).toContain('【课堂内容】');
+    expect(clip).toContain('【课堂内容总结】');
   });
 
   test('小组课：多选学生一次归档多条，且文案不含姓名', async ({ page }) => {
@@ -94,7 +102,7 @@ test.describe('课后回访生成', () => {
       timeout: 20_000,
     });
 
-    await page.getByRole('button', { name: /保存并归档/ }).click();
+    await page.getByRole('button', { name: /保存/ }).click();
 
     // 提示为 2 位学生各归档一条
     await expect(page.getByText(/已为 2 位学生各归档一条回访/)).toBeVisible({ timeout: 15_000 });
@@ -126,7 +134,7 @@ test.describe('课后回访生成', () => {
       timeout: 20_000,
     });
 
-    await page.getByRole('button', { name: /保存并归档到学生档案/ }).click();
+    await page.getByRole('button', { name: /保存/ }).click();
     await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
 
     // 档案时间线应显示课次徽章。
@@ -141,26 +149,21 @@ test.describe('课后回访生成', () => {
     await gotoFollowUp(page);
     await page.getByLabel(/选择已有学生/).selectOption(String(studentId));
 
-    // 默认已勾选 5 个常规类板块，再补勾一个常规类与一个非常规类
-    await page.getByRole('button', { name: '错题专练', exact: true }).click();
-    await expect(page.getByText(/已选 4 个/)).toBeVisible();
-    // 板块数不够 5 个时拦下生成，避免交出一份只有一两段的回访
-    await page.getByLabel(/课程主题/).fill('错题专练专项');
-    await page.getByLabel(/课堂表现/).fill('作业完成质量较好，但通分步骤有遗漏');
-    await page.getByRole('button', { name: /生成课后回访内容/ }).click();
-    await expect(page.getByText(/请至少勾选 5 个板块/)).toBeVisible();
-
+    // 默认已勾选 5 个板块（作业批改、课堂内容总结、课堂表现总结、笔记/解题痕迹、作业布置），
+    // 再补勾一个常规类与一个非常规类，计数随之变化
     await page.getByRole('button', { name: '错题专练', exact: true }).click();
     await page.getByRole('button', { name: '成绩分析', exact: true }).click();
-    await expect(page.getByText(/已选 6 个，达标/)).toBeVisible();
+    await expect(page.getByText(/已选 7 个，够用/)).toBeVisible();
 
+    await page.getByLabel(/课程主题/).fill('错题专练专项');
+    await page.getByLabel(/课堂表现/).fill('作业完成质量较好，但通分步骤有遗漏');
     await page.getByRole('button', { name: /生成课后回访内容/ }).click();
 
     await expect(page.getByTestId('generated-content')).toContainText('【课后任务】', {
       timeout: 20_000,
     });
 
-    await page.getByRole('button', { name: /保存并归档到学生档案/ }).click();
+    await page.getByRole('button', { name: /保存/ }).click();
     await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
 
     // 覆盖的每个板块都要传到落库并回显在档案时间线上
@@ -184,7 +187,7 @@ test.describe('课后回访生成', () => {
       timeout: 20_000,
     });
 
-    await page.getByRole('button', { name: /保存并归档到学生档案/ }).click();
+    await page.getByRole('button', { name: /保存/ }).click();
 
     // 保存后自动跳转到该学生档案
     await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });

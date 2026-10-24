@@ -85,7 +85,7 @@ const WORDS_PER_EXTRA_BLOCK_MAX = 25;
  * 每多一个板块，上下限各放宽固定增量。
  */
 export function followUpWordRange(blockCount: number): { min: number; max: number } {
-  const n = Math.max(1, Math.min(15, Math.round(blockCount)));
+  const n = Math.max(1, Math.min(FOLLOWUP_MODULES.length, Math.round(blockCount)));
   return {
     min: WORD_MIN + (n - 1) * WORDS_PER_EXTRA_BLOCK_MIN,
     max: WORD_MAX + (n - 1) * WORDS_PER_EXTRA_BLOCK_MAX,
