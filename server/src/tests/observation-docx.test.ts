@@ -332,6 +332,31 @@ describe('听评课 Word 导出（docx）', () => {
     assert.ok(!paras.some((p) => /^1[.、]/.test(p.trim()) && p.includes('导入用生活实例')));
   });
 
+  /** 现在的提示词格式：只写 1 点的块直接写内容、不带编号 */
+  test('综合三块单点不带编号 → 原样填入，不误删也不误加序号', async () => {
+    const xml = await makeAndExport(
+      [
+        '【综合评价与建议】',
+        '一、本节课亮点：',
+        '导入环节用生活实例唤起兴趣，学生一下子有了代入感。',
+        '二、有待优化的部分：',
+        '练习梯度偏单一，学有余力的学生缺少延伸任务。',
+        '三、教学建议：',
+        '1. 分层布置练习。',
+        '2. 扩大提问面。',
+        '四、总体评价等级：良好',
+      ].join('\n'),
+    );
+
+    const paras = paragraphs(xml).map((p) => p.trim());
+    // 单点整句原样保留，不会被误加编号也不会被吃掉字
+    assert.ok(paras.some((p) => p === '导入环节用生活实例唤起兴趣，学生一下子有了代入感。'));
+    assert.ok(paras.some((p) => p === '练习梯度偏单一，学有余力的学生缺少延伸任务。'));
+    // 同一份报告里的多点仍然拆段并去掉序号
+    assert.ok(!paras.some((p) => /^1[.、]/.test(p) && p.includes('分层布置练习')));
+    assert.ok(paras.some((p) => p === '扩大提问面。'));
+  });
+
   test('综合块为空 → 不生成多余文字', async () => {
     const xml = await makeAndExport('【综合评价与建议】\n四、总体评价等级：优秀');
     const paras = paragraphs(xml).map((p) => p.trim());

@@ -71,7 +71,14 @@ test.describe('听评课导出文件名', () => {
     expect(txt.suggestedFilename()).toBe(NAME + '.txt');
     const txtChunks: Buffer[] = [];
     for await (const c of await txt.createReadStream()) txtChunks.push(c as Buffer);
-    expect(Buffer.concat(txtChunks).toString('utf-8')).toContain('【综合评价与建议】');
+    const txtBody = Buffer.concat(txtChunks).toString('utf-8');
+    expect(txtBody).toContain('【综合评价与建议】');
+
+    // 只写 1 点的块直接写内容、不加「1.」；多条的块才从「1.」开始编号
+    expect(txtBody).toContain('一、本节课亮点：');
+    expect(txtBody).not.toContain('1. 用数轴和图形演示通分');
+    expect(txtBody).toContain('1. 练习后安排两分钟当堂订正');
+    expect(txtBody).toContain('2. 分层布置练习');
 
     // —— 图片卡片 ——
     const [png] = await Promise.all([
@@ -109,8 +116,8 @@ test.describe('听评课导出文件名', () => {
 
     // 听课人手工把亮点换成自己现场看到的那一句
     const edited = report.replace(
-      '1. 用数轴和图形演示通分，把抽象的分数单位讲得直观可感。',
-      '1. 老师用苹果分块演示通分，学生一眼看懂。'
+      '用数轴和图形演示通分，把抽象的分数单位讲得直观可感。',
+      '老师用苹果分块演示通分，学生一眼看懂。'
     );
     expect(edited, '用例里的替换必须生效').not.toBe(report);
     await box.fill(edited);

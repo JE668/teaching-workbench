@@ -46,6 +46,15 @@ describe('评课提示词', () => {
     assert.ok(prompt.includes('四、总体评价等级'));
   });
 
+  test('综合三块只写 1 点时直接写内容、不加「1.」，第 2 点起才编号', () => {
+    const prompt = buildObservationPrompt(p);
+    assert.ok(prompt.includes('直接写内容，不要加「1.」这类编号'));
+    assert.ok(prompt.includes('此时才从「1.」「2.」开始逐点编号'));
+    // 输出格式示例也按不加编号的写法给，避免模型照抄出「1. ……」
+    assert.ok(prompt.includes('一、本节课亮点：\n……'));
+    assert.ok(!prompt.includes('1. ……'));
+  });
+
   test('空听课记录也给出兜底说明，不臆造', () => {
     const prompt = buildObservationPrompt({ ...p, classNotes: '' });
     assert.ok(prompt.includes('课堂情况记录为空'));
