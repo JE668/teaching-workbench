@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
 import {
   formatDay,
-  parseExamDate,
+  examText,
   mergePlanSequence,
   buildReportFilename,
   buildReportXlsx,
@@ -13,108 +13,81 @@ import {
   type ReportExcelInput,
 } from '../utils/reportExcel.js';
 
-describe('formatDay', () => {
-  test('标准日期转中文', () => {
-    assert.equal(formatDay('2026-10-07'), '10月7日');
-    assert.equal(formatDay('2026-12-25'), '12月25日');
-  });
-
-  test('单位数月日不补零', () => {
-    assert.equal(formatDay('2026-1-5'), '1月5日');
-  });
-
-  test('空值返回空串', () => {
-    assert.equal(formatDay(''), '');
-    assert.equal(formatDay(undefined), '');
-  });
-
-  test('带时间的 ISO 原样返回', () => {
-    assert.equal(formatDay('2026-10-07T03:00:00.000Z'), '2026-10-07T03:00:00.000Z');
-  });
-});
-
-describe('parseExamDate', () => {
-  test('从模板文案里抠出「时间10月7日」', () => {
-    assert.equal(parseExamDate('秋季度第一次阶测安排：时间10月7日', '2026-10'), '2026-10-07');
-  });
-
-  test('支持「时间 11月1日」和「10.7」写法', () => {
-    assert.equal(parseExamDate('第二次阶测 时间 11月1日', '2026-10'), '2026-11-01');
-    assert.equal(parseExamDate('阶测时间10.7', '2026-10'), '2026-10-07');
-  });
-
-  test('阶测行带了覆盖文案也照样能抠出日期（覆盖在时间前面）', () => {
-    assert.equal(
-      parseExamDate('秋季度第一次阶测安排：覆盖整式的加减、一元一次方程（共2课）；时间11月8日：', '2026-10'),
-      '2026-11-08'
-    );
-    assert.equal(
-      parseExamDate('秋季度第二次阶测安排：覆盖声现象等6课；时间12月1日：', '2026-10'),
-      '2026-12-01'
-    );
-  });
-
-  test('拿不到年月时用当前年份', () => {
-    const got = parseExamDate('时间12月20日', '');
-    assert.equal(got, `${new Date().getFullYear()}-12-20`);
-  });
-
-  test('没有日期或日期非法时返回 undefined', () => {
-    assert.equal(parseExamDate('秋季度第一次阶测安排', '2026-10'), undefined);
-    assert.equal(parseExamDate('', '2026-10'), undefined);
-    assert.equal(parseExamDate('时间13月40日', '2026-10'), undefined);
-  });
-});
-
 describe('mergePlanSequence', () => {
-  const course = (date: string, content: string) => ({ content, scheduledAt: date });
+  const course = (content: string) => ({ content });
 
-  test('阶测按日期插进课程之间', () => {
+  test('课程按写入顺序原样保留，阶测接在课程之后', () => {
     const out = mergePlanSequence(
-      [course('2026-10-03', '课3'), course('2026-10-01', '课1'), course('2026-10-18', '课4')],
-      [{ content: '阶测 10月7日', scheduledAt: '2026-10-07' }]
+      [course('课3'), course('课1'), course('课4')],
+      [{ content: '阶测 10月7日' }]
     );
     assert.deepEqual(
       out.map((e) => [e.kind, e.item.content]),
       [
-        ['course', '课1'],
         ['course', '课3'],
-        ['exam', '阶测 10月7日'],
+        ['course', '课1'],
         ['course', '课4'],
+        ['exam', '阶测 10月7日'],
       ]
     );
   });
 
-  test('没有日期的阶测排在最后（文案解析在 buildReportXlsx 里做）', () => {
-    const out = mergePlanSequence(
-      [course('2026-10-03', '课3'), course('2026-10-18', '课4')],
-      [{ content: '时间10月7日' }]
-    );
-    assert.equal(out.length, 3);
-    assert.equal(out[out.length - 1].item.content, '时间10月7日');
-  });
-
-  test('所有阶测都在课程之后时排到最后', () => {
-    const out = mergePlanSequence([course('2026-10-01', '课1')], [
-      { content: '阶测A', scheduledAt: '2026-11-01' },
-      { content: '阶测B', scheduledAt: '2026-11-15' },
+  test('多场阶测也排在课程之后，彼此保持原有顺序', () => {
+    const out = mergePlanSequence([course('课1')], [
+      { content: '第一次阶测' },
+      { content: '第二次阶测' },
     ]);
     assert.deepEqual(
       out.map((e) => e.item.content),
-      ['课1', '阶测A', '阶测B']
+      ['课1', '第一次阶测', '第二次阶测']
     );
   });
 
   test('一侧为空时另一侧原样返回', () => {
-    const courses = [course('2026-10-02', '课2'), course('2026-10-01', '课1')];
     assert.deepEqual(
-      mergePlanSequence(courses, []).map((e) => e.item.content),
-      ['课1', '课2']
+      mergePlanSequence([course('课1'), course('课2')], []).map((e) => e.kind),
+      ['course', 'course']
     );
     assert.deepEqual(
       mergePlanSequence([], [{ content: '阶测' }]).map((e) => e.kind),
       ['exam']
     );
+  });
+
+  test('两侧都为空时返回空数组', () => {
+    assert.deepEqual(mergePlanSequence([], []), []);
+  });
+});
+
+describe('formatDay / examText', () => {
+  test('标准日期转中文', () => {
+    assert.equal(formatDay('2026-10-07'), '10月7日');
+    assert.equal(formatDay('2026-1-5'), '1月5日');
+  });
+
+  test('空值和非法值返回空串', () => {
+    assert.equal(formatDay(''), '');
+    assert.equal(formatDay(undefined), '');
+    assert.equal(formatDay('明天'), '');
+  });
+
+  test('阶测填了日期时拼回文案末尾', () => {
+    assert.equal(
+      examText({ content: '秋季度第一次阶测安排', scheduledAt: '2026-10-07' }),
+      '秋季度第一次阶测安排（10月7日）'
+    );
+  });
+
+  test('文案里已经写了日期就不重复拼', () => {
+    assert.equal(
+      examText({ content: '秋季度第一次阶测安排：时间10月7日', scheduledAt: '2026-10-07' }),
+      '秋季度第一次阶测安排：时间10月7日'
+    );
+  });
+
+  test('没填日期时原样返回内容', () => {
+    assert.equal(examText({ content: '  阶段测评  ' }), '阶段测评');
+    assert.equal(examText({ content: '' }), '');
   });
 });
 
@@ -131,6 +104,18 @@ describe('estimateWrapHeight', () => {
 
   test('超长文本封顶', () => {
     assert.ok(estimateWrapHeight('长'.repeat(2000)) <= 420);
+  });
+});
+
+describe('REPORT_COLUMNS', () => {
+  test('10 列，没有「计划上课时间」', () => {
+    assert.equal(REPORT_COLUMNS.length, 10);
+    assert.ok(!REPORT_COLUMNS.some((c) => c.includes('上课时间')));
+    assert.equal(REPORT_COLUMNS[5], '出勤');
+  });
+
+  test('列宽数量与列数一致', () => {
+    assert.equal(REPORT_COL_WIDTHS.length, REPORT_COLUMNS.length);
   });
 });
 
@@ -165,18 +150,18 @@ describe('buildReportXlsx', () => {
     planIntro: '国庆期间安排3节课，巩固透镜的规律应用。',
     farewell: '感谢一可一整个学期的坚持和努力，继续保持！期待下个月再见！',
     summaryItems: [
-      { content: '平面镜成像规律和透镜认识', type: '专题', score: '8-10', difficulty: '★★★', scheduledAt: '2026-09-06', attendance: '出勤', notesDone: '完成', mistakesDone: '完成', homeworkDone: '完成' },
-      { content: '凸透镜成像的规律探究', type: '同步', score: '', difficulty: '★★★', scheduledAt: '2026-09-13', attendance: '出勤', notesDone: '完成', mistakesDone: '完成', homeworkDone: '完成' },
-      { content: '凸透镜成像的规律探究（补）', type: '同步', score: '', difficulty: '★★★', scheduledAt: '2026-09-26', attendance: '出勤', notesDone: '完成', mistakesDone: '完成', homeworkDone: '完成' },
+      { content: '平面镜成像规律和透镜认识', type: '专题', score: '8-10', difficulty: '★★★', attendance: '出勤', notesDone: '完成', mistakesDone: '完成', homeworkDone: '完成' },
+      { content: '凸透镜成像的规律探究', type: '同步', score: '', difficulty: '★★★', attendance: '出勤', notesDone: '完成', mistakesDone: '完成', homeworkDone: '完成' },
+      { content: '凸透镜成像的规律探究（补）', type: '同步', score: '', difficulty: '★★★', attendance: '出勤', notesDone: '完成', mistakesDone: '完成', homeworkDone: '完成' },
     ],
     planItems: [
-      { content: '凸透镜成像的规律应用', type: '同步', score: '8-10', difficulty: '★★★', scheduledAt: '2026-10-01' },
-      { content: '凸透镜成像的规律应用', type: '同步', score: '', difficulty: '★★★', scheduledAt: '2026-10-02' },
-      { content: '凸透镜成像的规律应用', type: '同步', score: '', difficulty: '★★★', scheduledAt: '2026-10-03' },
-      { content: '质量和体积的测量和关系', type: '同步', score: '25-28', difficulty: '★★★★', scheduledAt: '2026-10-18' },
-      { content: '密度的概念、单位、测量', type: '同步', score: '', difficulty: '★★★★', scheduledAt: '2026-10-25' },
-      { content: '密度的计算', type: '同步', score: '', difficulty: '★★★★', scheduledAt: '2026-11-01' },
-      { content: '密度综合', type: '同步', score: '', difficulty: '★★★★', scheduledAt: '2026-11-08' },
+      { content: '凸透镜成像的规律应用', type: '同步', score: '8-10', difficulty: '★★★' },
+      { content: '凸透镜成像的规律应用', type: '同步', score: '', difficulty: '★★★' },
+      { content: '凸透镜成像的规律应用', type: '同步', score: '', difficulty: '★★★' },
+      { content: '质量和体积的测量和关系', type: '同步', score: '25-28', difficulty: '★★★★' },
+      { content: '密度的概念、单位、测量', type: '同步', score: '', difficulty: '★★★★' },
+      { content: '密度的计算', type: '同步', score: '', difficulty: '★★★★' },
+      { content: '密度综合', type: '同步', score: '', difficulty: '★★★★' },
     ],
     examItems: [{ content: '秋季度第一次阶测安排：时间10月7日' }],
   };
@@ -208,30 +193,31 @@ describe('buildReportXlsx', () => {
     assert.equal(ws.getCell(7, 1).text, '星火教育个性化 一可 秋季初二物理 10月规划');
   });
 
-  test('表头文案完整', async () => {
+  test('表头文案完整、10 列', async () => {
     const ws = await read(await buildReportXlsx(input));
     for (let i = 0; i < REPORT_COLUMNS.length; i++) {
       assert.equal(ws.getCell(3, i + 1).text, REPORT_COLUMNS[i], `第 ${i + 1} 列表头`);
     }
+    assert.equal(ws.getCell(3, 11).text, '');
   });
 
-  test('阶测行按文案日期插进规划课程中间', async () => {
+  test('阶段测评行排在规划课程之后', async () => {
     const ws = await read(await buildReportXlsx(input));
-    assert.equal(ws.getCell(13, 1).text, '秋季度第一次阶测安排：时间10月7日');
-    assert.equal(ws.getCell(12, 6).text, '10月3日');
-    assert.equal(ws.getCell(14, 6).text, '10月18日');
+    // 规划块：第 7 行标题、第 8 行摘要、第 9 行表头、10~16 行课程、17 行阶测
+    assert.equal(ws.getCell(17, 1).text, '秋季度第一次阶测安排：时间10月7日');
+    assert.equal(ws.getCell(16, 1).text, '7');
   });
 
-  test('规划块的序号跨阶测连续编号', async () => {
+  test('规划块的序号连续编号', async () => {
     const ws = await read(await buildReportXlsx(input));
-    const seqs = [10, 11, 12, 14, 15, 16, 17].map((r) => ws.getCell(r, 1).text);
+    const seqs = [10, 11, 12, 13, 14, 15, 16].map((r) => ws.getCell(r, 1).text);
     assert.deepEqual(seqs, ['1', '2', '3', '4', '5', '6', '7']);
   });
 
-  test('合并区域与模板一致', async () => {
+  test('合并区域对齐 10 列版式', async () => {
     const ws = await read(await buildReportXlsx(input));
     const got = new Set(await mergeRanges(ws));
-    for (const range of ['A1:K1', 'A2:K2', 'A7:K7', 'A8:K8', 'A13:K13', 'A18:K18']) {
+    for (const range of ['A1:J1', 'A2:J2', 'A7:J7', 'A8:J8', 'A17:J17', 'A18:J18']) {
       assert.ok(got.has(range), `缺少合并区域 ${range}，实际 ${[...got].join(' ')}`);
     }
   });
@@ -241,23 +227,17 @@ describe('buildReportXlsx', () => {
     const ranges = new Set(await mergeRanges(ws));
     assert.ok(ranges.has('D4:D6'), '总结块 3 节同分值合并');
     assert.ok(ranges.has('D10:D12'), '规划块前 3 节同分值合并');
-    assert.ok(ranges.has('D14:D17'), '阶测后面的 4 节同分值合并');
-  });
-
-  test('日期列渲染成中文日期', async () => {
-    const ws = await read(await buildReportXlsx(input));
-    assert.equal(ws.getCell(4, 6).text, '9月6日');
-    assert.equal(ws.getCell(15, 6).text, '10月25日');
+    assert.ok(ranges.has('D13:D16'), '后 4 节同分值合并');
   });
 
   test('规划块不写出勤~考试情况 5 列', async () => {
     const ws = await read(await buildReportXlsx(input));
-    assert.equal(ws.getCell(4, 7).text, '出勤');
-    assert.equal(ws.getCell(10, 7).text, '');
-    assert.equal(ws.getCell(10, 11).text, '');
+    assert.equal(ws.getCell(4, 6).text, '出勤');
+    assert.equal(ws.getCell(10, 6).text, '');
+    assert.equal(ws.getCell(10, 10).text, '');
   });
 
-  test('列宽与模板一致', async () => {
+  test('列宽与版式一致', async () => {
     const ws = await read(await buildReportXlsx(input));
     REPORT_COL_WIDTHS.forEach((w, i) => {
       assert.equal(
@@ -273,7 +253,7 @@ describe('buildReportXlsx', () => {
     const title = ws.getCell(1, 1);
     assert.equal(title.font.bold, true);
     assert.equal(title.font.size, 12);
-    const exam = ws.getCell(13, 1);
+    const exam = ws.getCell(17, 1);
     assert.equal(exam.font.bold, true);
     assert.equal(exam.font.color?.argb, 'FFFF0000');
   });
@@ -321,7 +301,7 @@ describe('buildReportXlsx', () => {
     assert.equal(ws.getCell(1, 1).text, input.farewell);
   });
 
-  test('月份标题取自明细里的真实上课日期', async () => {
+  test('月份标题取自报告所属月份', async () => {
     const ws = await read(await buildReportXlsx({ ...input, yearMonth: '2026-10' }));
     assert.equal(ws.getCell(1, 1).text, '星火教育个性化 一可 秋季初二物理 9月总结');
     assert.equal(ws.getCell(7, 1).text, '星火教育个性化 一可 秋季初二物理 10月规划');

@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test';
 import ExcelJS from 'exceljs';
-import { loginViaApi, getToken, seedStudent, seedReport, seedReportItem, importCatalog } from './helpers';
+import { loginViaApi, getToken, seedStudent, seedReport, seedReportItem, clearAllReports, latestStudentId, importCatalog } from './helpers';
 import { buildCatalogFixture } from './catalog-fixture';
 
 /**
  * 月度总结与课程规划这条链路的端到端验证。
  *
- * 覆盖：新建报告 → 从课程目录取课 → 自动推算阶测 → 导出 Excel（中文文件名 + 版式）
+ * 覆盖：新建报告 → 从课程目录取课（默认收窄到本报告的学科 + 学期）→ 手动加阶测
+ *      → 导出 Excel（中文文件名 + 10 列版式，没有课程日期列）
  *      → 关闭规划开关 → 上移跨月课不会带跑月份标题（回归）→ 导出图片卡片。
  *
  * 这条链跨了目录导入、报告 CRUD、Excel 生成、Canvas 出图四块，
@@ -58,6 +59,16 @@ async function readAllText(buf: Uint8Array): Promise<string> {
   return cells.join('\n');
 }
 
+/** 读出工作表某一行的文字（按列顺序），用来验表头是不是 10 列 */
+async function readRow(buf: Uint8Array, n: number): Promise<string[]> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as any);
+  const ws = wb.getWorksheet(1)!;
+  return Array.from({ length: 10 }, (_, i) => ((ws.getRow(n).getCell(i + 1).text as string) || '')).filter(
+    (t) => t
+  );
+}
+
 async function downloadReportExcel(page: any) {
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -69,9 +80,17 @@ async function downloadReportExcel(page: any) {
 }
 
 test.describe('月度总结与课程规划', () => {
-  test('新建报告 → 从课程目录取课 → 自动推算阶测 → 导出 Excel', async ({ page }) => {
+  test.setTimeout(120_000);
+
+  test('新建报告 → 从课程目录取课 → 导出 Excel', async ({ page }) => {
     await loginViaApi(page);
     const studentId = await seedStudent(page, '报告同学', { grade: '初三', subject: '化学' });
+    // e2e 库是共享的：跑几轮会攒出很多旧报告，而目录页「已上 N」是按 course_id
+    // 跨学生聚合的，不清掉的话这个数会越攒越大，写死的「已上1」就翻了
+    await clearAllReports(page);
+    // 按 value 精确锁定这个学生，别按 label 撞名（同名学生可能有好几个）
+    const reportStudentId = await latestStudentId(page, '报告同学');
+    expect(reportStudentId, '应该能定位到刚建的学生').toBe(studentId);
     await importCatalog(page, { name: CATALOG.filename, buffer: (await buildCatalogFixture(CATALOG)).buffer });
 
     // —— 走 UI 新建月份报告 ——
@@ -79,22 +98,42 @@ test.describe('月度总结与课程规划', () => {
     await page.getByRole('button', { name: '新建月份' }).first().click();
     const dlg = page.locator('div.fixed.inset-0.z-50').last();
     await expect(dlg.getByText('新建月份报告')).toBeVisible();
-    await dlg.getByLabel('学生').selectOption({ label: '报告同学' });
+    await dlg.getByLabel('学生').selectOption(String(reportStudentId));
     await dlg.getByLabel('月份').fill('2026-09');
     await dlg.getByLabel('学期').selectOption('秋季');
     await dlg.getByRole('button', { name: '创建' }).click();
+    // 报告已经在开头清空过，所以这里一定是「已新建」而不是「已有报告」
     await expect(page.getByText(/已新建/)).toBeVisible();
     // 创建成功后弹窗自己会关掉，不用手动取消
     await expect(dlg).toHaveCount(0);
+    // 取回这份报告的 id：弹窗不会自己跳详情页
+    const reportId = await seedReport(page, {
+      studentId: reportStudentId,
+      yearMonth: '2026-09',
+      term: '秋季',
+    });
 
-    const row = page.locator('tr', { hasText: '报告同学' }).first();
+    // 列表里能翻到这份报告——按 href 定位，别按学生名撞车
+    const row = page.locator('tr').filter({ has: page.locator('a[href="/reports/' + reportId + '"]') }).first();
     await expect(row.getByRole('button', { name: '打开' })).toBeVisible();
     await row.getByRole('button', { name: '打开' }).click();
     await expect(page.getByRole('heading', { name: '报告同学', exact: true })).toBeVisible();
 
+    // —— 总结：弹窗默认收窄到这份报告的学科 + 学期，春季的课不该混进来 ——
     await page.getByRole('button', { name: '从课程目录添加' }).first().click();
     const picker = page.locator('div.fixed.inset-0.z-50').last();
     await expect(picker.getByText('从课程目录添加 · 总结')).toBeVisible();
+    await expect(picker.locator('tr', { hasText: '空气的成分' })).toBeVisible();
+    // 秋季的报告里不该出现春季的课
+    await expect(picker.locator('tr', { hasText: '金属活动性' })).toHaveCount(0);
+    // 默认学期就是报告自己的学期
+    await expect(picker.getByLabel('学期')).toHaveValue('秋季');
+
+    // 「查看全部」放开全部条件，春季的课就出来了；再点一次收回来
+    await picker.getByRole('button', { name: '查看全部' }).click();
+    await expect(picker.locator('tr', { hasText: '金属活动性' })).toBeVisible();
+    await picker.getByRole('button', { name: '查看全部' }).click();
+    await expect(picker.locator('tr', { hasText: '金属活动性' })).toHaveCount(0);
 
     // 搜一把，确认能按内容过滤
     await picker.getByLabel('搜索').fill('氧气');
@@ -112,37 +151,39 @@ test.describe('月度总结与课程规划', () => {
     await expect(summaryRows).toHaveCount(2);
     await expect(summaryRows.nth(0).locator('td').nth(1).locator('input')).toHaveValue('空气的成分');
     await expect(summaryRows.nth(1).locator('td').nth(1).locator('input')).toHaveValue('氧气');
+    // 从目录取来的课不用再手填出勤那些列
+    for (const col of ['出勤', '笔记整理', '错题整理', '作业完成']) {
+      await expect(summaryRows.nth(0).getByLabel('空气的成分 ' + col)).toHaveValue('✅️');
+    }
+    await expect(summaryRows.nth(0).getByLabel('空气的成分 考试情况')).toHaveValue('/');
+    // 表里没有课程日期列
+    await expect(summaryRows.nth(0).locator('input[type="date"]')).toHaveCount(0);
 
-    // —— 规划：从课程目录加课 + 自动推算阶测 ——
+    // —— 规划：换到春季的课，手动加一条阶测 ——
     await page.getByRole('button', { name: '从课程目录添加' }).nth(1).click();
     const picker2 = page.locator('div.fixed.inset-0.z-50').last();
     await expect(picker2.getByText('从课程目录添加 · 规划')).toBeVisible();
+    await picker2.getByLabel('学期').selectOption('春季');
+    await expect(picker2.locator('tr', { hasText: '金属活动性' })).toBeVisible();
+    await expect(picker2.locator('tr', { hasText: '空气的成分' })).toHaveCount(0);
     await picker2.locator('tr', { hasText: '金属活动性' }).click();
     await picker2.locator('tr', { hasText: '酸碱盐' }).click();
     await picker2.getByRole('button', { name: /添加 2 门/ }).click();
     await expect(page.getByText(/已添加 2 门课/)).toBeVisible();
 
-    // 从目录取来的课只带内容不带时间，而阶测是按"已有上课时间的跨度"推算的，
-    // 所以得先把两条课的时间填上（前后差约 8 周，学期按 3 周一次应该能排出好几场）
-    const planRows = page.locator('tbody').nth(1).locator('tr');
-    await expect(planRows).toHaveCount(2);
-    for (let i = 0; i < 2; i++) {
-      const dateInput = planRows.nth(i).locator('td').nth(5).locator('input');
-      await dateInput.fill(i === 0 ? '2026-09-15' : '2026-11-10');
-      await dateInput.blur();
-    }
+    // 已经加进总结的那门课，在总结弹窗里是灰掉的，不允许再加一遍。
+    // 行上带 aria-disabled，Playwright 的普通 click 会一直重试到超时，所以这里用 force
+    await page.getByRole('button', { name: '从课程目录添加' }).first().click();
+    const picker3 = page.locator('div.fixed.inset-0.z-50').last();
+    const addedRow = picker3.getByRole('row').filter({ hasText: '空气的成分' });
+    await expect(addedRow.getByText('已添加')).toBeVisible();
+    await expect(addedRow.getByLabel('选择')).toBeDisabled();
+    await addedRow.click({ force: true });
+    await expect(picker3.getByText('已选 0 门')).toBeVisible();
+    await page.keyboard.press('Escape');
 
-    await page.getByRole('button', { name: '自动推算阶测' }).click();
-    const examDlg = page.locator('div.fixed.inset-0.z-50').last();
-    await expect(examDlg.getByText('自动推算的阶测安排')).toBeVisible();
-    await expect(examDlg.getByText('跨度不够排一次阶测')).toHaveCount(0);
-    // 阶测自动带上它覆盖的课；覆盖不到课的那场会提示可能要调排期
-    await expect(examDlg.getByText(/覆盖金属活动性（共1课）/)).toBeVisible();
-    await expect(examDlg.getByText(/这段跨度里没有计划上课时间/)).toBeVisible();
-    await expect(examDlg.getByRole('button', { name: '全部加入规划' })).toBeEnabled();
-    await examDlg.getByRole('button', { name: '全部加入规划' }).click();
-    await expect(page.getByText(/已加入 \d+ 次阶测安排/)).toBeVisible();
-    await expect(page.getByText(/阶测安排（\d+/)).toBeVisible();
+    await page.getByRole('button', { name: '手动加阶测' }).click();
+    await expect(page.getByText(/阶测安排（1）/)).toBeVisible();
 
     // —— 导出 Excel：中文文件名 + 两个区块 ——
     const { filename, buf } = await downloadReportExcel(page);
@@ -157,8 +198,26 @@ test.describe('月度总结与课程规划', () => {
     const allText = await readAllText(buf);
     expect(allText).toContain('空气的成分');
     expect(allText).toContain('金属活动性');
-    // 阶测行也带着覆盖文案，老师打出来能看到这次考的是哪几节
-    expect(allText).toContain('覆盖金属活动性');
+    // 阶测行带着老师填的时间
+    expect(allText).toContain('阶测安排');
+
+    // 表头就是 10 列：课程日期列已经下线，出勤等 4 列挪到了「学习难度」后面
+    expect(await readRow(buf, 3)).toEqual([
+      '序号',
+      '课程内容',
+      '课程类型',
+      '期末考\n分值占比',
+      '学习难度',
+      '出勤',
+      '笔记整理',
+      '错题整理',
+      '作业完成',
+      '考试情况',
+    ]);
+    expect(allText).not.toContain('计划上课时间');
+    // 老师填的默认值也跟着导出去
+    expect(allText).toContain('✅️');
+    expect(allText).toContain('/');
 
     // —— 目录 ↔ 报告打通：从目录取来的课，回到目录里能看到「已上 / 计划」——
     // 只筛初三化学：DB 是共享的，前面用例也导过目录，全量看会把数字带跑
@@ -183,7 +242,7 @@ test.describe('月度总结与课程规划', () => {
     await expect(usageDlg.getByText('「空气的成分」上过哪些课')).toHaveCount(0);
 
     // 切到「看谁进度」：上过/计划的都标上报告所在的月份，没取的显示未上
-    await page.getByLabel('按学生查看课程进度').selectOption({ label: '报告同学' });
+    await page.getByLabel('按学生查看课程进度').selectOption(String(reportStudentId));
     await expect(usedRow.getByText('已上 2026-09')).toBeVisible();
     await expect(plannedRow.getByText('计划 2026-09')).toBeVisible();
     await expect(page.locator('tr', { hasText: '水' }).first().getByRole('button', { name: /已上|计划/ })).toHaveCount(0);

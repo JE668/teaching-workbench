@@ -876,6 +876,64 @@ export async function* streamOnce(
   }
 }
 
+/** 通用对话消息。回访之外的 AI 能力（月度总结 / 课程规划）共用这条通道 */
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatOptions {
+  maxTokens?: number;
+  temperature?: number;
+}
+
+function buildChatRequest(messages: ChatMessage[], opts: ChatOptions, stream: boolean): any {
+  const config = getAiConfig();
+  return {
+    model: config.model,
+    messages,
+    max_tokens: opts.maxTokens ?? 1600,
+    temperature: opts.temperature ?? 0.7,
+    // 思考强度：与回访共用同一份「设置」页配置
+    reasoning_effort: config.reasoningEffort,
+    stream,
+  };
+}
+
+/** 通用单次调用（非流式）。进闸门，与回访的 generateOnce 同口径 */
+export async function generateChatOnce(
+  messages: ChatMessage[],
+  opts: ChatOptions = {}
+): Promise<string> {
+  return withAiSlot(async () => {
+    const ai = getClient(getAiConfig());
+    const response = await ai.chat.completions.create(buildChatRequest(messages, opts, false));
+    return (response.choices[0].message.content || '').trim();
+  });
+}
+
+/** 通用单次调用（流式），逐块产出文本增量。占位到流读完，与 streamOnce 同一套口径 */
+export async function* streamChat(
+  messages: ChatMessage[],
+  opts: ChatOptions = {}
+): AsyncGenerator<string> {
+  await acquireAiSlot();
+  try {
+    const ai = getClient(getAiConfig());
+    const stream = (await ai.chat.completions.create(
+      buildChatRequest(messages, opts, true)
+    )) as any;
+    for await (const chunk of stream) {
+      const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
+        ? chunk.choices[0].delta.content
+        : null;
+      if (delta) yield delta as string;
+    }
+  } finally {
+    releaseAiSlot();
+  }
+}
+
 /**
  * 生成课后回访内容。
  * 若首轮字数不落在要求区间，自动追加纠偏指令重试一次；
@@ -957,4 +1015,37 @@ export function runStreamGeneration(params: FollowUpGenerateParams): AsyncGenera
 /** 带纠偏指令的单次调用（流式路由用于字数重试） */
 export function retryGeneration(params: FollowUpGenerateParams, correction: string): Promise<string> {
   return onceImpl(params, correction);
+}
+
+// ============ 通用通道的测试注入点（月度总结 / 课程规划） ============
+type ChatGenerator = (messages: ChatMessage[], opts: ChatOptions) => Promise<string>;
+type ChatStreamer = (messages: ChatMessage[], opts: ChatOptions) => AsyncGenerator<string>;
+
+let chatOnceImpl: ChatGenerator = (messages, opts) => generateChatOnce(messages, opts);
+let chatStreamImpl: ChatStreamer = (messages, opts) => streamChat(messages, opts);
+
+/** 替换通用非流式实现（仅供测试） */
+export function setChatGenerator(fn: ChatGenerator): void {
+  chatOnceImpl = fn;
+}
+
+/** 替换通用流式实现（仅供测试） */
+export function setChatStreamer(fn: ChatStreamer): void {
+  chatStreamImpl = fn;
+}
+
+/** 恢复为真实的模型调用 */
+export function resetChatGenerator(): void {
+  chatOnceImpl = (messages, opts) => generateChatOnce(messages, opts);
+  chatStreamImpl = (messages, opts) => streamChat(messages, opts);
+}
+
+/** 路由统一入口：通用非流式 */
+export function runChatOnce(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
+  return chatOnceImpl(messages, opts);
+}
+
+/** 路由统一入口：通用流式 */
+export function runChatStream(messages: ChatMessage[], opts: ChatOptions = {}): AsyncGenerator<string> {
+  return chatStreamImpl(messages, opts);
 }

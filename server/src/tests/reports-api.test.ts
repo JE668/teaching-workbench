@@ -571,7 +571,9 @@ describe('导出 Excel', () => {
     assert.equal(ws.getCell(1, 1).text, '一可 秋季初二物理 12月总结');
     assert.equal(ws.getCell(3, 1).text, '序号');
     assert.equal(ws.getCell(4, 2).text, '光的反射');
-    assert.equal(ws.getCell(4, 6).text, '12月5日');
+    // 「计划上课时间」列已下线，课程日期不再出现在导出的表里
+    assert.equal(ws.getCell(3, 6).text, '出勤');
+    assert.equal(ws.getCell(4, 6).text, '');
     // 只剩总结块 4 行
     assert.equal(ws.rowCount, 4);
   });

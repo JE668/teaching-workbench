@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -30,7 +30,6 @@ import {
   ATTENDANCE_OPTIONS,
   CatalogCourseOption,
   DIFFICULTY_OPTIONS,
-  ExamSuggestion,
   MonthlyReport,
   ReportItem,
   TERM_OPTIONS,
@@ -57,7 +56,6 @@ const SUMMARY_COLS: { key: CellKey; label: string; width: string; list?: string[
   { key: 'type', label: '课程类型', width: 'w-24' },
   { key: 'score', label: '期末考分值占比', width: 'w-24' },
   { key: 'difficulty', label: '学习难度', width: 'w-20', list: DIFFICULTY_OPTIONS },
-  { key: 'scheduled_at', label: '计划上课时间', width: 'w-36' },
   { key: 'attendance', label: '出勤', width: 'w-20', list: ATTENDANCE_OPTIONS },
   { key: 'notes_done', label: '笔记整理', width: 'w-20', list: ATTENDANCE_OPTIONS },
   { key: 'mistakes_done', label: '错题整理', width: 'w-20', list: ATTENDANCE_OPTIONS },
@@ -65,13 +63,21 @@ const SUMMARY_COLS: { key: CellKey; label: string; width: string; list?: string[
   { key: 'exam', label: '考试情况', width: 'w-24' },
 ];
 
+/** 新加的总结课默认填好的 5 列——省得每节课都点四下 ✅ */
+const SUMMARY_DEFAULTS: Record<string, string> = {
+  attendance: '✅️',
+  notes_done: '✅️',
+  mistakes_done: '✅️',
+  homework_done: '✅️',
+  exam: '/',
+};
+
 const PLAN_COLS: { key: CellKey; label: string; width: string; list?: string[] }[] = [
   { key: 'seq', label: '序号', width: 'w-12' },
   { key: 'content', label: '课程内容', width: 'min-w-56' },
   { key: 'type', label: '课程类型', width: 'w-24' },
   { key: 'score', label: '期末考分值占比', width: 'w-24' },
   { key: 'difficulty', label: '学习难度', width: 'w-20', list: DIFFICULTY_OPTIONS },
-  { key: 'scheduled_at', label: '计划上课时间', width: 'w-36' },
 ];
 
 const cellInputCls =
@@ -171,8 +177,8 @@ export default function ReportEdit() {
   const [items, setItems] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingText, setSavingText] = useState(false);
-  const [examSuggestions, setExamSuggestions] = useState<ExamSuggestion[] | null>(null);
-  const [examLoading, setExamLoading] = useState(false);
+  const [aiField, setAiField] = useState<'summary' | 'plan' | null>(null);
+  const aiAbort = useRef<AbortController | null>(null);
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -202,6 +208,16 @@ export default function ReportEdit() {
 
   const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
+
+  /** 当前要挑课的面板里已经加过、还连着目录 id 的课——弹窗里灰掉，不允许重复加 */
+  const pickerAddedIds = useMemo(() => {
+    const kind = showPicker || 'plan';
+    return new Set(
+      items
+        .filter((i) => i.kind === kind && i.course_id != null)
+        .map((i) => Number(i.course_id))
+    );
+  }, [items, showPicker]);
   const examItems = useMemo(() => items.filter((i) => i.kind === 'exam'), [items]);
 
   /**
@@ -218,8 +234,7 @@ export default function ReportEdit() {
   /** 图片卡片输入：关掉哪个开关就不出哪一块 */
   const cardInput = useMemo<ReportCardInput>(() => {
     if (!report) return { blocks: [] };
-    const byDate = (d?: string) => d || '9999-12-31';
-    const courseEntry = (i: ReportItem) => ({ date: i.scheduled_at, text: i.content });
+    const courseEntry = (i: ReportItem) => ({ text: i.content });
     const blocks: ReportCardBlock[] = [];
     if (report.summary_enabled) {
       blocks.push({
@@ -232,9 +247,8 @@ export default function ReportEdit() {
       blocks.push({
         heading: planMonth + '规划',
         intro: report.plan_intro,
-        entries: [...planItems.map(courseEntry), ...examItems.map((i) => ({ ...courseEntry(i), highlight: true }))].sort(
-          (a, b) => byDate(a.date).localeCompare(byDate(b.date))
-        ),
+        // 课程在前、阶测在后，跟页面上的排列一致
+        entries: [...planItems.map(courseEntry), ...examItems.map((i) => ({ ...courseEntry(i), highlight: true }))],
       });
     }
     const core = [report.term ?? '', report.grade ?? '', report.subject ?? ''].filter(Boolean).join('');
@@ -292,12 +306,24 @@ export default function ReportEdit() {
     }
   }
 
+  /** 只改本地：AI 流式写输入框时用，避免 PATCH 回写把已流出的文字冲掉 */
+  function setIntro(field: 'summary_intro' | 'plan_intro', value: string) {
+    setReport((prev) => (prev ? ({ ...prev, [field]: value } as MonthlyReport) : prev));
+  }
+
+  function appendIntro(field: 'summary_intro' | 'plan_intro', text: string) {
+    setReport((prev) => (prev ? ({ ...prev, [field]: (prev[field] || '') + text } as MonthlyReport) : prev));
+  }
+
   async function addItem(kind: 'summary' | 'plan' | 'exam', body: Record<string, unknown> = {}) {
     if (!report) return;
     try {
+      // 总结块的课一进来就把出勤/笔记/错题/作业记成 ✅、考试情况记成「/」，
+      // 老师只在真的请假、补课、有考试时才改回来
+      const base = kind === 'summary' ? { kind, ...SUMMARY_DEFAULTS } : { kind };
       const data = await api.request<{ item: ReportItem }>(`/reports/${report.id}/items`, {
         method: 'POST',
-        body: JSON.stringify({ kind, ...body }),
+        body: JSON.stringify({ ...base, ...body }),
       });
       setItems((prev) => [...prev, data.item]);
       return data.item;
@@ -344,23 +370,47 @@ export default function ReportEdit() {
     }
   }
 
-  async function fetchExams(insert: boolean) {
+  /**
+   * AI 编写「本月总结」或「本月规划」，流式写进对应输入框。
+   * 材料是这块报告自己的课程明细 + 该学生最近的课后回访，所以两段不会雷同。
+   * 已有内容先问一句，免得老师手写的稿子被冲掉；流完立刻落库，不用等失焦。
+   */
+  async function runAi(field: 'summary' | 'plan') {
     if (!report) return;
-    setExamLoading(true);
+    const introKey = field === 'summary' ? 'summary_intro' : 'plan_intro';
+    const courses = field === 'summary' ? summaryItems : planItems;
+    if (courses.length === 0) {
+      toast.error((field === 'summary' ? '总结' : '规划') + '里还没有课程内容，先添加课程再让 AI 写');
+      return;
+    }
+    if ((report[introKey] || '').trim() && !window.confirm('要用 AI 生成的内容替换现在这段文字，继续吗？')) return;
+
+    const controller = new AbortController();
+    aiAbort.current = controller;
+    setAiField(field);
+    setIntro(introKey, '');
+
     try {
-      const data = await api.request<{ suggestions: ExamSuggestion[]; inserted: number }>(
-        `/reports/${report.id}/exams`,
-        { method: 'POST', body: JSON.stringify({ insert }) }
+      await api.streamPost(
+        `/reports/${report.id}/ai/stream`,
+        { field },
+        {
+          onDelta: (text) => appendIntro(introKey, text),
+          onDone: ({ content }) => {
+            void patchText(introKey, content);
+            toast.success('AI 编写完成，可以直接改');
+          },
+          onError: (msg) => toast.error(msg),
+        },
+        controller.signal
       );
-      setExamSuggestions(data.suggestions);
-      if (insert) {
-        toast.success('已加入 ' + data.inserted + ' 次阶测安排');
-        await reload(true);
-      }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '阶测推算失败');
+      if ((e as Error)?.name !== 'AbortError') toast.error(e instanceof Error ? e.message : 'AI 编写失败');
     } finally {
-      setExamLoading(false);
+      if (aiAbort.current === controller) {
+        aiAbort.current = null;
+        setAiField(null);
+      }
     }
   }
 
@@ -468,6 +518,20 @@ export default function ReportEdit() {
         intro={
           <Textarea
             label="本月总结"
+            hint={
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Sparkles className="h-3.5 w-3.5" />}
+                loading={aiField === 'summary'}
+                disabled={summaryItems.length === 0 || aiField !== null}
+                title={summaryItems.length === 0 ? '先添加本月的课程内容' : '按课程明细和最近的回访生成'}
+                aria-label="AI 编写本月总结"
+                onClick={() => void runAi('summary')}
+              >
+                AI 编写
+              </Button>
+            }
             placeholder={'📚课堂情况：本月计划x次课\n📖学习内容：\n🎯本月收获：\n🏆进步表现：\n📝本月不足：\n💡建议：\n🎯下月目标：'}
             value={report.summary_intro}
             onChange={(e) => setReport({ ...report, summary_intro: e.target.value })}
@@ -495,16 +559,7 @@ export default function ReportEdit() {
               <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setShowPicker('plan')}>
                 从课程目录添加
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={<Sparkles className="h-4 w-4" />}
-                loading={examLoading}
-                onClick={() => void fetchExams(false)}
-              >
-                自动推算阶测
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => void addItem('exam', { content: '阶测安排' })}>
+              <Button variant="ghost" size="sm" icon={<CalendarDays className="h-4 w-4" />} onClick={() => void addItem('exam', { content: '阶测安排' })}>
                 手动加阶测
               </Button>
             </div>
@@ -513,6 +568,20 @@ export default function ReportEdit() {
       intro={
         <Textarea
           label="本月规划"
+          hint={
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Sparkles className="h-3.5 w-3.5" />}
+              loading={aiField === 'plan'}
+              disabled={planItems.length === 0 || aiField !== null}
+              title={planItems.length === 0 ? '先添加下月的课程内容' : '按课程明细和总结里的收获生成'}
+              aria-label="AI 编写本月规划"
+              onClick={() => void runAi('plan')}
+            >
+              AI 编写
+            </Button>
+          }
           placeholder="本月打算讲哪些内容、重点攻克什么…"
           value={report.plan_intro}
           onChange={(e) => setReport({ ...report, plan_intro: e.target.value })}
@@ -552,8 +621,9 @@ export default function ReportEdit() {
       <CoursePicker
         open={showPicker !== null}
         kind={showPicker || 'plan'}
-        grade={report.grade}
         subject={report.subject}
+        reportTerm={report.term}
+        addedIds={pickerAddedIds}
         onClose={() => setShowPicker(null)}
         onPick={async (courses) => {
           const kind = showPicker || 'plan';
@@ -574,19 +644,6 @@ export default function ReportEdit() {
           setShowPicker(null);
           toast.success('已添加 ' + added + ' 门课');
         }}
-      />
-
-      <ExamDialog
-        open={!!examSuggestions}
-        suggestions={examSuggestions || []}
-        loading={examLoading}
-        onClose={() => setExamSuggestions(null)}
-        onInsert={() =>
-          void (async () => {
-            setExamSuggestions(null);
-            await fetchExams(true);
-          })()
-        }
       />
 
       <ConfirmDialog
@@ -769,60 +826,137 @@ function ExamRows({
   );
 }
 
+/**
+ * 从课程目录挑课。
+ *
+ * 默认只列这块报告学科的课，学期默认锁在报告自己的学期上——报告是秋季的就不该
+ * 往里塞寒假的课，目录那边「引用」也跟着对不上。年级 / 学期 / 类型可以再收窄，
+ * 「查看全部」一键放开所有条件。已经加进当前面板的课标灰、不能再选，
+ * 免得同一门课在总结里写两遍。
+ */
 function CoursePicker({
   open,
   kind,
-  grade,
   subject,
+  reportTerm,
+  addedIds,
   onClose,
   onPick,
 }: {
   open: boolean;
   kind: 'summary' | 'plan';
-  grade: string;
   subject: string;
+  reportTerm: string;
+  addedIds: Set<number>;
   onClose: () => void;
   onPick: (courses: CatalogCourseOption[]) => Promise<void>;
 }) {
   const [courses, setCourses] = useState<CatalogCourseOption[]>([]);
+  const [total, setTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [type, setType] = useState('');
+  const [grade, setGrade] = useState('');
+  const [term, setTerm] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [grades, setGrades] = useState<string[]>([]);
+  const [terms, setTerms] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
     setKeyword('');
     setType('');
+    setGrade('');
+    setTerm(reportTerm);
+    setShowAll(false);
     setPicked(new Set());
+    void api
+      .request<{ grades: string[]; terms: string[] }>('/catalog/facets')
+      .then((r) => {
+        setGrades(r.grades || []);
+        setTerms(r.terms || []);
+      })
+      .catch(() => undefined);
+  }, [open, reportTerm]);
+
+  useEffect(() => {
+    if (!open) return;
     setLoading(true);
     const params = new URLSearchParams({ limit: '1000' });
+    if (!showAll && subject) params.set('subject', subject);
     if (grade) params.set('grade', grade);
-    if (subject) params.set('subject', subject);
+    if (term) params.set('term', term);
+    if (type) params.set('type', type);
+    if (keyword.trim()) params.set('q', keyword.trim());
     api
-      .request<{ courses: CatalogCourseOption[]; total: number }>(`/catalog/courses?${params}`)
-      .then((r) => setCourses(r.courses))
-      .catch(() => setCourses([]))
+      .request<{ courses: CatalogCourseOption[]; total: number; rows: number }>(`/catalog/courses?${params}`)
+      .then((r) => {
+        setCourses(r.courses || []);
+        setTotal(r.total || 0);
+        setTruncated((r.rows || 0) < (r.total || 0));
+      })
+      .catch(() => {
+        setCourses([]);
+        setTotal(0);
+      })
       .finally(() => setLoading(false));
-  }, [open, grade, subject]);
-
-  const filtered = useMemo(() => {
-    let list = courses;
-    if (type) list = list.filter((c) => c.type === type);
-    if (keyword.trim()) {
-      const k = keyword.trim().toLowerCase();
-      list = list.filter(
-        (c) => c.content.toLowerCase().includes(k) || (c.textbook || '').toLowerCase().includes(k)
-      );
-    }
-    return list;
-  }, [courses, keyword, type]);
+  }, [open, subject, grade, term, type, keyword, showAll]);
 
   const typeOptions = useMemo(() => Array.from(new Set(courses.map((c) => c.type).filter(Boolean))), [courses]);
 
+  const hasFilter = showAll || !!(subject || grade || term || type || keyword.trim());
+
+  const resetAll = () => {
+    setKeyword('');
+    setType('');
+    setGrade('');
+    setTerm('');
+    setShowAll(true);
+  };
+
+  // 「查看全部」是开关：有收窄就展开到全部课程，已经展开了就收回来。
+  // 收回时必须把报告学期重新套回去——不然展开过一次再点回来会变成「全部学期」，
+  // 寒假的课又悄悄混进秋季的报告里了。
+  const toggleShowAll = () => {
+    setKeyword('');
+    setType('');
+    setGrade('');
+    if (showAll) {
+      setShowAll(false);
+      setTerm(reportTerm);
+    } else {
+      setShowAll(true);
+      setTerm('');
+    }
+  };
+
+  const scopeText = [
+    showAll ? '全部课程' : subject ? subject : '',
+    grade,
+    term || (showAll ? '' : '全部学期'),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const toggle = (c: CatalogCourseOption) => {
+    if (addedIds.has(c.id)) return;
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(c.id)) next.delete(c.id);
+      else next.add(c.id);
+      return next;
+    });
+  };
+
   return (
-    <Modal open={open} onClose={onClose} title={'从课程目录添加 · ' + (kind === 'plan' ? '规划' : '总结')} size="lg"
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={'从课程目录添加 · ' + (kind === 'plan' ? '规划' : '总结')}
+      size="lg"
       footer={
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs text-slate-400">已选 {picked.size} 门</span>
@@ -854,8 +988,22 @@ function CoursePicker({
           <Input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="搜索课程内容 / 教材"
+            placeholder="搜索课程内容 / 教材 / 难度"
             aria-label="搜索"
+          />
+          <Select
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder="全部学期"
+            options={terms.map((t) => ({ value: t, label: t }))}
+            aria-label="学期"
+          />
+          <Select
+            value={grade}
+            onChange={(e) => setGrade(e.target.value)}
+            placeholder="全部年级"
+            options={grades.map((g) => ({ value: g, label: g }))}
+            aria-label="年级"
           />
           <Select
             value={type}
@@ -866,100 +1014,74 @@ function CoursePicker({
           />
         </div>
 
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="truncate text-slate-400">
+            {scopeText} · 共 {total} 门{truncated ? '，仅显示前 ' + courses.length + ' 门' : ''}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => void toggleShowAll()} aria-label="查看全部课程">
+            查看全部
+          </Button>
+        </div>
+
         <div className="max-h-80 overflow-y-auto rounded-xl border border-slate-100">
           {loading ? (
             <div className="p-8 text-center text-sm text-slate-400">加载中…</div>
-          ) : filtered.length === 0 ? (
+          ) : courses.length === 0 ? (
             <div className="p-8 text-center text-sm text-slate-400">
-              没有匹配的课程。
-              <Link to="/catalog" className="ml-1 text-brand-600 hover:underline">
-                去课程目录导入
-              </Link>
+              这个范围里没有匹配的课程。
+              {hasFilter && (
+                <button onClick={resetAll} className="ml-1 text-brand-600 hover:underline">
+                  查看全部课程
+                </button>
+              )}
+              {!hasFilter && (
+                <Link to="/catalog" className="ml-1 text-brand-600 hover:underline">
+                  去课程目录导入
+                </Link>
+              )}
             </div>
           ) : (
             <table className="w-full text-xs">
               <tbody>
-                {filtered.map((c) => (
-                  <tr
-                    key={c.id}
-                    className={cn('cursor-pointer border-b border-slate-50 last:border-0', picked.has(c.id) ? 'bg-brand-50/60' : 'hover:bg-slate-50')}
-                    onClick={() =>
-                      setPicked((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(c.id)) next.delete(c.id);
-                        else next.add(c.id);
-                        return next;
-                      })
-                    }
-                  >
-                    <td className="w-8 px-2 py-1.5 text-center">
-                      <input type="checkbox" className="accent-brand-600" checked={picked.has(c.id)} readOnly aria-label="选择" />
-                    </td>
-                    <td className="px-2 py-1.5 text-slate-700">{c.content}</td>
-                    <td className="w-20 px-2 py-1.5 text-slate-400">{c.type}</td>
-                    <td className="w-16 px-2 py-1.5 text-slate-400">{c.score}</td>
-                    <td className="w-20 px-2 py-1.5 text-slate-400">{c.difficulty}</td>
-                    <td className="w-24 truncate px-2 py-1.5 text-slate-400">{c.textbook}</td>
-                  </tr>
-                ))}
+                {courses.map((c) => {
+                  const added = addedIds.has(c.id);
+                  return (
+                    <tr
+                      key={c.id}
+                      className={cn(
+                        'border-b border-slate-50 last:border-0',
+                        added ? 'text-slate-300' : 'cursor-pointer hover:bg-slate-50',
+                        picked.has(c.id) && 'bg-brand-50/60'
+                      )}
+                      onClick={() => toggle(c)}
+                      aria-disabled={added}
+                    >
+                      <td className="w-8 px-2 py-1.5 text-center">
+                        <input
+                          type="checkbox"
+                          className="accent-brand-600"
+                          checked={picked.has(c.id)}
+                          disabled={added}
+                          readOnly
+                          aria-label="选择"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 text-slate-700">
+                        {c.content}
+                        {added && <span className="ml-1.5 text-[11px] text-slate-300">已添加</span>}
+                      </td>
+                      <td className="w-16 px-2 py-1.5 text-slate-400">{c.term}</td>
+                      <td className="w-20 px-2 py-1.5 text-slate-400">{c.type}</td>
+                      <td className="w-16 px-2 py-1.5 text-slate-400">{c.score}</td>
+                      <td className="w-20 px-2 py-1.5 text-slate-400">{c.difficulty}</td>
+                      <td className="w-24 truncate px-2 py-1.5 text-slate-400">{c.textbook}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
-      </div>
-    </Modal>
-  );
-}
-
-function ExamDialog({
-  open,
-  suggestions,
-  loading,
-  onClose,
-  onInsert,
-}: {
-  open: boolean;
-  suggestions: ExamSuggestion[];
-  loading: boolean;
-  onClose: () => void;
-  onInsert: () => void;
-}) {
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="自动推算的阶测安排"
-      size="md"
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          <Button icon={<Sparkles className="h-4 w-4" />} disabled={suggestions.length === 0 || loading} onClick={onInsert}>
-            全部加入规划
-          </Button>
-        </div>
-      }
-    >
-      <div className="space-y-2">
-        <p className="text-xs text-slate-400">
-          按规划里已有上课时间的跨度推算：学期每 3 周一次，寒暑假每 2 周一次。每场阶测自动带上它覆盖的课，加入后仍可以改时间。
-        </p>
-        {suggestions.length === 0 ? (
-          <div className="py-8 text-center text-sm text-slate-400">跨度不够排一次阶测</div>
-        ) : (
-          suggestions.map((s) => (
-            <div key={s.date} className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-700">{s.content}</span>
-                <Badge tone="violet">{s.date.slice(5).replace('-', '.')}</Badge>
-              </div>
-              {s.courseCount === 0 && (
-                <p className="mt-1 text-xs text-amber-500">这段跨度里没有计划上课时间，可能要调整排期</p>
-              )}
-            </div>
-          ))
-        )}
       </div>
     </Modal>
   );
