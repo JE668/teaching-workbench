@@ -626,6 +626,7 @@ export default function ReportEdit() {
         open={showPicker !== null}
         kind={showPicker || 'plan'}
         subject={report.subject}
+        reportGrade={report.grade}
         reportTerm={report.term}
         addedIds={pickerAddedIds}
         onClose={() => setShowPicker(null)}
@@ -842,6 +843,7 @@ function CoursePicker({
   open,
   kind,
   subject,
+  reportGrade,
   reportTerm,
   addedIds,
   onClose,
@@ -850,6 +852,7 @@ function CoursePicker({
   open: boolean;
   kind: 'summary' | 'plan';
   subject: string;
+  reportGrade: string;
   reportTerm: string;
   addedIds: Set<number>;
   onClose: () => void;
@@ -868,12 +871,17 @@ function CoursePicker({
   const [busy, setBusy] = useState(false);
   const [grades, setGrades] = useState<string[]>([]);
   const [terms, setTerms] = useState<string[]>([]);
+  /** 自动展开标记：「同步」类型无结果时自动放开，避免用户看到空列表 */
+  const autoClearedType = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      autoClearedType.current = false;
+      return;
+    }
     setKeyword('');
-    setType('');
-    setGrade('');
+    setType('同步');
+    setGrade(reportGrade);
     setTerm(reportTerm);
     setShowAll(false);
     setPicked(new Set());
@@ -884,7 +892,7 @@ function CoursePicker({
         setTerms(r.terms || []);
       })
       .catch(() => undefined);
-  }, [open, reportTerm]);
+  }, [open, reportGrade, reportTerm]);
 
   useEffect(() => {
     if (!open) return;
@@ -909,6 +917,15 @@ function CoursePicker({
       .finally(() => setLoading(false));
   }, [open, subject, grade, term, type, keyword, showAll]);
 
+  // 「同步」类型无结果时自动放开类型筛选，避免用户看到空列表
+  useEffect(() => {
+    if (!open || showAll || loading || autoClearedType.current) return;
+    if (type === '同步' && total === 0 && courses.length === 0) {
+      autoClearedType.current = true;
+      setType('');
+    }
+  }, [open, showAll, loading, type, total, courses]);
+
   const typeOptions = useMemo(() => Array.from(new Set(courses.map((c) => c.type).filter(Boolean))), [courses]);
 
   const hasFilter = showAll || !!(subject || grade || term || type || keyword.trim());
@@ -926,13 +943,17 @@ function CoursePicker({
   // 寒假的课又悄悄混进秋季的报告里了。
   const toggleShowAll = () => {
     setKeyword('');
-    setType('');
-    setGrade('');
     if (showAll) {
+      // 收回：恢复默认筛选（年级 + 学期 + 同步）
       setShowAll(false);
+      setType('同步');
+      setGrade(reportGrade);
       setTerm(reportTerm);
     } else {
+      // 展开：放开所有条件
       setShowAll(true);
+      setType('');
+      setGrade('');
       setTerm('');
     }
   };
@@ -940,6 +961,7 @@ function CoursePicker({
   const scopeText = [
     showAll ? '全部课程' : subject ? subject : '',
     grade,
+    type || (showAll ? '' : '全部类型'),
     term || (showAll ? '' : '全部学期'),
   ]
     .filter(Boolean)

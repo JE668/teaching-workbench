@@ -119,7 +119,7 @@ test.describe('月度总结与课程规划', () => {
     await row.getByRole('button', { name: '打开' }).click();
     await expect(page.getByRole('heading', { name: '报告同学', exact: true })).toBeVisible();
 
-    // —— 总结：弹窗默认收窄到这份报告的学科 + 学期，春季的课不该混进来 ——
+    // —— 总结：弹窗默认收窄到这份报告的学科 + 年级 + 学期 + 同步，春季的课不该混进来 ——
     await page.getByRole('button', { name: '从课程目录添加' }).first().click();
     const picker = page.locator('div.fixed.inset-0.z-50').last();
     await expect(picker.getByText('从课程目录添加 · 总结')).toBeVisible();
@@ -128,6 +128,10 @@ test.describe('月度总结与课程规划', () => {
     await expect(picker.locator('tr', { hasText: '金属活动性' })).toHaveCount(0);
     // 默认学期就是报告自己的学期
     await expect(picker.getByLabel('学期')).toHaveValue('秋季');
+    // 默认年级就是学生自己的年级
+    await expect(picker.getByLabel('年级')).toHaveValue('初三');
+    // 默认类型是同步
+    await expect(picker.getByLabel('课程类型')).toHaveValue('同步');
 
     // 「查看全部」放开全部条件，春季的课就出来了；再点一次收回来
     await picker.getByRole('button', { name: '查看全部' }).click();
@@ -135,7 +139,8 @@ test.describe('月度总结与课程规划', () => {
     await picker.getByRole('button', { name: '查看全部' }).click();
     await expect(picker.locator('tr', { hasText: '金属活动性' })).toHaveCount(0);
 
-    // 搜一把，确认能按内容过滤
+    // 搜一把，确认能按内容过滤（先清掉类型筛选，因为「氧气」是专题课）
+    await picker.getByLabel('课程类型').selectOption('');
     await picker.getByLabel('搜索').fill('氧气');
     await expect(picker.getByText('氧气')).toBeVisible();
     await expect(picker.locator('tr', { hasText: '空气的成分' })).toHaveCount(0);
