@@ -134,13 +134,13 @@ test.describe('月度总结与课程规划', () => {
     await expect(picker.getByLabel('课程类型')).toHaveValue('同步');
 
     // 「查看全部」放开全部条件，春季的课就出来了；再点一次收回来
-    await picker.getByRole('button', { name: '查看全部' }).click();
+    await picker.getByLabel('查看全部课程').click();
     // 用搜索锁定春季课程（全部课程里数量多，不能靠默认分页碰运气）
     await picker.getByLabel('搜索').fill('金属活动性');
-    await expect(picker.locator('tr', { hasText: '金属活动性' })).toBeVisible();
+    await expect(picker.getByRole('row', { name: '金属活动性' }).first()).toBeVisible();
     await picker.getByLabel('搜索').fill('');
-    await picker.getByRole('button', { name: '查看全部' }).click();
-    await expect(picker.locator('tr', { hasText: '金属活动性' })).toHaveCount(0);
+    await picker.getByLabel('查看全部课程').click();
+    await expect(picker.getByRole('row', { name: '金属活动性' })).toHaveCount(0);
 
     // 搜一把，确认能按内容过滤（先清掉类型筛选，因为「氧气」是专题课）
     await picker.getByLabel('课程类型').selectOption('');
