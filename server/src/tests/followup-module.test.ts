@@ -102,6 +102,21 @@ describe('流程打卡类型 · 提示词', () => {
     assert.ok(p.includes('# 各板块专属要求'));
   });
 
+  test('素材分配约束：多板块要求去重，单板块保持老形状', () => {
+    const multi = buildPrompt({
+      ...base,
+      modules: ['homework_review', 'class_content', 'mistake_drill'] as FollowUpModule[],
+    });
+    // 老师给的素材只够少数板块时，其余板块不能反复复述同一条素材
+    assert.ok(multi.includes('# 素材分配'), '多板块提示词应有素材分配段');
+    assert.match(multi, /【严禁】同一件事在多个板块里重复出现/);
+    assert.match(multi, /宁简勿凑/);
+
+    // 单板块沿用老提示词形状，不追加素材分配段
+    const single = buildPrompt({ ...base, module: 'class_content' });
+    assert.ok(!single.includes('# 素材分配'));
+  });
+
   test('板块清单归一化：兼容 JSON 串、老单值、非法值丢弃', () => {
     assert.deepEqual(normalizeFollowUpModules('["preview","class_content"]'), ['preview', 'class_content']);
     assert.deepEqual(normalizeFollowUpModules('class_content'), ['class_content']);
