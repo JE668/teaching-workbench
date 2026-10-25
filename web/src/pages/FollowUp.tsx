@@ -222,25 +222,44 @@ export default function FollowUp() {
 
   // ===== 跨设备实时同步 =====
   // 电脑写文案 / 手机拍图上传来图，两边无需刷新即可看到
+
+  // applyRemote 是空依赖的 useCallback，读 generating 要走 ref
+  const generatingRef = useRef(false);
+  useEffect(() => {
+    generatingRef.current = generating;
+  }, [generating]);
+
   const applyRemote = useCallback(
     (remote: DraftPayload, skipFields: string[]) => {
+      const effSkip = new Set(skipFields);
+      // AI 正在流式生成时，生成框内容以本端为准，远端草稿不得打断
+      if (generatingRef.current) {
+        effSkip.add('content');
+        effSkip.add('draft');
+      }
       if (remote.form) {
         setForm((prev) => {
           const next: FormState = { ...prev };
           for (const [key, value] of Object.entries(remote.form)) {
             // 正在输入 / 刚改过的字段不覆盖，避免打断
-            if (skipFields.includes(key)) continue;
+            if (effSkip.has(key)) continue;
             (next as any)[key] = value;
           }
           return next;
         });
       }
-      if (Array.isArray(remote.images) && !skipFields.includes('images')) setImages(remote.images);
-      if (Array.isArray(remote.selectedIds) && !skipFields.includes('selectedIds')) {
+      if (Array.isArray(remote.images) && !effSkip.has('images')) setImages(remote.images);
+      if (Array.isArray(remote.selectedIds) && !effSkip.has('selectedIds')) {
         setSelectedIds(remote.selectedIds);
       }
-      if (typeof remote.content === 'string' && !skipFields.includes('content')) setContent(remote.content);
-      if (typeof remote.draft === 'string' && !skipFields.includes('draft')) setDraft(remote.draft);
+      // 空串不覆盖非空本地值：另一台设备还没同步到生成内容时动表单，
+      // 不该把这台设备刚生成的内容整框清掉
+      if (typeof remote.content === 'string' && remote.content !== '' && !effSkip.has('content')) {
+        setContent(remote.content);
+      }
+      if (typeof remote.draft === 'string' && remote.draft !== '' && !effSkip.has('draft')) {
+        setDraft(remote.draft);
+      }
     },
     []
   );
@@ -1354,9 +1373,14 @@ export default function FollowUp() {
                 {editing ? (
                   <textarea
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                      // 跨设备同步：标记本地刚改过，3 秒内远端推送不覆盖这个字段
+                      markLocalEdit('draft');
+                      setDraft(e.target.value);
+                    }}
                     rows={16}
                     aria-label="课后回访内容"
+                    data-sync-field="draft"
                     placeholder="在这里直接修改回访内容"
                     className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm leading-relaxed outline-none transition-all focus:border-brand-400 focus:ring-4 focus:ring-brand-500/10"
                   />
