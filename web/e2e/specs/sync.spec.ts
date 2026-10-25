@@ -142,4 +142,61 @@ test.describe('跨设备实时同步', () => {
       await bCtx.close();
     }
   });
+
+  test('AI 生成后编辑中的内容不会被另一台设备冲掉', async ({ browser }) => {
+    const aCtx = await browser.newContext();
+    const bCtx = await browser.newContext();
+    const a = await aCtx.newPage();
+    const b = await bCtx.newPage();
+
+    try {
+      await loginViaApi(a);
+      await loginViaApi(b);
+      await a.goto('/followups');
+      await b.goto('/followups');
+
+      await expect(a.getByTestId('sync-status')).toContainText(/跨设备同步|已连接/, {
+        timeout: 15_000,
+      });
+      await expect(b.getByTestId('sync-status')).toContainText(/跨设备同步|已连接/, {
+        timeout: 15_000,
+      });
+
+      // A 端填最小表单并生成（mock AI 流式返回）
+      await a.getByLabel(/学生姓名/).fill('同步编辑测试');
+      await a.getByLabel(/课程主题/).fill('分数加减法');
+      await a.getByLabel(/课堂表现/).fill('专注度较高，能主动回答问题');
+      await a.getByRole('button', { name: /生成课后回访内容/ }).click();
+
+      // 生成完成的标志：右上角出现「编辑」按钮
+      await expect(a.getByRole('button', { name: '编辑' })).toBeVisible({ timeout: 30_000 });
+      // B 端也实时收到了生成内容（同步链路活着）
+      await expect(b.getByTestId('generated-content')).toBeVisible({ timeout: 15_000 });
+
+      // 从现在起 A 端的草稿推送一律失败：模拟网络抖动 / 切后台。
+      // A 接下来的编辑只存在于本地，服务端和 B 端都还停留在生成原文——
+      // 这是真实丢内容的链路：B 一动表单，推送带回来的就是旧 draft
+      await a.route('**/api/draft', async (route) => {
+        if (route.request().method() === 'PUT') return route.abort();
+        return route.continue();
+      });
+
+      // A 点编辑，改写正文（保持焦点在正文框里）
+      await a.getByRole('button', { name: '编辑' }).click();
+      const editor = a.getByLabel('课后回访内容');
+      await editor.click();
+      await editor.fill('A 正在编辑的回访内容，任何远端都不许覆盖');
+
+      // B 端动表单触发一次推送：它带的 draft 是 A 没能推上去的生成原文
+      await b.getByLabel(/课堂表现/).fill('B 端修改的课堂表现');
+      await a.waitForTimeout(2500);
+
+      // A 的编辑保住了；B 改的课堂表现同步过来了（同步本身还活着，不是断线）
+      await expect(editor).toHaveValue('A 正在编辑的回访内容，任何远端都不许覆盖');
+      await expect(a.getByLabel(/课堂表现/)).toHaveValue('B 端修改的课堂表现');
+    } finally {
+      await aCtx.close();
+      await bCtx.close();
+    }
+  });
 });

@@ -66,7 +66,8 @@ export function useDraftSync({ state, applyRemote, onRemoteCleared, paused }: Op
   /** 其它在线设备数量（不含自己） */
   const [peerCount, setPeerCount] = useState(0);
 
-  const lastLocalEdit = useRef<{ field: string; at: number }>({ field: '', at: 0 });
+  /** 字段名 → 最近一次本地编辑时间；3 秒内的字段不被远端覆盖 */
+  const localEdits = useRef(new Map<string, number>());
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -81,23 +82,25 @@ export function useDraftSync({ state, applyRemote, onRemoteCleared, paused }: Op
 
   /** 供输入框调用：标记"我刚改了这个字段" */
   const markLocalEdit = useCallback((field: string) => {
-    lastLocalEdit.current = { field, at: Date.now() };
+    localEdits.current.set(field, Date.now());
   }, []);
 
   /** 计算本次远端更新需要跳过的字段 */
   const computeSkipFields = useCallback((): string[] => {
-    const skip: string[] = [];
+    const skip = new Set<string>();
 
     // ① 正在输入的字段
     const focused = fieldOf(document.activeElement);
-    if (focused) skip.push(focused);
+    if (focused) skip.add(focused);
 
-    // ② 3 秒内本地刚改过的字段
-    if (Date.now() - lastLocalEdit.current.at < LOCAL_GRACE_MS && lastLocalEdit.current.field) {
-      skip.push(lastLocalEdit.current.field);
+    // ② 3 秒内本地刚改过的字段（可以有多个：先编辑正文再改表单，两个都受保护）
+    const now = Date.now();
+    for (const [field, at] of localEdits.current) {
+      if (now - at < LOCAL_GRACE_MS) skip.add(field);
+      else localEdits.current.delete(field);
     }
 
-    return [...new Set(skip)];
+    return [...skip];
   }, []);
 
   // ---------- 推送本地改动 ----------
@@ -119,12 +122,18 @@ export function useDraftSync({ state, applyRemote, onRemoteCleared, paused }: Op
     if (json === lastSynced.current) return;
 
     const timer = setTimeout(() => {
+      const prevSynced = lastSynced.current;
       lastSynced.current = json;
       api
         .put('/draft', { clientId, payload: stateRef.current })
         .then(() => setConnected(true))
         .catch(() => {
-          /* 网络中断由订阅侧的重连逻辑兜底 */
+          // 推送失败（网络抖动 / 切后台）：把同步基准回滚到推送前的值。
+          // 不回滚的话 lastSynced 与本地一致，重连时 ready 会判定
+          // 「本地没有未上报改动」，用服务端的旧草稿覆盖本地——
+          // 刚生成的内容或编辑到一半的字就丢在这。
+          // 回滚后 hasPendingLocalChanges 为真，ready 不覆盖；下次 state 变化会重推全量。
+          if (lastSynced.current === json) lastSynced.current = prevSynced;
         });
     }, PUSH_DEBOUNCE_MS);
 
