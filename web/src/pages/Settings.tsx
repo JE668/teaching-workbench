@@ -226,15 +226,27 @@ export default function Settings() {
   };
 
   /** 切换 AI 服务商：立即落库并整页重载设置——
-   *  模型列表、Key 掩码、接口地址都是按当前服务商拉取/展示的 */
+   *  模型列表、Key 掩码、接口地址都是按当前服务商拉取/展示的。
+   *  ① 乐观更新：表单先切到位，不等网络往返——否则「接口地址」
+   *    会先显示旧服务商的地址，用户若在此窗口手动改地址 / 保存，
+   *    会把值写进错误的命名空间。
+   *  ② 切换期间禁用保存：load() 完成前保存同样会写错键。 */
+  const [switching, setSwitching] = useState(false);
   const switchProvider = async (next: string) => {
-    if (next === form.provider) return;
+    if (next === form.provider || switching) return;
+    setSwitching(true);
+    const previewUrl =
+      next === 'gemini-proxy' ? 'https://api.gemmaproxy.dpdns.org/v1' : 'https://token.sensenova.cn/v1';
+    setForm((prev) => ({ ...prev, provider: next, model: '', baseUrl: previewUrl }));
     try {
       await api.put('/settings', { 'ai.provider': next });
       toast.success('已切换 AI 服务商');
       await load();
     } catch (err: any) {
       toast.error('切换失败：' + err.message);
+      await load();
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -292,7 +304,7 @@ export default function Settings() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-800">设置</h1>
         <p className="mt-1 text-sm text-slate-400">
-          这里的修改保存在数据库中，立即生效，无需重启容器；留空则沿用 .env 的配置
+          这里的修改保存在数据库中，立即生效，无需重启容器；留空则沿用 .env 的配置。设置跟随账号：每个账号独立保存，互不影响
         </p>
       </div>
 
@@ -311,6 +323,7 @@ export default function Settings() {
               value={form.provider}
               onChange={(e) => void switchProvider(e.target.value)}
               options={AI_PROVIDERS}
+              disabled={switching}
             />
             <p className="mt-1 text-xs text-slate-400">
               {form.provider === 'gemini-proxy'
@@ -485,7 +498,7 @@ export default function Settings() {
             </div>
           )}
 
-          <Button onClick={saveAi} loading={saving} icon={<Save className="h-4 w-4" />}>
+          <Button onClick={saveAi} loading={saving} disabled={switching} icon={<Save className="h-4 w-4" />}>
             保存 AI 设置
           </Button>
         </div>

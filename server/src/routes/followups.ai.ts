@@ -52,7 +52,7 @@ router.post('/generate', validateBody(followUpGenerateSchema), async (req: Authe
     const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
     const courseType = normalizeCourseType(req.body.courseType);
 
-    const content = await runFollowUpGeneration({
+    const content = await runFollowUpGeneration(req.userId!, {
       studentName: studentName || '',
       grade,
       subject,
@@ -108,7 +108,7 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
 
   try {
     let full = '';
-    for await (const delta of runStreamGeneration(params)) {
+    for await (const delta of runStreamGeneration(req.userId!, params)) {
       if (sse.isGone()) break; // 客户端已断开，停止消耗
       full += delta;
       send('delta', { text: delta });
@@ -124,7 +124,7 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
       send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
       try {
-        const retryContent = await retryGeneration(params, '约 ' + wordCount + ' 字');
+        const retryContent = await retryGeneration(req.userId!, params, '约 ' + wordCount + ' 字');
         const retryWords = countWords(retryContent);
         if (
           isWordCountOk(retryWords, wordRange.min, wordRange.max) ||

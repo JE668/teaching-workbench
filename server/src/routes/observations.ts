@@ -428,7 +428,7 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
 
     // 生成前用户已选定的等级优先；其次保留库里已有值；都没有才用 AI 建议预填。
     const chosenGrade = normalizeOverallGrade(req.body?.overallGrade);
-    const report = await runObservationGeneration({
+    const report = await runObservationGeneration(req.userId!, {
       teacherName: row.teacher_name || (row.teacher_id ? '老师' : '被听课老师'),
       topic: row.topic,
       lessonTypeLabel: LESSON_TYPE_LABELS[normalizeLessonType(row.lesson_type)] || '其他',
@@ -502,7 +502,7 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
     };
 
     let full = '';
-    for await (const delta of runObservationStream(params)) {
+    for await (const delta of runObservationStream(req.userId!, params)) {
       if (clientGone) break;
       full += delta;
       send('delta', { text: delta });

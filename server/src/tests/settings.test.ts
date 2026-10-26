@@ -2,13 +2,15 @@ import './setup.js';
 import http from 'http';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, req, createUser } from './helpers.js';
+import { startServer, stopServer, req, createUser, userIdOf } from './helpers.js';
 
 let token = '';
+let uid = 0;
 
 before(async () => {
   await startServer();
   token = await createUser('settings-teacher');
+  uid = userIdOf(token);
 });
 after(async () => {
   await stopServer();
@@ -122,7 +124,7 @@ describe('应用设置 · 写入', () => {
 
     // 真正的 key 仍是原值（用 AI 配置快照间接验证）
     const { getAiConfig } = await import('../config/settings.js');
-    assert.equal(getAiConfig().apiKey, 'sk-real-key-1234567890', '掩码不应覆盖真实密钥');
+    assert.equal(getAiConfig(uid).apiKey, 'sk-real-key-1234567890', '掩码不应覆盖真实密钥');
   });
 
   test('切换 AI 服务商：gemini-proxy 配置独立，切回后 sensenova 配置无损', async () => {
@@ -144,7 +146,7 @@ describe('应用设置 · 写入', () => {
 
     // 配置快照走 gemini-proxy 命名空间
     const { getAiConfig } = await import('../config/settings.js');
-    const cfg = getAiConfig();
+    const cfg = getAiConfig(uid);
     assert.equal(cfg.provider, 'gemini-proxy');
     assert.equal(cfg.model, 'gemini-3.8-flash');
     assert.equal(cfg.baseUrl, 'https://api.gemmaproxy.dpdns.org/v1');
@@ -161,7 +163,7 @@ describe('应用设置 · 写入', () => {
     const after = await req('GET', '/api/settings', { token });
     assert.equal(after.body.settings['ai.provider'], 'sensenova');
     assert.equal(after.body.settings['ai.model'], sensenovaModel, 'sensenova 的模型不该被 gemini 写动');
-    const cfg2 = getAiConfig();
+    const cfg2 = getAiConfig(uid);
     assert.equal(cfg2.provider, 'sensenova');
     assert.equal(cfg2.model, sensenovaModel);
     assert.equal(cfg2.apiKey, 'sk-real-key-1234567890', 'sensenova 的 key 不该被 gemini 覆盖');
@@ -189,13 +191,52 @@ describe('应用设置 · 立即生效', () => {
     const { getConfigVersion, getAiConfig } = await import('../config/settings.js');
 
     await req('PUT', '/api/settings', { token, body: { 'ai.model': 'model-' + Date.now() } });
-    const v1 = getConfigVersion();
+    const v1 = getConfigVersion(uid);
 
     await req('PUT', '/api/settings', { token, body: { 'ai.model': 'model-b-' + Date.now() } });
-    const v2 = getConfigVersion();
+    const v2 = getConfigVersion(uid);
 
     assert.ok(v2 > v1, '版本号应递增（否则客户端会一直用旧配置）');
-    assert.ok(getAiConfig().model.startsWith('model-'));
+    assert.ok(getAiConfig(uid).model.startsWith('model-'));
+  });
+});
+
+describe('设置 · 按账号隔离', () => {
+  test('A 改的模型 / 服务商，B 完全看不到', async () => {
+    const { getAiConfig, getConfigVersion } = await import('../config/settings.js');
+    const tokenB = await createUser('settings-teacher-b');
+    const uidB = userIdOf(tokenB);
+
+    // 基线：两人都还没覆盖，读的都是同一个 .env 默认
+    const beforeA = await req('GET', '/api/settings', { token });
+    const beforeB = await req('GET', '/api/settings', { token: tokenB });
+    assert.equal(beforeA.status, 200);
+    assert.equal(beforeB.status, 200);
+
+    // A 切到 Gemini 代理并改模型
+    await req('PUT', '/api/settings', {
+      token,
+      body: { 'ai.provider': 'gemini-proxy', 'ai.geminiProxy.model': 'gemini-test-x' },
+    });
+
+    const afterA = await req('GET', '/api/settings', { token });
+    const afterB = await req('GET', '/api/settings', { token: tokenB });
+
+    // A 看到自己的新配置
+    assert.equal(afterA.body.settings['ai.provider'], 'gemini-proxy');
+    assert.equal(afterA.body.settings['ai.geminiProxy.model'], 'gemini-test-x');
+    // B 完全不受影响
+    assert.notEqual(afterB.body.settings['ai.provider'], 'gemini-proxy');
+
+    const cfgB = getAiConfig(uidB);
+    assert.ok(cfgB.baseUrl.includes('sensenova'), 'B 的 baseUrl 应仍是 sensenova 兜底');
+    assert.equal(cfgB.model, beforeB.body.settings['ai.model']);
+
+    // 配置版本号也是各自独立递增
+    const vB1 = getConfigVersion(uidB);
+    await req('PUT', '/api/settings', { token, body: { 'ai.timeoutMs': '45000' } });
+    const vB2 = getConfigVersion(uidB);
+    assert.equal(vB2, vB1, 'A 的写入不应 bump B 的配置版本');
   });
 });
 

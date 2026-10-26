@@ -90,6 +90,12 @@ export async function createUser(username: string, password = 'passw0rd'): Promi
   return res.body.token as string;
 }
 
+/** 从 JWT 里解出 userId（settings 等直接读后端配置快照的测试用） */
+export function userIdOf(token: string): number {
+  const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf-8'));
+  return payload.userId as number;
+}
+
 /** 创建学生，返回学生对象 */
 export async function createStudent(token: string, overrides: Record<string, any> = {}) {
   const res = await req('POST', '/api/students', {

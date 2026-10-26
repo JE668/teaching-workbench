@@ -31,57 +31,63 @@ const WRITABLE = Object.keys(FALLBACK);
 
 export const SETTING_KEYS = WRITABLE;
 
-function readRaw(key: string): string | null {
+function readRaw(key: string, userId: number): string | null {
   try {
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
+    const row = db
+      .prepare('SELECT value FROM settings_user WHERE user_id = ? AND key = ?')
+      .get(userId, key) as any;
     return row ? String(row.value) : null;
   } catch {
     return null; // 表还没建好等情况：退回默认值
   }
 }
 
-export function getSetting(key: string): string {
-  const stored = readRaw(key);
+/**
+ * 读取某个账号的设置。userId 缺省时只走 .env / 内置兜底（给 buildPrompt
+ * 这类无请求上下文的纯函数复用，同时保证单测不需要数据库）。
+ */
+export function getSetting(key: string, userId?: number): string {
+  const stored = userId != null ? readRaw(key, userId) : null;
   if (stored !== null && stored !== '') return stored;
   return FALLBACK[key]?.() ?? '';
 }
 
-export function getAllSettings(): Record<string, string> {
+export function getAllSettings(userId: number): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const key of WRITABLE) out[key] = getSetting(key);
+  for (const key of WRITABLE) out[key] = getSetting(key, userId);
   return out;
 }
 
 /** 只返回上一层的显式覆盖值（用于前端回显"是否被自定义过"） */
-export function getOverrides(): Record<string, string> {
+export function getOverrides(userId: number): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of WRITABLE) {
-    const stored = readRaw(key);
+    const stored = readRaw(key, userId);
     if (stored !== null && stored !== '') out[key] = stored;
   }
   return out;
 }
 
-export function setSetting(key: string, value: string): void {
+export function setSetting(key: string, value: string, userId: number): void {
   if (!WRITABLE.includes(key)) {
     throw new Error('不支持的设置项: ' + key);
   }
 
   if (value === '') {
     // 空值 = 清除覆盖，回落到 .env
-    db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    db.prepare('DELETE FROM settings_user WHERE user_id = ? AND key = ?').run(userId, key);
     return;
   }
 
   db.prepare(
-    `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now','+8 hours'))
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-  ).run(key, value);
+    `INSERT INTO settings_user (user_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now','+8 hours'))
+     ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(userId, key, value);
 }
 
-export function setSettings(patch: Record<string, string>): void {
+export function setSettings(patch: Record<string, string>, userId: number): void {
   const tx = db.transaction((entries: [string, string][]) => {
-    for (const [k, v] of entries) setSetting(k, v);
+    for (const [k, v] of entries) setSetting(k, v, userId);
   });
   tx(Object.entries(patch));
 }
@@ -97,38 +103,38 @@ export interface AiConfig {
   timeoutMs: number;
 }
 
-/** 配置版本号：变化时用于让缓存的 AI 客户端失效 */
-let configVersion = 0;
-export function getConfigVersion(): number {
-  return configVersion;
+/** 配置版本号（按账号分桶）：变化时让该账号缓存的 AI 客户端失效 */
+const configVersions = new Map<number, number>();
+export function getConfigVersion(userId: number): number {
+  return configVersions.get(userId) || 0;
 }
 
-export function getAiConfig(): AiConfig {
-  const provider = getSetting('ai.provider') || 'sensenova';
+export function getAiConfig(userId: number): AiConfig {
+  const provider = getSetting('ai.provider', userId) || 'sensenova';
   const shared = {
     provider,
-    reasoningEffort: getSetting('ai.reasoningEffort') || 'low',
-    timeoutMs: Math.max(5000, parseInt(getSetting('ai.timeoutMs'), 10) || 60000),
+    reasoningEffort: getSetting('ai.reasoningEffort', userId) || 'low',
+    timeoutMs: Math.max(5000, parseInt(getSetting('ai.timeoutMs', userId), 10) || 60000),
   };
   if (provider === 'gemini-proxy') {
     return {
       ...shared,
-      model: getSetting('ai.geminiProxy.model'),
-      baseUrl: getSetting('ai.geminiProxy.baseUrl'),
-      apiKey: getSetting('ai.geminiProxy.apiKey'),
+      model: getSetting('ai.geminiProxy.model', userId),
+      baseUrl: getSetting('ai.geminiProxy.baseUrl', userId),
+      apiKey: getSetting('ai.geminiProxy.apiKey', userId),
     };
   }
   return {
     ...shared,
-    model: getSetting('ai.model'),
-    baseUrl: getSetting('ai.baseUrl') || 'https://token.sensenova.cn/v1',
-    apiKey: getSetting('ai.apiKey'),
+    model: getSetting('ai.model', userId),
+    baseUrl: getSetting('ai.baseUrl', userId) || 'https://token.sensenova.cn/v1',
+    apiKey: getSetting('ai.apiKey', userId),
   };
 }
 
-/** 写入后调用，让 AI 客户端按新配置重建 */
-export function bumpConfigVersion(): void {
-  configVersion++;
+/** 写入后调用，让该账号的 AI 客户端按新配置重建 */
+export function bumpConfigVersion(userId: number): void {
+  configVersions.set(userId, (configVersions.get(userId) || 0) + 1);
 }
 
 /** 密钥脱敏：只留末 4 位，避免接口把完整 key 回传给前端 */

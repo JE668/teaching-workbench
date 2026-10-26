@@ -131,11 +131,11 @@ describe('月度总结 / 课程规划 · AI 通道注入', () => {
 
   test('非流式把提示词透传给注入的实现，返回完整正文', async () => {
     let seen: string[] = [];
-    setChatGenerator(async (messages) => {
+    setChatGenerator(async (_userId: number, messages: { role: string; content: string }[]) => {
       seen = messages.map((m) => m.content);
       return '这是总结正文';
     });
-    const text = await generateReportAiOnce({
+    const text = await generateReportAiOnce(1, {
       field: 'summary',
       studentName: '李小明',
       grade: '初二',
@@ -157,7 +157,7 @@ describe('月度总结 / 课程规划 · AI 通道注入', () => {
       yield '第三块';
     });
     const chunks: string[] = [];
-    for await (const c of streamReportAi({
+    for await (const c of streamReportAi(1, {
       field: 'plan',
       studentName: '李小明',
       grade: '初二',
@@ -213,7 +213,10 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
 
   async function streamField(
     field: 'summary' | 'plan',
-    streamer?: (messages: { role: string; content: string }[]) => AsyncGenerator<string>
+    streamer?: (
+      userId: number,
+      messages: { role: string; content: string }[]
+    ) => AsyncGenerator<string>
   ) {
     setChatStreamer(
       streamer ??
@@ -267,12 +270,12 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
 
   test('总结与规划的提示词不是同一份（任务指令都不同）', async () => {
     const captured: string[] = [];
-    await streamField('summary', async function* (messages) {
+    await streamField('summary', async function* (_userId: number, messages: { role: string; content: string }[]) {
       captured.push((messages[1].content || '').includes('课程规划说明') ? 'plan' : 'summary');
       yield '正文';
     });
     assert.equal(captured[0], 'summary');
-    await streamField('plan', async function* (messages) {
+    await streamField('plan', async function* (_userId: number, messages: { role: string; content: string }[]) {
       captured.push((messages[1].content || '').includes('课程规划说明') ? 'plan' : 'summary');
       yield '正文';
     });
@@ -283,7 +286,7 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
     let prompt = '';
     await streamField(
       'summary',
-      async function* (messages) {
+      async function* (_userId: number, messages: { role: string; content: string }[]) {
         prompt = messages[1].content || '';
         yield '正文';
       }

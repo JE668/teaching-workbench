@@ -80,7 +80,7 @@ export const SERVER_GENERATED_TIMES: Array<[string, string]> = [
   ['followups', 'created_at'],
   ['followups', 'updated_at'],
   ['drafts', 'updated_at'],
-  ['settings', 'updated_at'],
+  ['settings_user', 'updated_at'],
   ['groups', 'created_at'],
   ['teachers', 'created_at'],
   ['observations', 'created_at'],
@@ -144,6 +144,41 @@ export function migrateTimestampsUtcToLocal(): void {
 }
 
 // 初始化表结构
+/**
+ * 全局 settings → per-user 的一次性迁移。
+ *
+ * 旧版 settings 表（key 全局唯一）是全机构共用一份配置；改成按账号独立后，
+ * 首次启动把旧值复制给每一个已有账号，每人一份起点相同的副本，之后各自演化。
+ * 拷贝完成后旧表重命名为 settings_global_backup 留档（幂等：改名后不再进这个分支）。
+ */
+function migrateSettingsPerUser(): void {
+  const hasLegacy = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'")
+    .get();
+  if (!hasLegacy) return;
+
+  try {
+    const rows = db.prepare('SELECT key, value FROM settings').all() as any[];
+    if (rows.length > 0) {
+      const users = db.prepare('SELECT id FROM users').all() as any[];
+      const insert = db.prepare(
+        `INSERT OR IGNORE INTO settings_user (user_id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now', '+8 hours'))`
+      );
+      const copy = db.transaction(() => {
+        for (const u of users) {
+          for (const r of rows) insert.run(u.id, r.key, r.value);
+        }
+      });
+      copy();
+    }
+    // 留档 + 幂等标记：改名后上面的 hasLegacy 检测不再命中
+    db.exec('ALTER TABLE settings RENAME TO settings_global_backup');
+  } catch (err: any) {
+    console.warn('[MIGRATE] settings → settings_user 迁移失败: ' + err.message);
+  }
+}
+
 export function initDatabase() {
   // 用户表
   db.exec(`
@@ -228,12 +263,16 @@ export function initDatabase() {
     )
   `);
 
-  // 应用级设置（可在前端设置页修改，覆盖 .env 的默认值）
+  // 应用级设置（可在前端设置页修改，覆盖 .env 的默认值）。
+  // per-user：每个账号一份独立配置（AI 服务商/模型/Key 各自管理）。
+  // 旧版是全局单份（settings 表），首次启动由 migrateSettingsPerUser 拆给所有账号。
   db.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS settings_user (
+      user_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
       value TEXT NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+      updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      PRIMARY KEY (user_id, key)
     )
   `);
 
@@ -410,6 +449,9 @@ export function initDatabase() {
 
   // 存量数据时区订正（一次性）
   migrateTimestampsUtcToLocal();
+
+  // 全局 settings → per-user：一次性把旧表拆给所有账号，每人一份独立副本
+  migrateSettingsPerUser();
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_user ON followups(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_student ON followups(student_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_created ON followups(created_at DESC)');
