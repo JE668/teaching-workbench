@@ -81,7 +81,7 @@ function insertFollowUp(overrides: Record<string, any> = {}) {
 function otherUserId(): number {
   return Number(
     db
-      .prepare(`INSERT INTO users (username, password, created_at) VALUES (?, ?, datetime('now'))`)
+      .prepare(`INSERT INTO users (username, password, created_at) VALUES (?, ?, datetime('now', '+8 hours'))`)
       .run('other-user-' + Date.now(), 'irrelevant')
       .lastInsertRowid
   );
