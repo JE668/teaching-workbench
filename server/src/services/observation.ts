@@ -169,7 +169,7 @@ export function parseSuggestedGrade(report: string): 'excellent' | 'good' | 'pas
   return map[m[1]] ?? null;
 }
 
-type ObservationGenerator = (p: ObservationReportParams) => Promise<string>;
+type ObservationGenerator = (userId: number, p: ObservationReportParams) => Promise<string>;
 let generatorImpl: ObservationGenerator = generateObservationReport;
 
 /** 供测试替换生成实现，避免真实 API 请求 */
@@ -180,15 +180,18 @@ export function resetObservationGenerator(): void {
   generatorImpl = generateObservationReport;
 }
 /** 路由统一入口 */
-export function runObservationGeneration(p: ObservationReportParams): Promise<string> {
-  return generatorImpl(p);
+export function runObservationGeneration(userId: number, p: ObservationReportParams): Promise<string> {
+  return generatorImpl(userId, p);
 }
 
 /** 单次真实生成（不落库、不含字数重试——评课报告比回访长，不设字数窗口） */
-export async function generateObservationReport(p: ObservationReportParams): Promise<string> {
+export async function generateObservationReport(
+  userId: number,
+  p: ObservationReportParams
+): Promise<string> {
   return withAiSlot(async () => {
-    const ai = getSharedClient();
-    const config = getAiConfig();
+    const ai = getSharedClient(userId);
+    const config = getAiConfig(userId);
     const body: any = {
       model: config.model,
       messages: [
@@ -214,13 +217,14 @@ export async function generateObservationReport(p: ObservationReportParams): Pro
 
 /** 流式生成：逐块产出评课文本增量（SSE 用），不含字数窗口 */
 export async function* streamObservationGeneration(
+  userId: number,
   p: ObservationReportParams
 ): AsyncGenerator<string> {
   // 占位直到流读完：一次评课生成可持续几十秒
   await acquireAiSlot();
   try {
-    const ai = getSharedClient();
-    const config = getAiConfig();
+    const ai = getSharedClient(userId);
+    const config = getAiConfig(userId);
     const body: any = {
       model: config.model,
       messages: [
@@ -246,7 +250,7 @@ export async function* streamObservationGeneration(
 }
 
 /** 流式生成接缝（供测试替换，避免真实 API 请求） */
-type ObservationStreamer = (p: ObservationReportParams) => AsyncGenerator<string>;
+type ObservationStreamer = (userId: number, p: ObservationReportParams) => AsyncGenerator<string>;
 let streamerImpl: ObservationStreamer = streamObservationGeneration;
 export function setObservationStreamer(fn: ObservationStreamer): void {
   streamerImpl = fn;
@@ -255,8 +259,11 @@ export function resetObservationStreamer(): void {
   streamerImpl = streamObservationGeneration;
 }
 /** 路由统一流式入口 */
-export function runObservationStream(p: ObservationReportParams): AsyncGenerator<string> {
-  return streamerImpl(p);
+export function runObservationStream(
+  userId: number,
+  p: ObservationReportParams
+): AsyncGenerator<string> {
+  return streamerImpl(userId, p);
 }
 
 /** 暴露错误翻译，供路由复用（与回访一致的用户友好提示） */

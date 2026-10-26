@@ -33,3 +33,8 @@ npm-debug.log*
 # OS
 Thumbs.db
 desktop.ini
+
+# 本地迁移/测试临时数据目录（不应进库）
+tw-test-*
+tw-migrate-*
+tw-migrate-*/

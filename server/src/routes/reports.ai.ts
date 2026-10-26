@@ -73,7 +73,7 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
   const { send } = sse;
   try {
     let full = '';
-    for await (const delta of streamReportAi(params)) {
+    for await (const delta of streamReportAi(req.userId!, params)) {
       if (sse.isGone()) break; // 客户端已断开，停止消耗
       full += delta;
       send('delta', { text: delta });

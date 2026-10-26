@@ -104,7 +104,7 @@ describe('听评课 SSE 流式生成', () => {
 
     // AI 明明判了"良好"，但用户生成前选的是"优秀" —— 选定值必须胜出
     let seenGrade: string | null | undefined;
-    setObservationStreamer((p: any) => {
+    setObservationStreamer((_u: number, p: any) => {
       seenGrade = p.overallGrade ?? null;
       return streamOf(['【综合评价与建议】\n', '四、总体评价等级：良好\n'])();
     });
@@ -132,7 +132,7 @@ describe('听评课 SSE 流式生成', () => {
     const id = o.body.observation.id;
 
     let seenGrade: string | null | undefined;
-    setObservationStreamer((p: any) => {
+    setObservationStreamer((_u: number, p: any) => {
       seenGrade = p.overallGrade ?? null;
       return streamOf(['【综合评价与建议】\n', '四、总体评价等级：合格\n'])();
     });

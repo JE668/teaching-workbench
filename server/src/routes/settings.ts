@@ -210,13 +210,13 @@ const MODELS_FETCH_TIMEOUT_MS = 8000;
  * 优先走 OpenAI 兼容的 GET /models；失败时回落到内置列表，
  * 并在响应里如实标注来源与错误信息，方便前端提示。
  */
-async function fetchAvailableModels(): Promise<{
+async function fetchAvailableModels(userId: number): Promise<{
   models: { id: string; label: string }[];
   source: 'api' | 'builtin';
   error?: string;
   current?: string;
 }> {
-  const config = getAiConfig();
+  const config = getAiConfig(userId);
 
   if (config.apiKey && config.baseUrl) {
     const controller = new AbortController();
@@ -267,9 +267,9 @@ async function fetchAvailableModels(): Promise<{
 }
 
 /** 可用模型列表（设置页下拉框的数据源） */
-router.get('/models', async (_req, res) => {
+router.get('/models', async (req: any, res) => {
   try {
-    const result = await fetchAvailableModels();
+    const result = await fetchAvailableModels(req.userId!);
     res.json(result);
   } catch (error: any) {
     // 任何意外都不该让设置页打不开
@@ -294,9 +294,9 @@ const SECRET_KEYS = ['ai.apiKey', 'ai.geminiProxy.apiKey'];
  * 读取设置。
  * 密钥不回传明文，只给掩码 + 是否已配置，避免接口泄露。
  */
-router.get('/', (_req, res) => {
+router.get('/', (req: any, res) => {
   try {
-    const effective = getAllSettings();
+    const effective = getAllSettings(req.userId!);
 
     const payload: Record<string, any> = { ...effective };
     for (const key of SECRET_KEYS) {
@@ -309,7 +309,7 @@ router.get('/', (_req, res) => {
     res.json({
       settings: payload,
       /** 哪些项被显式覆盖过（未覆盖的走 .env） */
-      overridden: Object.keys(getOverrides()),
+      overridden: Object.keys(getOverrides(req.userId!)),
       meta: {
         effortLevels: EFFORT_LEVELS,
         writableKeys: SETTING_KEYS,
@@ -321,7 +321,7 @@ router.get('/', (_req, res) => {
 });
 
 /** 更新设置（只接受白名单键） */
-router.put('/', (req, res) => {
+router.put('/', (req: any, res) => {
   try {
     const body = req.body || {};
     const patch: Record<string, string> = {};
@@ -370,9 +370,9 @@ router.put('/', (req, res) => {
       return res.status(400).json({ error: '没有需要更新的设置项' });
     }
 
-    setSettings(patch);
-    // 让 AI 客户端按新配置重建
-    bumpConfigVersion();
+    setSettings(patch, req.userId!);
+    // 让该账号的 AI 客户端按新配置重建
+    bumpConfigVersion(req.userId!);
 
     res.json({ success: true, updated: Object.keys(patch) });
   } catch (error: any) {

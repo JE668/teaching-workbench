@@ -256,6 +256,7 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
 
       let updated = 0;
       const result = await suggestMasteryStars(
+        req.userId!,
         rows.map((r) => ({
           id: Number(r.id),
           content: String(r.content || ''),

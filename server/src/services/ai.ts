@@ -11,33 +11,36 @@ import { log } from '../utils/logger.js';
 // ============ SenseNova 客户端（OpenAI 兼容） ============
 // 配置可在前端设置页修改，因此客户端要能按版本号重建，
 // 否则改了模型/密钥还得重启容器才生效。
-let client: OpenAI | null = null;
-let clientVersion = -1;
+// per-user 客户端缓存：每个账号一份设置，各用各的模型与密钥
+const clients = new Map<number, { client: OpenAI; version: number }>();
 
-function getClient(config: AiConfig): OpenAI {
-  if (!client || clientVersion !== getConfigVersion()) {
+function getClient(userId: number, config: AiConfig): OpenAI {
+  const cached = clients.get(userId);
+  if (!cached || cached.version !== getConfigVersion(userId)) {
     if (!config.apiKey) {
       throw new Error('未配置 SENSENOVA_API_KEY，请在「设置」页或 .env 中填写');
     }
-    client = new OpenAI({
+    const entry = { client: new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
       // 超时收紧（SDK 默认 10 分钟，用户等不起）
       timeout: config.timeoutMs,
       // SDK 层仅重试 1 次（网络抖动/5xx）；字数不达标的业务重试由本服务自行控制
       maxRetries: 1,
-    });
-    clientVersion = getConfigVersion();
+      }),
+      version: getConfigVersion(userId),
+    };
+    clients.set(userId, entry);
   }
-  return client;
+  return clients.get(userId)!.client;
 }
 
 /**
  * 取当前配置的共享客户端（供回访之外的其它 AI 能力复用，如听评课）。
  * 与 followup 走同一个模型/密钥/超时，无需各自维护。
  */
-export function getSharedClient(): OpenAI {
-  return getClient(getAiConfig());
+export function getSharedClient(userId: number): OpenAI {
+  return getClient(userId, getAiConfig(userId));
 }
 
 export interface FollowUpGenerateParams {
@@ -119,7 +122,10 @@ const MASTERY_LABELS: Record<string, string> = {
  * 把 SDK 抛出的错误翻译成对用户有意义的中文提示。
  * 避免所有失败都显示笼统的"AI生成失败"。
  */
-export function describeAiError(error: any): { httpStatus: number; message: string } {
+export function describeAiError(
+  error: any,
+  userId = 0
+): { httpStatus: number; message: string } {
   const name = error?.name || '';
   const raw = error?.message || '';
   const status = error?.status;
@@ -128,7 +134,7 @@ export function describeAiError(error: any): { httpStatus: number; message: stri
     return {
       httpStatus: 504,
       message: 'AI 生成超时（' +
-        Math.round(getAiConfig().timeoutMs / 1000) +
+        Math.round(getAiConfig(userId).timeoutMs / 1000) +
         '秒）。可稍后重试，或把 SENSENOVA_REASONING_EFFORT 调为 none 以加快速度。',
     };
   }
@@ -505,7 +511,7 @@ const CLOSING_HOMEWORK =
 /**
  * 构建提示词。correction 不为空时，追加纠偏指令（用于字数不达标时的重试）
  */
-export function buildPrompt(params: FollowUpGenerateParams, correction?: string): string {
+export function buildPrompt(params: FollowUpGenerateParams, correction?: string, userId?: number): string {
   const { studentName, grade, subject, topic, performance } = params;
   const masteryLabel = MASTERY_LABELS[params.mastery] || params.mastery;
 
@@ -648,7 +654,7 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
   // 老师自定义的风格补充（设置页可改，留空则不追加）。
   // 刻意只做"追加"而不是"整段替换"：小组课隐私、图片指代禁令、三段格式
   // 这些硬性约束必须留在代码里，不能被一条自定义设置误删。
-  const styleHint = getSetting('ai.prompt.style').trim();
+  const styleHint = getSetting('ai.prompt.style', userId).trim();
   if (styleHint) {
     lines.push('# 风格偏好（老师自定义，优先遵循）', styleHint, '');
   }
@@ -737,8 +743,12 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string)
 }
 
 /** 组装 user 消息内容块：提示词 + 图片（Base64 Data URL） */
-function buildUserContent(params: FollowUpGenerateParams, correction?: string): any[] {
-  const userContent: any[] = [{ type: 'text', text: buildPrompt(params, correction) }];
+function buildUserContent(
+  params: FollowUpGenerateParams,
+  correction?: string,
+  userId?: number
+): any[] {
+  const userContent: any[] = [{ type: 'text', text: buildPrompt(params, correction, userId) }];
 
   for (const imagePath of params.images) {
     try {
@@ -776,8 +786,13 @@ function buildUserContent(params: FollowUpGenerateParams, correction?: string): 
  * SenseNova 自定义参数（reasoning_effort）需直接放入请求体，
  * OpenAI Node SDK 的类型定义未包含该字段，故用 any 透传。
  */
-function buildRequest(params: FollowUpGenerateParams, correction?: string, stream = false): any {
-  const config = getAiConfig();
+function buildRequest(
+  userId: number,
+  params: FollowUpGenerateParams,
+  correction?: string,
+  stream = false
+): any {
+  const config = getAiConfig(userId);
 
   const body: any = {
     model: config.model,
@@ -786,7 +801,7 @@ function buildRequest(params: FollowUpGenerateParams, correction?: string, strea
         role: 'system',
         content: '你是一位专业的1对1教育咨询师，擅长撰写课后回访反馈。输出简洁、专业、有温度。',
       },
-      { role: 'user', content: buildUserContent(params, correction) },
+      { role: 'user', content: buildUserContent(params, correction, userId) },
     ],
     max_tokens: 2000,
     temperature: 0.7,
@@ -850,18 +865,20 @@ export function resetAiGate(): void {
 
 /** 单次调用（非流式）。供字数重试逻辑复用。 */
 export async function generateOnce(
+  userId: number,
   params: FollowUpGenerateParams,
   correction?: string
 ): Promise<string> {
   return withAiSlot(async () => {
-    const ai = getClient(getAiConfig());
-    const response = await ai.chat.completions.create(buildRequest(params, correction));
+    const ai = getClient(userId, getAiConfig(userId));
+    const response = await ai.chat.completions.create(buildRequest(userId, params, correction));
     return (response.choices[0].message.content || '').trim();
   });
 }
 
 /** 单次调用（流式），逐块产出文本增量 */
 export async function* streamOnce(
+  userId: number,
   params: FollowUpGenerateParams,
   correction?: string
 ): AsyncGenerator<string> {
@@ -869,9 +886,9 @@ export async function* streamOnce(
   // 如果只在 create 时占一瞬间，等于没限流。
   await acquireAiSlot();
   try {
-    const ai = getClient(getAiConfig());
+    const ai = getClient(userId, getAiConfig(userId));
     const stream = (await ai.chat.completions.create(
-      buildRequest(params, correction, true)
+      buildRequest(userId, params, correction, true)
     )) as any;
     for await (const chunk of stream) {
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
@@ -895,8 +912,13 @@ export interface ChatOptions {
   temperature?: number;
 }
 
-function buildChatRequest(messages: ChatMessage[], opts: ChatOptions, stream: boolean): any {
-  const config = getAiConfig();
+function buildChatRequest(
+  userId: number,
+  messages: ChatMessage[],
+  opts: ChatOptions,
+  stream: boolean
+): any {
+  const config = getAiConfig(userId);
   return {
     model: config.model,
     messages,
@@ -910,26 +932,28 @@ function buildChatRequest(messages: ChatMessage[], opts: ChatOptions, stream: bo
 
 /** 通用单次调用（非流式）。进闸门，与回访的 generateOnce 同口径 */
 export async function generateChatOnce(
+  userId: number,
   messages: ChatMessage[],
   opts: ChatOptions = {}
 ): Promise<string> {
   return withAiSlot(async () => {
-    const ai = getClient(getAiConfig());
-    const response = await ai.chat.completions.create(buildChatRequest(messages, opts, false));
+    const ai = getClient(userId, getAiConfig(userId));
+    const response = await ai.chat.completions.create(buildChatRequest(userId, messages, opts, false));
     return (response.choices[0].message.content || '').trim();
   });
 }
 
 /** 通用单次调用（流式），逐块产出文本增量。占位到流读完，与 streamOnce 同一套口径 */
 export async function* streamChat(
+  userId: number,
   messages: ChatMessage[],
   opts: ChatOptions = {}
 ): AsyncGenerator<string> {
   await acquireAiSlot();
   try {
-    const ai = getClient(getAiConfig());
+    const ai = getClient(userId, getAiConfig(userId));
     const stream = (await ai.chat.completions.create(
-      buildChatRequest(messages, opts, true)
+      buildChatRequest(userId, messages, opts, true)
     )) as any;
     for await (const chunk of stream) {
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
@@ -947,8 +971,11 @@ export async function* streamChat(
  * 若首轮字数不落在要求区间，自动追加纠偏指令重试一次；
  * 若仍不达标，返回更接近区间的那一版，交由前端提示用户微调。
  */
-export async function generateFollowUpContent(params: FollowUpGenerateParams): Promise<string> {
-  const first = await generateOnce(params);
+export async function generateFollowUpContent(
+  userId: number,
+  params: FollowUpGenerateParams
+): Promise<string> {
+  const first = await generateOnce(userId, params);
   const firstWords = countWords(first);
 
   if (firstWords >= MIN_WORDS && firstWords <= MAX_WORDS) {
@@ -958,7 +985,7 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
   log.warn({ firstWords, minWords: MIN_WORDS, maxWords: MAX_WORDS }, '首轮字数不在要求区间，触发重试');
 
   try {
-    const retry = await generateOnce(params, '约 ' + firstWords + ' 字');
+    const retry = await generateOnce(userId, params, '约 ' + firstWords + ' 字');
     const retryWords = countWords(retry);
 
     // 重试结果达标则采用
@@ -979,15 +1006,19 @@ export async function generateFollowUpContent(params: FollowUpGenerateParams): P
 
 // ============ 测试注入点 ============
 // 路由通过 runFollowUpGeneration 调用生成逻辑，测试可替换实现以避免真实 API 请求。
-type FollowUpGenerator = (params: FollowUpGenerateParams) => Promise<string>;
-type FollowUpStreamer = (params: FollowUpGenerateParams) => AsyncGenerator<string>;
+type FollowUpGenerator = (userId: number, params: FollowUpGenerateParams) => Promise<string>;
+type FollowUpStreamer = (userId: number, params: FollowUpGenerateParams) => AsyncGenerator<string>;
 
-type OnceGenerator = (params: FollowUpGenerateParams, correction?: string) => Promise<string>;
+type OnceGenerator = (
+  userId: number,
+  params: FollowUpGenerateParams,
+  correction?: string
+) => Promise<string>;
 
 let generatorImpl: FollowUpGenerator = generateFollowUpContent;
-let streamerImpl: FollowUpStreamer = (params) => streamOnce(params);
+let streamerImpl: FollowUpStreamer = (userId, params) => streamOnce(userId, params);
 // 单次调用（带纠偏指令），流式路由的字数重试走这里
-let onceImpl: OnceGenerator = (params, correction) => generateOnce(params, correction);
+let onceImpl: OnceGenerator = (userId, params, correction) => generateOnce(userId, params, correction);
 
 /**
  * 替换非流式生成实现（仅供测试）。
@@ -995,7 +1026,7 @@ let onceImpl: OnceGenerator = (params, correction) => generateOnce(params, corre
  */
 export function setFollowUpGenerator(fn: FollowUpGenerator): void {
   generatorImpl = fn;
-  onceImpl = async (params) => fn(params);
+  onceImpl = async (userId, params) => fn(userId, params);
 }
 
 /** 替换流式生成实现（仅供测试） */
@@ -1006,31 +1037,42 @@ export function setFollowUpStreamer(fn: FollowUpStreamer): void {
 /** 恢复为真实的 SenseNova 调用 */
 export function resetFollowUpGenerator(): void {
   generatorImpl = generateFollowUpContent;
-  streamerImpl = (params) => streamOnce(params);
-  onceImpl = (params, correction) => generateOnce(params, correction);
+  streamerImpl = (userId, params) => streamOnce(userId, params);
+  onceImpl = (userId, params, correction) => generateOnce(userId, params, correction);
 }
 
 /** 路由统一入口：非流式（含字数重试） */
-export function runFollowUpGeneration(params: FollowUpGenerateParams): Promise<string> {
-  return generatorImpl(params);
+export function runFollowUpGeneration(userId: number, params: FollowUpGenerateParams): Promise<string> {
+  return generatorImpl(userId, params);
 }
 
 /** 路由统一入口：流式 */
-export function runStreamGeneration(params: FollowUpGenerateParams): AsyncGenerator<string> {
-  return streamerImpl(params);
+export function runStreamGeneration(
+  userId: number,
+  params: FollowUpGenerateParams
+): AsyncGenerator<string> {
+  return streamerImpl(userId, params);
 }
 
 /** 带纠偏指令的单次调用（流式路由用于字数重试） */
-export function retryGeneration(params: FollowUpGenerateParams, correction: string): Promise<string> {
-  return onceImpl(params, correction);
+export function retryGeneration(
+  userId: number,
+  params: FollowUpGenerateParams,
+  correction: string
+): Promise<string> {
+  return onceImpl(userId, params, correction);
 }
 
 // ============ 通用通道的测试注入点（月度总结 / 课程规划） ============
-type ChatGenerator = (messages: ChatMessage[], opts: ChatOptions) => Promise<string>;
-type ChatStreamer = (messages: ChatMessage[], opts: ChatOptions) => AsyncGenerator<string>;
+type ChatGenerator = (userId: number, messages: ChatMessage[], opts: ChatOptions) => Promise<string>;
+type ChatStreamer = (
+  userId: number,
+  messages: ChatMessage[],
+  opts: ChatOptions
+) => AsyncGenerator<string>;
 
-let chatOnceImpl: ChatGenerator = (messages, opts) => generateChatOnce(messages, opts);
-let chatStreamImpl: ChatStreamer = (messages, opts) => streamChat(messages, opts);
+let chatOnceImpl: ChatGenerator = (userId, messages, opts) => generateChatOnce(userId, messages, opts);
+let chatStreamImpl: ChatStreamer = (userId, messages, opts) => streamChat(userId, messages, opts);
 
 /** 替换通用非流式实现（仅供测试） */
 export function setChatGenerator(fn: ChatGenerator): void {
@@ -1044,16 +1086,24 @@ export function setChatStreamer(fn: ChatStreamer): void {
 
 /** 恢复为真实的模型调用 */
 export function resetChatGenerator(): void {
-  chatOnceImpl = (messages, opts) => generateChatOnce(messages, opts);
-  chatStreamImpl = (messages, opts) => streamChat(messages, opts);
+  chatOnceImpl = (userId, messages, opts) => generateChatOnce(userId, messages, opts);
+  chatStreamImpl = (userId, messages, opts) => streamChat(userId, messages, opts);
 }
 
 /** 路由统一入口：通用非流式 */
-export function runChatOnce(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
-  return chatOnceImpl(messages, opts);
+export function runChatOnce(
+  userId: number,
+  messages: ChatMessage[],
+  opts: ChatOptions = {}
+): Promise<string> {
+  return chatOnceImpl(userId, messages, opts);
 }
 
 /** 路由统一入口：通用流式 */
-export function runChatStream(messages: ChatMessage[], opts: ChatOptions = {}): AsyncGenerator<string> {
-  return chatStreamImpl(messages, opts);
+export function runChatStream(
+  userId: number,
+  messages: ChatMessage[],
+  opts: ChatOptions = {}
+): AsyncGenerator<string> {
+  return chatStreamImpl(userId, messages, opts);
 }

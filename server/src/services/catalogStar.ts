@@ -39,14 +39,14 @@ export type StarBatchCallback = (
   decisions: StarDecision[]
 ) => void;
 
-type StarGenerator = (prompt: string) => Promise<string>;
+type StarGenerator = (userId: number, prompt: string) => Promise<string>;
 
 let generatorImpl: StarGenerator = callModel;
 
-async function callModel(prompt: string): Promise<string> {
+async function callModel(userId: number, prompt: string): Promise<string> {
   return withAiSlot(async () => {
-    const ai = getSharedClient();
-    const config = getAiConfig();
+    const ai = getSharedClient(userId);
+    const config = getAiConfig(userId);
     const body: any = {
       model: config.model,
       messages: [
@@ -81,11 +81,12 @@ export function resetStarGenerator(): void {
  * @returns 汇总信息；`updated` 是实际产生决策的课程数（不含脏数据被丢弃的）
  */
 export async function suggestMasteryStars(
+  userId: number,
   courses: StarCourseInput[],
   onBatch: StarBatchCallback,
   scope: StarScope = {}
 ): Promise<StarSuggestResult> {
-  const model = getAiConfig().model;
+  const model = getAiConfig(userId).model;
   if (!courses.length) {
     return { total: 0, batches: 0, updated: 0, model };
   }
@@ -99,7 +100,7 @@ export async function suggestMasteryStars(
     const prompt = buildStarPrompt(group, scope);
     let text: string;
     try {
-      text = await generatorImpl(prompt);
+      text = await generatorImpl(userId, prompt);
     } catch (error: any) {
       // 翻译失败原因再抛，让上层给用户看得懂的中文提示
       throw Object.assign(new Error(describeAiError(error).message), {

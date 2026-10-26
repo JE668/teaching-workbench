@@ -155,11 +155,11 @@ export function buildReportAiMessages(p: ReportAiParams): ChatMessage[] {
 const AI_OPTIONS: ChatOptions = { temperature: 0.7, maxTokens: 1400 };
 
 /** 流式产出总结 / 规划的正文增量 */
-export async function* streamReportAi(p: ReportAiParams): AsyncGenerator<string> {
-  yield* runChatStream(buildReportAiMessages(p), AI_OPTIONS);
+export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncGenerator<string> {
+  yield* runChatStream(userId, buildReportAiMessages(p), AI_OPTIONS);
 }
 
 /** 非流式，供单测与兜底 */
-export async function generateReportAiOnce(p: ReportAiParams): Promise<string> {
-  return runChatOnce(buildReportAiMessages(p), AI_OPTIONS);
+export async function generateReportAiOnce(userId: number, p: ReportAiParams): Promise<string> {
+  return runChatOnce(userId, buildReportAiMessages(p), AI_OPTIONS);
 }

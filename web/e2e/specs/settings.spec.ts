@@ -136,11 +136,11 @@ test.describe('设置页', () => {
     expect(after.filter((i) => i.is_builtin).length).toBeGreaterThan(0);
   });
 
-  test('切换 AI 服务商：Gemini 代理配置独立保存，切回不丢 SenseNova 配置', async ({ page }) => {
+  test('切换 AI 服务商：接口地址立即跟随，配置独立保存，切回不丢', async ({ page }) => {
     await loginViaApi(page);
     await page.goto('/settings');
 
-    // provider 是全局设置（不分账号），用例结束必须切回，否则会污染后续生成用例
+    // 设置按账号独立保存；本用例走默认登录账号，结束仍切回以免影响共享库里的后续生成用例
     const token = await getToken(page);
     const restoreProvider = async () => {
       await page.request.put('/api/settings', {
@@ -150,13 +150,18 @@ test.describe('设置页', () => {
     };
 
     try {
-      // 记下 SenseNova 当前的模型
+      // 记下 SenseNova 当前的模型与接口地址（接口地址在测试环境里指向本地 mock，
+      // 所以断言基准值而不是硬编码官方地址——重点验证「切走再切回后仍是自己的地址」）
       const modelSelect = page.getByLabel('模型', { exact: true });
       const sensenovaModel = await modelSelect.inputValue();
+      const baseUrlInput = page.getByLabel('接口地址');
+      const sensenovaUrl = await baseUrlInput.inputValue();
+      expect(sensenovaUrl).not.toMatch(/gemmaproxy/);
 
-      // 切到 Gemini 转发代理：Key 输入框的 label 跟着换
+      // 切到 Gemini 转发代理：接口地址立即变成代理地址，Key 输入框的 label 跟着换
       await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
       await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
+      await expect(baseUrlInput).toHaveValue(/gemmaproxy\.dpdns\.org/);
       const geminiKey = page.getByLabel('Gemini 代理 API Key');
       await expect(geminiKey).toBeVisible();
 
@@ -165,14 +170,17 @@ test.describe('设置页', () => {
       await page.getByRole('button', { name: '保存 AI 设置' }).click();
       await expect(page.getByText('AI 设置已保存，下次生成立即生效')).toBeVisible();
 
-      // 切回 SenseNova：原模型还在，Key 输入框变回原 label
+      // 切回 SenseNova：接口地址立即回到自己的值（核心回归——不能被代理地址污染），
+      // 原模型还在，Key 输入框变回原 label
       await page.getByLabel('AI 服务商').selectOption('sensenova');
       await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
+      await expect(baseUrlInput).toHaveValue(sensenovaUrl);
       await expect(page.getByLabel('SenseNova API Key')).toBeVisible();
       await expect(page.getByLabel('模型', { exact: true })).toHaveValue(sensenovaModel);
 
-      // 再切回 Gemini：Key 显示已配置（独立保存住了）
+      // 再切回 Gemini：接口地址跟着切，Key 显示已配置（独立保存住了）
       await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
+      await expect(baseUrlInput).toHaveValue(/gemmaproxy\.dpdns\.org/);
       await expect(page.getByText(/已配置/).first()).toBeVisible();
     } finally {
       await restoreProvider();
