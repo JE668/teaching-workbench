@@ -128,9 +128,9 @@ export const FOLLOWUP_MODULE_GROUPS: FollowUpModuleGroup[] = [
     group: '常规类',
     hint: '日常回访的主体，一次回访里最常覆盖的环节',
     modules: [
+      { value: 'class_content', label: '课程主题', hint: '这节课讲了哪些内容、重点在哪、进度到哪了' },
+      { value: 'class_performance', label: '课堂总结', hint: '本节课内容与表现的综合：学了什么、掌握如何、状态怎样' },
       { value: 'homework_review', label: '作业批改', hint: '完成质量、错在哪些知识点、怎么订正' },
-      { value: 'class_content', label: '课堂内容总结', hint: '这节课讲了哪些内容、重点在哪、进度到哪了' },
-      { value: 'class_performance', label: '课堂表现总结', hint: '孩子的听讲状态、参与度、卡在哪一步' },
       { value: 'note_trace', label: '笔记/解题痕迹', hint: '笔记记没记全、解题思路写得对不对，有没有自己的补充' },
       { value: 'preview', label: '预习资料', hint: '资料覆盖哪些知识点、孩子怎么用，任务要具体到页码题号' },
       { value: 'mistake_drill', label: '错题专练', hint: '哪几类错题专练了什么方法、现在掌握到什么程度' },
@@ -183,9 +183,9 @@ export const FOLLOWUP_MIN_BLOCKS = 5;
  * 学校清单里这 5 个环节就够 5 项了，老师零操作也能出一份合格回访。
  */
 export const DEFAULT_FOLLOWUP_MODULES: FollowUpModule[] = [
-  'homework_review',
   'class_content',
   'class_performance',
+  'homework_review',
   'note_trace',
   'homework_assign',
 ];

@@ -758,9 +758,9 @@ describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7�
     expect(screen.getByText(/特殊情况的沟通/)).toBeInTheDocument();
 
     for (const label of [
+      '课程主题',
+      '课堂总结',
       '作业批改',
-      '课堂内容总结',
-      '课堂表现总结',
       '笔记/解题痕迹',
       '预习资料',
       '错题专练',
@@ -791,9 +791,9 @@ describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7�
 
     // 按 FOLLOWUP_MODULES 声明顺序排列，而不是勾选顺序
     const expected = [
-      'homework_review',
       'class_content',
       'class_performance',
+      'homework_review',
       'note_trace',
       'homework_assign',
     ];
@@ -831,7 +831,7 @@ describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7�
     renderWithProviders(<FollowUp />);
 
     // 取消两个默认板块，只剩 3 个
-    await user.click(screen.getByRole('button', { name: '课堂内容总结' }));
+    await user.click(screen.getByRole('button', { name: '课程主题' }));
     await user.click(screen.getByRole('button', { name: '作业布置' }));
     expect(screen.getByText(/已选 3 个（建议 5 个以上）/)).toBeInTheDocument();
 
@@ -842,9 +842,10 @@ describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7�
     expect(await screen.findByText(/建议一次回访覆盖 5 个以上板块/)).toBeInTheDocument();
     expect(screen.queryByText(/请至少勾选 5 个板块/)).not.toBeInTheDocument();
     expect(streamPost).toHaveBeenCalledTimes(1);
+    // modules 按板块声明顺序排：课堂总结、作业批改、笔记/解题痕迹
     expect(streamPost.mock.calls[0][1].modules).toEqual([
-      'homework_review',
       'class_performance',
+      'homework_review',
       'note_trace',
     ]);
   });
@@ -863,7 +864,7 @@ describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7�
     expect(body).toContain('需 200–300 字（5 个板块）');
 
     // 取消两个板块后区间随实际板块数收紧到 170–250
-    await user.click(screen.getByRole('button', { name: '课堂内容总结' }));
+    await user.click(screen.getByRole('button', { name: '课程主题' }));
     await user.click(screen.getByRole('button', { name: '作业布置' }));
     body = document.body.textContent || '';
     expect(body).toContain('需 170–250 字（3 个板块）');
@@ -882,7 +883,7 @@ describe('课后回访 · 覆盖板块（多选，常规类 9 + 非常规类 7�
     // 降到 5 个以下时退出绿色态
     await user.click(screen.getByRole('button', { name: '作业批改' }));
     expect(screen.getByText(/已选 5 个，够用/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '课堂表现总结' }));
+    await user.click(screen.getByRole('button', { name: '课堂总结' }));
     expect(screen.getByText(/已选 4 个（建议 5 个以上）/)).toBeInTheDocument();
   });
 });

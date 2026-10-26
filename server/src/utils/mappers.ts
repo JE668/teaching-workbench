@@ -142,13 +142,13 @@ export function serializeFollowUpModules(modules: FollowUpModule[]): string {
 /**
  * 打卡类型的分组元信息（后端只用于统计，文案在前端 FOLLOWUP_MODULE_GROUPS）。
  * 常规类 9 种是日常回访的主体；非常规类 7 种是特殊情况的沟通。
- * 学校清单里的「课堂总结」已拆成课堂内容总结 + 课堂表现总结。
+ * 板块命名：class_content 现叫「课程主题」，class_performance 现叫「课堂总结」（内容 + 表现的综合）。
  */
 export const FOLLOWUP_TYPES: { value: FollowUpModule; label: string; group: 'regular' | 'unusual' }[] = [
   { value: 'preview', label: '预习资料', group: 'regular' },
   { value: 'homework_review', label: '作业批改', group: 'regular' },
-  { value: 'class_content', label: '课堂内容总结', group: 'regular' },
-  { value: 'class_performance', label: '课堂表现总结', group: 'regular' },
+  { value: 'class_content', label: '课程主题', group: 'regular' },
+  { value: 'class_performance', label: '课堂总结', group: 'regular' },
   { value: 'note_trace', label: '笔记/解题痕迹', group: 'regular' },
   { value: 'mistake_drill', label: '错题专练', group: 'regular' },
   { value: 'homework_assign', label: '作业布置', group: 'regular' },
