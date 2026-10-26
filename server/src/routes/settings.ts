@@ -82,6 +82,98 @@ const MODEL_META: ModelMeta[] = [
     vision: false,
     efforts: ['none', 'high'],
   },
+  // ---------- Gemini 转发代理（自建，OpenAI 兼容层）----------
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    description: 'Google 最新 Flash · 速度快（代理默认）',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    description: '高效多模态 · 支持读图',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash (Preview)',
+    description: '预览版多模态模型',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    description: '稳定版多模态 · 支持读图',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    description: '轻量多模态 · 成本低',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    description: '轻量多模态 · 速度快',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash Lite',
+    description: '轻量多模态 · 速度快',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemma-4-31b-it',
+    name: 'Gemma 4 31B IT',
+    description: '开源指令模型 · 支持读图',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemma-4-26b-a4b-it',
+    name: 'Gemma 4 26B A4B IT',
+    description: '开源 MoE 指令模型 · 支持读图',
+    vision: true,
+    efforts: ['none', 'low', 'medium', 'high', 'max'],
+  },
+  {
+    id: 'gemini-3.8-flash-tts',
+    name: 'Gemini 3.8 Flash TTS',
+    description: '语音合成模型 —— 不适用于回访生成',
+    vision: false,
+    efforts: ['none'],
+  },
+  {
+    id: 'gemini-3.8-flash-lite-tts',
+    name: 'Gemini 3.8 Flash Lite TTS',
+    description: '语音合成模型 —— 不适用于回访生成',
+    vision: false,
+    efforts: ['none'],
+  },
+  {
+    id: 'gemini-2.5-flash-preview-tts',
+    name: 'Gemini 2.5 Flash Preview TTS',
+    description: '语音合成模型 —— 不适用于回访生成',
+    vision: false,
+    efforts: ['none'],
+  },
+  {
+    id: 'gemini-3.1-flash-tts-preview',
+    name: 'Gemini 3.1 Flash TTS (Preview)',
+    description: '语音合成模型 —— 不适用于回访生成',
+    vision: false,
+    efforts: ['none'],
+  },
 ];
 
 const META_BY_ID = new Map(MODEL_META.map((m) => [m.id, m]));
@@ -196,7 +288,7 @@ router.get('/models', async (_req, res) => {
 const EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 /** 需要脱敏的键 */
-const SECRET_KEYS = ['ai.apiKey'];
+const SECRET_KEYS = ['ai.apiKey', 'ai.geminiProxy.apiKey'];
 
 /**
  * 读取设置。
@@ -249,6 +341,9 @@ router.put('/', (req, res) => {
       if (key === 'ai.reasoningEffort' && value && !EFFORT_LEVELS.includes(value)) {
         return res.status(400).json({ error: '不支持的思考等级: ' + value });
       }
+      if (key === 'ai.provider' && value && !['sensenova', 'gemini-proxy'].includes(value)) {
+        return res.status(400).json({ error: '未知的 AI 服务商: ' + value });
+      }
       if (key === 'ai.timeoutMs' && value) {
         const ms = parseInt(value, 10);
         if (!Number.isFinite(ms) || ms < 5000 || ms > 300000) {
@@ -258,7 +353,10 @@ router.put('/', (req, res) => {
       if (key === 'ai.baseUrl' && value && !/^https?:\/\//.test(value)) {
         return res.status(400).json({ error: '接口地址需以 http(s):// 开头' });
       }
-      if (key === 'ai.model' && value.length > 100) {
+      if (key === 'ai.geminiProxy.baseUrl' && value && !/^https?:\/\//.test(value)) {
+        return res.status(400).json({ error: '接口地址需以 http(s):// 开头' });
+      }
+      if ((key === 'ai.model' || key === 'ai.geminiProxy.model') && value.length > 100) {
         return res.status(400).json({ error: '模型名过长' });
       }
       if (key === 'ai.prompt.style' && value.length > 500) {

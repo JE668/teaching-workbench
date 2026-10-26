@@ -22,11 +22,25 @@ const EFFORT_LABELS: Record<string, string> = {
 };
 
 interface SettingsState {
+  provider: string;
   model: string;
   reasoningEffort: string;
   baseUrl: string;
   timeoutMs: string;
   promptStyle: string;
+}
+
+/** AI 服务商清单：id 与服务端设置键的命名空间一一对应 */
+const AI_PROVIDERS = [
+  { value: 'sensenova', label: 'SenseNova 官方' },
+  { value: 'gemini-proxy', label: 'Gemini 转发代理（自建）' },
+];
+
+/** 当前 provider 下的设置键名：sensenova 沿用历史键，gemini-proxy 用独立命名空间 */
+function keysOf(provider: string) {
+  return provider === 'gemini-proxy'
+    ? { model: 'ai.geminiProxy.model', baseUrl: 'ai.geminiProxy.baseUrl', apiKey: 'ai.geminiProxy.apiKey' }
+    : { model: 'ai.model', baseUrl: 'ai.baseUrl', apiKey: 'ai.apiKey' };
 }
 
 export default function Settings() {
@@ -42,6 +56,7 @@ export default function Settings() {
   const [apiKey, setApiKey] = useState('');
 
   const [form, setForm] = useState<SettingsState>({
+    provider: 'sensenova',
     model: '',
     reasoningEffort: 'low',
     baseUrl: '',
@@ -153,15 +168,19 @@ export default function Settings() {
       const r = await api.get('/settings');
       const s = r.settings || {};
 
+      const provider = s['ai.provider'] || 'sensenova';
+      const keys = keysOf(provider);
+
       setForm({
-        model: s['ai.model'] || '',
+        provider,
+        model: s[keys.model] || '',
         reasoningEffort: s['ai.reasoningEffort'] || 'low',
-        baseUrl: s['ai.baseUrl'] || '',
+        baseUrl: s[keys.baseUrl] || '',
         timeoutMs: s['ai.timeoutMs'] || '60000',
         promptStyle: s['ai.prompt.style'] || '',
       });
-      setApiKeyMasked(s['ai.apiKey']?.masked || '');
-      setApiKeyConfigured(!!s['ai.apiKey']?.configured);
+      setApiKeyMasked(s[keys.apiKey]?.masked || '');
+      setApiKeyConfigured(!!s[keys.apiKey]?.configured);
       setOverridden(r.overridden || []);
       if (r.meta?.effortLevels?.length) setEffortLevels(r.meta.effortLevels);
 
@@ -183,15 +202,17 @@ export default function Settings() {
   const saveAi = async () => {
     setSaving(true);
     try {
+      const keys = keysOf(form.provider);
       const patch: Record<string, string> = {
-        'ai.model': form.model,
+        'ai.provider': form.provider,
+        [keys.model]: form.model,
         'ai.reasoningEffort': form.reasoningEffort,
-        'ai.baseUrl': form.baseUrl,
+        [keys.baseUrl]: form.baseUrl,
         'ai.timeoutMs': form.timeoutMs,
         'ai.prompt.style': form.promptStyle,
       };
       // 只有真的输入了新 key 才提交（否则会把掩码写回去）
-      if (apiKey.trim()) patch['ai.apiKey'] = apiKey.trim();
+      if (apiKey.trim()) patch[keys.apiKey] = apiKey.trim();
 
       await api.put('/settings', patch);
       setApiKey('');
@@ -201,6 +222,19 @@ export default function Settings() {
       toast.error('保存失败：' + err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** 切换 AI 服务商：立即落库并整页重载设置——
+   *  模型列表、Key 掩码、接口地址都是按当前服务商拉取/展示的 */
+  const switchProvider = async (next: string) => {
+    if (next === form.provider) return;
+    try {
+      await api.put('/settings', { 'ai.provider': next });
+      toast.success('已切换 AI 服务商');
+      await load();
+    } catch (err: any) {
+      toast.error('切换失败：' + err.message);
     }
   };
 
@@ -270,6 +304,21 @@ export default function Settings() {
           icon={<Sparkles className="h-4 w-4" />}
         />
         <div className="space-y-5 p-5">
+          {/* AI 服务商：切换后模型列表 / 接口地址 / Key 各自独立，互不覆盖 */}
+          <div>
+            <Select
+              label="AI 服务商"
+              value={form.provider}
+              onChange={(e) => void switchProvider(e.target.value)}
+              options={AI_PROVIDERS}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              {form.provider === 'gemini-proxy'
+                ? '你自建的 Gemini 转发代理（OpenAI 兼容）；Key 与模型独立保存，切回来配置不丢'
+                : 'SenseNova 官方平台'}
+            </p>
+          </div>
+
           <div>
             {/* 模型改为下拉选择：常用模型一键切换，平台上新模型仍可手填 */}
             {!useCustomModel && modelOptions.length > 0 ? (
@@ -370,7 +419,7 @@ export default function Settings() {
             label="接口地址"
             value={form.baseUrl}
             onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-            placeholder="https://token.sensenova.cn/v1"
+            placeholder={form.provider === 'gemini-proxy' ? 'https://api.gemmaproxy.dpdns.org/v1' : 'https://token.sensenova.cn/v1'}
           />
 
           <div>
@@ -385,7 +434,7 @@ export default function Settings() {
 
           <div>
             <Input
-              label="API Key"
+              label={form.provider === 'gemini-proxy' ? 'Gemini 代理 API Key' : 'SenseNova API Key'}
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
