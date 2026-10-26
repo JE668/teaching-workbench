@@ -50,6 +50,13 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [effortLevels, setEffortLevels] = useState<string[]>(['minimal', 'low', 'medium', 'high']);
   const [overridden, setOverridden] = useState<string[]>([]);
+  // .env / 内置出厂值。用来区分「用户自己改过的」和「只是出厂值被回显上来」——
+  // 不做这个区分，一次"没改任何东西只点保存"就会把所有出厂值写成覆盖，
+  // 从此改 .env、切服务商都追不上界面上的旧值。
+  const [defaults, setDefaults] = useState<Record<string, string>>({});
+  // 后端回的有效值原样快照（含可能是对象类型的密钥字段）。保存时要靠它判断
+  // 「这个键后端到底给没给值」——没给值又不是自定义项，就说明前端对它没意见。
+  const [effective, setEffective] = useState<Record<string, any>>({});
 
   const [apiKeyMasked, setApiKeyMasked] = useState('');
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
@@ -173,15 +180,20 @@ export default function Settings() {
 
       setForm({
         provider,
-        model: s[keys.model] || '',
+        // 没在库里存过这个服务商的模型 / 地址时，回落到它自己的出厂值——
+        // 否则切换服务商后这两个框会变空，用户以为配置丢了
+        // （这正是「选了 sensenova 接口地址却不自动变」的直接原因）
+        model: s[keys.model] || defaults[keys.model] || '',
         reasoningEffort: s['ai.reasoningEffort'] || 'low',
-        baseUrl: s[keys.baseUrl] || '',
+        baseUrl: s[keys.baseUrl] || defaults[keys.baseUrl] || '',
         timeoutMs: s['ai.timeoutMs'] || '60000',
         promptStyle: s['ai.prompt.style'] || '',
       });
       setApiKeyMasked(s[keys.apiKey]?.masked || '');
       setApiKeyConfigured(!!s[keys.apiKey]?.configured);
       setOverridden(r.overridden || []);
+      setDefaults(r.meta?.defaults || {});
+      setEffective(s);
       if (r.meta?.effortLevels?.length) setEffortLevels(r.meta.effortLevels);
 
       await loadModels(s['ai.reasoningEffort'] || 'low');
@@ -203,7 +215,16 @@ export default function Settings() {
     setSaving(true);
     try {
       const keys = keysOf(form.provider);
-      const patch: Record<string, string> = {
+      // 只提交「真的改过」的项。值等于 .env 出厂值的不写——写进去就等于把出厂值
+      // 冻结成覆盖，以后改 .env、切服务商都追不上界面上的旧值。
+      // 两种情况要处理：
+      //   · 值 ≠ 出厂值 → 写入（这是用户真正的自定义）
+      //   · 值 == 出厂值但之前改过 → 写空串清掉覆盖，才能真回到 .env
+      //   · 值 == 出厂值且没改过 → 跳过（本来就没覆盖，写也白写）
+      const patch: Record<string, string> = {};
+      const dirty = (key: string, value: string) =>
+        String(value ?? '') !== String(defaults[key] ?? '');
+      const fields: Record<string, string> = {
         'ai.provider': form.provider,
         [keys.model]: form.model,
         'ai.reasoningEffort': form.reasoningEffort,
@@ -211,8 +232,20 @@ export default function Settings() {
         'ai.timeoutMs': form.timeoutMs,
         'ai.prompt.style': form.promptStyle,
       };
+      for (const [key, value] of Object.entries(fields)) {
+        // 后端没回这个键、也不是自定义项 → 前端对它没有意见，不要提交空串
+        // （否则等于把「我不知道」伪装成「请清空」）
+        if (!String(effective[key] ?? '') && !overridden.includes(key)) continue;
+        if (dirty(key, value)) patch[key] = value;
+        else if (overridden.includes(key)) patch[key] = '';
+      }
       // 只有真的输入了新 key 才提交（否则会把掩码写回去）
       if (apiKey.trim()) patch[keys.apiKey] = apiKey.trim();
+
+      if (Object.keys(patch).length === 0) {
+        toast.info('没有需要保存的改动');
+        return;
+      }
 
       await api.put('/settings', patch);
       setApiKey('');
@@ -235,11 +268,32 @@ export default function Settings() {
   const switchProvider = async (next: string) => {
     if (next === form.provider || switching) return;
     setSwitching(true);
-    const previewUrl =
-      next === 'gemini-proxy' ? 'https://api.gemmaproxy.dpdns.org/v1' : 'https://token.sensenova.cn/v1';
-    setForm((prev) => ({ ...prev, provider: next, model: '', baseUrl: previewUrl }));
+    // 预览值取后端回传的出厂值，不要写死——用户 .env 里自定义了网关地址时，
+    // 写死的默认值会先把界面带偏一次，再被 load() 拉回来，看起来像「跳了一下」
+    const nextKeys = keysOf(next);
+    // 模型先清空：下面 load() 会立刻拉回该服务商自己的模型，不用手填
+    // 思考等级 / 超时 / 风格偏好是跨服务商共用的键，原样带着走
+    setForm({
+      provider: next,
+      model: '',
+      reasoningEffort: form.reasoningEffort,
+      baseUrl: defaults[nextKeys.baseUrl] || '',
+      timeoutMs: form.timeoutMs,
+      promptStyle: form.promptStyle,
+    });
     try {
-      await api.put('/settings', { 'ai.provider': next });
+      // 同 saveAi：服务商等于出厂默认时不要写成覆盖（否则「已自定义」里会多出
+      // 一个从没改过的 ai.provider，用户会以为点错地方了）；之前改过、现在切回
+      // 默认则写空串清掉覆盖。
+      const patch: Record<string, string> =
+        next !== String(defaults['ai.provider'] ?? 'sensenova')
+          ? { 'ai.provider': next }
+          : overridden.includes('ai.provider')
+            ? { 'ai.provider': '' }
+            : {};
+      if (Object.keys(patch).length > 0) {
+        await api.put('/settings', patch);
+      }
       toast.success('已切换 AI 服务商');
       await load();
     } catch (err: any) {
@@ -254,6 +308,20 @@ export default function Settings() {
     try {
       await api.put('/settings', { [key]: '' });
       toast.success('已恢复为 .env 中的配置');
+      await load();
+    } catch (err: any) {
+      toast.error('恢复失败：' + err.message);
+    }
+  };
+
+  /** 一键清掉全部覆盖：所有项重新跟着 .env 走 */
+  const clearAllOverrides = async () => {
+    if (overridden.length === 0) return;
+    const patch: Record<string, string> = {};
+    for (const k of overridden) patch[k] = '';
+    try {
+      await api.put('/settings', patch);
+      toast.success('已全部恢复为 .env 中的配置');
       await load();
     } catch (err: any) {
       toast.error('恢复失败：' + err.message);
@@ -428,12 +496,19 @@ export default function Settings() {
             </div>
           )}
 
-          <Input
-            label="接口地址"
-            value={form.baseUrl}
-            onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-            placeholder={form.provider === 'gemini-proxy' ? 'https://api.gemmaproxy.dpdns.org/v1' : 'https://token.sensenova.cn/v1'}
-          />
+          <div>
+            <Input
+              label="接口地址"
+              value={form.baseUrl}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              placeholder={form.provider === 'gemini-proxy' ? 'https://api.gemmaproxy.dpdns.org/v1' : 'https://token.sensenova.cn/v1'}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              {overridden.includes(form.provider === 'gemini-proxy' ? 'ai.geminiProxy.baseUrl' : 'ai.baseUrl')
+                ? '已自定义，优先级高于 .env —— 改 .env 不会再变这里'
+                : '沿用 .env 中的配置，改 .env 会自动生效'}
+            </p>
+          </div>
 
           <div>
             <Input
@@ -481,7 +556,7 @@ export default function Settings() {
           {overridden.length > 0 && (
             <div className="rounded-xl bg-slate-50 p-3.5 ring-1 ring-slate-100">
               <p className="mb-2 text-xs font-medium text-slate-500">
-                以下项已被自定义（未使用的项沿用 .env）
+                以下项已被自定义（未列出的项沿用 .env）
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {overridden.map((k) => (
@@ -491,10 +566,19 @@ export default function Settings() {
                     title="点击恢复为 .env 中的配置"
                     className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-slate-100"
                   >
-                    {k.replace('ai.', '')} ✕
+                    {k.replace(/^ai\.geminiProxy\./, 'geminiProxy.').replace(/^ai\./, '')} ✕
                   </button>
                 ))}
+                <button
+                  onClick={clearAllOverrides}
+                  className="rounded-full bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 ring-1 ring-brand-200 transition-colors hover:bg-brand-100"
+                >
+                  全部恢复为 .env
+                </button>
               </div>
+              <p className="mt-2 text-xs text-slate-400">
+                自定义项的优先级高于 .env —— 自定义了就改不动 .env。想跟着 .env 走就点上面的 ✕ 清掉
+              </p>
             </div>
           )}
 

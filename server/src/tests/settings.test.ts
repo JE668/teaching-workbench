@@ -43,6 +43,63 @@ describe('应用设置 · 读取', () => {
     assert.ok(res.body.meta.effortLevels.includes('high'));
   });
 
+  describe('出厂值（meta.defaults）', () => {
+    test('回传 .env / 内置出厂值，不受数据库覆盖影响', async () => {
+      await req('PUT', '/api/settings', { token, body: { 'ai.model': 'custom-model-123' } });
+      const res = await req('GET', '/api/settings', { token });
+
+      assert.ok(res.body.meta.defaults, 'meta.defaults 应存在');
+      assert.equal(res.body.settings['ai.model'], 'custom-model-123', 'settings 应是覆盖值');
+      assert.notEqual(res.body.meta.defaults['ai.model'], 'custom-model-123', 'defaults 必须是出厂值');
+      assert.ok(res.body.meta.defaults['ai.model'], '出厂值不应为空');
+    });
+
+    test('出厂值覆盖全部可写键', async () => {
+      const res = await req('GET', '/api/settings', { token });
+      const defaults = res.body.meta.defaults;
+      for (const key of res.body.meta.writableKeys) {
+        assert.ok(key in defaults, key + ' 应有出厂值');
+      }
+    });
+
+    test('出厂值里的密钥也是掩码，不落明文', async () => {
+      const res = await req('GET', '/api/settings', { token });
+      for (const key of ['ai.apiKey', 'ai.geminiProxy.apiKey']) {
+        const v = res.body.meta.defaults[key];
+        assert.ok(
+          typeof v !== 'string' || !/^[A-Za-z0-9_-]{20,}$/.test(v),
+          key + ' 的出厂值不应是明文长串'
+        );
+      }
+    });
+
+    test('回归：写入出厂值不制造覆盖（防止 .env 被冻结）', async () => {
+      const res = await req('GET', '/api/settings', { token });
+      const factory = res.body.meta.defaults['ai.timeoutMs'];
+
+      // 第一次：先改成一个非出厂值，制造真实覆盖
+      await req('PUT', '/api/settings', { token, body: { 'ai.timeoutMs': '123456' } });
+      let read = await req('GET', '/api/settings', { token });
+      assert.ok(read.body.overridden.includes('ai.timeoutMs'), '非出厂值应记为覆盖');
+
+      // 第二次：原样写回出厂值 —— 必须清掉覆盖，不能留着冻结 .env
+      await req('PUT', '/api/settings', { token, body: { 'ai.timeoutMs': factory } });
+      read = await req('GET', '/api/settings', { token });
+      assert.ok(!read.body.overridden.includes('ai.timeoutMs'), '写回出厂值应清除覆盖');
+      assert.equal(read.body.settings['ai.timeoutMs'], factory, 'effective 值应回到出厂值');
+    });
+
+    test('回归：首次就把出厂值原样写回去，也不会变成"已自定义"', async () => {
+      // 用户什么都没改，只点了一次「保存 AI 设置」
+      const res = await req('GET', '/api/settings', { token });
+      const factory = res.body.meta.defaults['ai.prompt.style'];
+
+      await req('PUT', '/api/settings', { token, body: { 'ai.prompt.style': factory } });
+      const read = await req('GET', '/api/settings', { token });
+      assert.ok(!read.body.overridden.includes('ai.prompt.style'), '不该凭空出现已自定义项');
+    });
+  });
+
   test('未登录返回 401', async () => {
     assert.equal((await req('GET', '/api/settings')).status, 401);
   });

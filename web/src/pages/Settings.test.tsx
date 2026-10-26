@@ -321,7 +321,252 @@ describe('设置页 · AI 设置', () => {
       expect(put).toHaveBeenCalledWith('/settings', { 'ai.model': '' });
     });
   });
+
+  it('全部恢复：一次清掉所有覆盖项', async () => {
+    const user = userEvent.setup();
+    const settings: Record<string, any> = {
+      'ai.model': 'custom',
+      'ai.timeoutMs': '90000',
+      'ai.baseUrl': 'https://x/v1',
+    };
+    let overridden: string[] = ['ai.model', 'ai.timeoutMs'];
+    // 有状态：保存后重新加载会反映清掉之后的结果
+    get.mockImplementation((path: string) => {
+      if (String(path) === '/settings/models') return Promise.resolve(DEFAULT_MODELS);
+      return Promise.resolve({
+        settings,
+        overridden,
+        meta: {
+          effortLevels: ['low'],
+          defaults: { 'ai.model': 'default', 'ai.timeoutMs': '60000', 'ai.baseUrl': 'https://x/v1' },
+        },
+      });
+    });
+    put.mockImplementation(async (_path: string, body: Record<string, string> = {}) => {
+      for (const [k, v] of Object.entries(body)) {
+        if (v === '') overridden = overridden.filter((o) => o !== k);
+        else settings[k] = v;
+      }
+      return { success: true };
+    });
+
+    renderWithProviders(<Settings />);
+    await screen.findByText(/以下项已被自定义/);
+
+    await user.click(screen.getByRole('button', { name: '全部恢复为 .env' }));
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith('/settings', { 'ai.model': '', 'ai.timeoutMs': '' });
+    });
+    // 重新加载后没有任何覆盖项了，面板消失（比断言 toast 文案更本质）
+    await waitFor(() => {
+      expect(screen.queryByText(/以下项已被自定义/)).not.toBeInTheDocument();
+    });
+  });
 });
+
+describe('设置页 · 防止 .env 出厂值被冻结', () => {
+  // 出厂值必须和有效值一模一样，才能验证「没改过的字段不会被提交」
+  const factory: Record<string, string> = {
+    'ai.provider': 'sensenova',
+    'ai.model': 'sensenova-6.8-flash-lite',
+    'ai.reasoningEffort': 'low',
+    'ai.baseUrl': 'https://token.sensenova.cn/v1',
+    'ai.timeoutMs': '60000',
+    'ai.prompt.style': 'balanced',
+    'ai.apiKey': '',
+    'ai.geminiProxy.provider': 'gemini-proxy',
+    'ai.geminiProxy.model': 'gemini-3.8-flash',
+    'ai.geminiProxy.baseUrl': 'https://api.gemmaproxy.dpdns.org/v1',
+    'ai.geminiProxy.apiKey': '',
+  };
+
+  function mockWithDefaults(overrides: Record<string, any> = {}, overridden: string[] = []) {
+    get.mockImplementation((path: string) => {
+      if (String(path) === '/settings/models') return Promise.resolve(DEFAULT_MODELS);
+      return Promise.resolve({
+        settings: {
+          'ai.provider': 'sensenova',
+          'ai.model': factory['ai.model'],
+          'ai.reasoningEffort': factory['ai.reasoningEffort'],
+          'ai.baseUrl': factory['ai.baseUrl'],
+          'ai.timeoutMs': factory['ai.timeoutMs'],
+          'ai.prompt.style': factory['ai.prompt.style'],
+          'ai.apiKey': { configured: true, masked: '••••••••abcd' },
+          ...overrides,
+        },
+        overridden,
+        meta: {
+          effortLevels: ['none', 'low', 'medium', 'high', 'max'],
+          writableKeys: Object.keys(factory),
+          defaults: factory,
+        },
+      });
+    });
+  }
+
+  it('什么都没改就点保存：不发任何请求（核心回归——这就是把 .env 冻结的源头）', async () => {
+    const user = userEvent.setup();
+    mockWithDefaults();
+    put.mockResolvedValue({ success: true });
+
+    renderWithProviders(<Settings />);
+    await screen.findByLabelText('模型');
+
+    await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
+
+    // 给足时间，若真发了请求 waitFor 也会拿到
+    await new Promise((r) => setTimeout(r, 100));
+    expect(put).not.toHaveBeenCalled();
+    expect(await screen.findByText(/没有需要保存的改动/)).toBeInTheDocument();
+  });
+
+  it('只改一个字段：只提交那一个，其余出厂值一律不碰', async () => {
+    const user = userEvent.setup();
+    mockWithDefaults();
+    put.mockResolvedValue({ success: true });
+
+    renderWithProviders(<Settings />);
+    await screen.findByLabelText('模型');
+
+    await user.selectOptions(screen.getByLabelText('模型'), 'model-a');
+    await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
+
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    const body = put.mock.calls[0][1] as Record<string, string>;
+    expect(Object.keys(body)).toEqual(['ai.model']);
+    expect(body['ai.model']).toBe('model-a');
+  });
+
+  it('切服务商：接口地址立刻换成该服务商的出厂值，共用字段不丢（用户报的场景）', async () => {
+    const user = userEvent.setup();
+    // 有状态：切换服务商后重新加载要真的按新服务商回数据
+    const settings: Record<string, any> = {
+      'ai.provider': 'sensenova',
+      'ai.model': factory['ai.model'],
+      'ai.reasoningEffort': 'medium',
+      'ai.baseUrl': factory['ai.baseUrl'],
+      'ai.timeoutMs': factory['ai.timeoutMs'],
+      'ai.prompt.style': 'detailed',
+      'ai.apiKey': { configured: true, masked: '••••••••abcd' },
+    };
+    let overridden: string[] = [];
+    get.mockImplementation((path: string) => {
+      if (String(path) === '/settings/models') return Promise.resolve(DEFAULT_MODELS);
+      return Promise.resolve({
+        settings,
+        overridden,
+        meta: {
+          effortLevels: ['none', 'low', 'medium', 'high', 'max'],
+          writableKeys: Object.keys(factory),
+          defaults: factory,
+        },
+      });
+    });
+    // 复刻后端规则：写空串或写成出厂值都算「清掉覆盖」
+    put.mockImplementation(async (_path: string, body: Record<string, string> = {}) => {
+      for (const [k, v] of Object.entries(body)) {
+        if (v === '' || v === factory[k]) {
+          delete settings[k];
+          overridden = overridden.filter((o) => o !== k);
+        } else {
+          settings[k] = v;
+          if (!overridden.includes(k)) overridden.push(k);
+        }
+      }
+      return { success: true };
+    });
+
+    renderWithProviders(<Settings />);
+    expect(((await screen.findByLabelText('接口地址')) as HTMLInputElement).value).toBe(
+      factory['ai.baseUrl']
+    );
+
+    await user.selectOptions(screen.getByLabelText('AI 服务商'), 'gemini-proxy');
+
+    // 接口地址立刻变成代理地址（不用等保存，也不依赖 .env 里有没有配）
+    await waitFor(() => {
+      expect((screen.getByLabelText('接口地址') as HTMLInputElement).value).toBe(
+        factory['ai.geminiProxy.baseUrl']
+      );
+    });
+    // 共用字段（思考等级、风格偏好）跟着账号走，切换时不丢
+    expect((screen.getByLabelText('思考等级') as HTMLSelectElement).value).toBe('medium');
+    expect((screen.getByLabelText(/风格偏好/) as HTMLInputElement).value).toBe('detailed');
+
+    // 切回：地址回到 SenseNova 的出厂值
+    await user.selectOptions(screen.getByLabelText('AI 服务商'), 'sensenova');
+    await waitFor(() => {
+      expect((screen.getByLabelText('接口地址') as HTMLInputElement).value).toBe(
+        factory['ai.baseUrl']
+      );
+    });
+  });
+
+  it('改过又改回出厂值：提交空串清掉覆盖，不留冻结值', async () => {
+    const user = userEvent.setup();
+    const settings: Record<string, any> = {
+      'ai.provider': 'sensenova',
+      'ai.model': 'my-custom-model',
+      'ai.reasoningEffort': factory['ai.reasoningEffort'],
+      'ai.baseUrl': factory['ai.baseUrl'],
+      'ai.timeoutMs': factory['ai.timeoutMs'],
+      'ai.prompt.style': factory['ai.prompt.style'],
+      'ai.apiKey': { configured: true, masked: '••••••••abcd' },
+    };
+    let overridden: string[] = ['ai.model'];
+    get.mockImplementation((path: string) => {
+      // 模型列表不可用 → 界面退化为手填输入框（这正是用户存自定义模型的常见路径）
+      if (String(path) === '/settings/models') return Promise.resolve(null);
+      return Promise.resolve({
+        settings,
+        overridden,
+        meta: {
+          effortLevels: ['none', 'low', 'medium', 'high', 'max'],
+          writableKeys: Object.keys(factory),
+          defaults: factory,
+        },
+      });
+    });
+    put.mockImplementation(async (_path: string, body: Record<string, string> = {}) => {
+      for (const [k, v] of Object.entries(body)) {
+        if (v === '') overridden = overridden.filter((o) => o !== k);
+        else settings[k] = v;
+      }
+      return { success: true };
+    });
+
+    renderWithProviders(<Settings />);
+    // 库里存的是自定义模型名，界面以手填输入框呈现它
+    const input = (await screen.findByLabelText('模型名称')) as HTMLInputElement;
+    expect(input.value).toBe('my-custom-model');
+
+    await user.clear(input);
+    await user.type(input, factory['ai.model']);
+    await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith('/settings', { 'ai.model': '' });
+    });
+  });
+
+  it('接口地址提示：已自定义时说明 .env 不会生效', async () => {
+    mockWithDefaults({ 'ai.baseUrl': 'https://my-private-gateway/v1' }, ['ai.baseUrl']);
+    renderWithProviders(<Settings />);
+
+    expect(await screen.findByText(/已自定义，优先级高于 \.env/)).toBeInTheDocument();
+    expect(screen.queryByText(/沿用 \.env 中的配置/)).not.toBeInTheDocument();
+  });
+
+  it('接口地址沿用出厂值时提示 .env 会自动生效', async () => {
+    mockWithDefaults();
+    renderWithProviders(<Settings />);
+
+    expect(await screen.findByText(/沿用 \.env 中的配置，改 \.env 会自动生效/)).toBeInTheDocument();
+    expect(screen.queryByText(/已自定义，优先级高于/)).not.toBeInTheDocument();
+  });
+});
+
 
 describe('设置页 · 修改密码', () => {
   it('两次新密码不一致时阻止提交', async () => {

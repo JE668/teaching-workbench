@@ -3,6 +3,7 @@ import {
   SETTING_KEYS,
   getAllSettings,
   getOverrides,
+  getFallbackDefaults,
   setSettings,
   bumpConfigVersion,
   maskSecret,
@@ -313,6 +314,9 @@ router.get('/', (req: any, res) => {
       meta: {
         effortLevels: EFFORT_LEVELS,
         writableKeys: SETTING_KEYS,
+        /** .env / 内置出厂值。前端用它区分「用户改过的」与「只是回显 .env」，
+         *  避免一次无脑保存把出厂值全部冻结成覆盖 */
+        defaults: getFallbackDefaults(),
       },
     });
   } catch (error: any) {
