@@ -150,15 +150,17 @@ test.describe('设置页', () => {
     };
 
     try {
-      // 记下 SenseNova 当前的模型
+      // 记下 SenseNova 当前的模型与接口地址（接口地址在测试环境里指向本地 mock，
+      // 所以断言基准值而不是硬编码官方地址——重点验证「切走再切回后仍是自己的地址」）
       const modelSelect = page.getByLabel('模型', { exact: true });
       const sensenovaModel = await modelSelect.inputValue();
+      const baseUrlInput = page.getByLabel('接口地址');
+      const sensenovaUrl = await baseUrlInput.inputValue();
+      expect(sensenovaUrl).not.toMatch(/gemmaproxy/);
 
-      // 切到 Gemini 转发代理：接口地址乐观更新为代理地址（不等网络往返），
-      // Key 输入框的 label 跟着换
+      // 切到 Gemini 转发代理：接口地址立即变成代理地址，Key 输入框的 label 跟着换
       await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
       await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
-      const baseUrlInput = page.getByLabel('接口地址');
       await expect(baseUrlInput).toHaveValue(/gemmaproxy\.dpdns\.org/);
       const geminiKey = page.getByLabel('Gemini 代理 API Key');
       await expect(geminiKey).toBeVisible();
@@ -168,10 +170,11 @@ test.describe('设置页', () => {
       await page.getByRole('button', { name: '保存 AI 设置' }).click();
       await expect(page.getByText('AI 设置已保存，下次生成立即生效')).toBeVisible();
 
-      // 切回 SenseNova：接口地址立即变回官方地址，原模型还在，Key label 变回
+      // 切回 SenseNova：接口地址立即回到自己的值（核心回归——不能被代理地址污染），
+      // 原模型还在，Key 输入框变回原 label
       await page.getByLabel('AI 服务商').selectOption('sensenova');
       await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
-      await expect(baseUrlInput).toHaveValue(/token\.sensenova\.cn/);
+      await expect(baseUrlInput).toHaveValue(sensenovaUrl);
       await expect(page.getByLabel('SenseNova API Key')).toBeVisible();
       await expect(page.getByLabel('模型', { exact: true })).toHaveValue(sensenovaModel);
 
