@@ -13,7 +13,6 @@ test.describe('设置页', () => {
   test('模型与思考等级都是下拉框（不是手输框）', async ({ page }) => {
     await loginViaApi(page);
     await page.goto('/settings');
-
     const model = page.getByLabel('模型', { exact: true });
     await expect(model).toBeVisible();
     expect(await model.evaluate((el) => el.tagName)).toBe('SELECT');
@@ -135,5 +134,48 @@ test.describe('设置页', () => {
     expect(after.filter((i) => !i.is_builtin), '不该有任何非内置的导入记录').toEqual([]);
     // 至少有一份内置还在，避免「数组是空的」让上面那条空转通过
     expect(after.filter((i) => i.is_builtin).length).toBeGreaterThan(0);
+  });
+
+  test('切换 AI 服务商：Gemini 代理配置独立保存，切回不丢 SenseNova 配置', async ({ page }) => {
+    await loginViaApi(page);
+    await page.goto('/settings');
+
+    // provider 是全局设置（不分账号），用例结束必须切回，否则会污染后续生成用例
+    const token = await getToken(page);
+    const restoreProvider = async () => {
+      await page.request.put('/api/settings', {
+        headers: { Authorization: 'Bearer ' + token },
+        data: { 'ai.provider': 'sensenova' },
+      });
+    };
+
+    try {
+      // 记下 SenseNova 当前的模型
+      const modelSelect = page.getByLabel('模型', { exact: true });
+      const sensenovaModel = await modelSelect.inputValue();
+
+      // 切到 Gemini 转发代理：Key 输入框的 label 跟着换
+      await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
+      await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
+      const geminiKey = page.getByLabel('Gemini 代理 API Key');
+      await expect(geminiKey).toBeVisible();
+
+      // 写入代理的 Key 并保存（模型走默认 gemini-3.8-flash）
+      await geminiKey.fill('e2e-gemini-key');
+      await page.getByRole('button', { name: '保存 AI 设置' }).click();
+      await expect(page.getByText('AI 设置已保存，下次生成立即生效')).toBeVisible();
+
+      // 切回 SenseNova：原模型还在，Key 输入框变回原 label
+      await page.getByLabel('AI 服务商').selectOption('sensenova');
+      await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
+      await expect(page.getByLabel('SenseNova API Key')).toBeVisible();
+      await expect(page.getByLabel('模型', { exact: true })).toHaveValue(sensenovaModel);
+
+      // 再切回 Gemini：Key 显示已配置（独立保存住了）
+      await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
+      await expect(page.getByText(/已配置/).first()).toBeVisible();
+    } finally {
+      await restoreProvider();
+    }
   });
 });

@@ -100,6 +100,10 @@ export const env = {
   SENSENOVA_API_KEY: process.env.SENSENOVA_API_KEY || '',
   SENSENOVA_BASE_URL: process.env.SENSENOVA_BASE_URL || 'https://token.sensenova.cn/v1',
   SENSENOVA_MODEL: process.env.SENSENOVA_MODEL || 'sensenova-6.8-flash-lite',
+  // Gemini 转发代理（boss 自建，OpenAI 兼容层）。key 在设置页填，env 只做兜底。
+  GEMINI_PROXY_BASE_URL: process.env.GEMINI_PROXY_BASE_URL || 'https://api.gemmaproxy.dpdns.org/v1',
+  GEMINI_PROXY_API_KEY: process.env.GEMINI_PROXY_API_KEY || '',
+  GEMINI_PROXY_MODEL: process.env.GEMINI_PROXY_MODEL || 'gemini-3.8-flash',
   SENSENOVA_REASONING_EFFORT: resolveReasoningEffort(),
   // 单次请求超时（毫秒）。SDK 默认 10 分钟，对交互式生成过长，这里收紧到 60s。
   SENSENOVA_TIMEOUT_MS: parseInt(process.env.SENSENOVA_TIMEOUT_MS || '60000', 10),

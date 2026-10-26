@@ -11,9 +11,15 @@ import { env } from './env.js';
 
 /** 各设置的兜底来源（.env / 内置默认） */
 const FALLBACK: Record<string, () => string> = {
+  // AI 服务商：sensenova（默认，键沿用 ai.model/baseUrl/apiKey）| gemini-proxy（自建 Gemini 转发代理）
+  'ai.provider': () => 'sensenova',
   'ai.model': () => env.SENSENOVA_MODEL,
   'ai.baseUrl': () => env.SENSENOVA_BASE_URL,
   'ai.apiKey': () => env.SENSENOVA_API_KEY,
+  // gemini-proxy 的专属配置（model / baseUrl / apiKey 各自独立，切换服务商互不覆盖）
+  'ai.geminiProxy.model': () => env.GEMINI_PROXY_MODEL,
+  'ai.geminiProxy.baseUrl': () => env.GEMINI_PROXY_BASE_URL,
+  'ai.geminiProxy.apiKey': () => env.GEMINI_PROXY_API_KEY,
   'ai.reasoningEffort': () => env.SENSENOVA_REASONING_EFFORT,
   'ai.timeoutMs': () => String(env.SENSENOVA_TIMEOUT_MS),
   // 回访 prompt 的风格补充。留空 = 用内置默认语气，不追加任何内容。
@@ -83,6 +89,7 @@ export function setSettings(patch: Record<string, string>): void {
 // ============ AI 配置快照 ============
 
 export interface AiConfig {
+  provider: string;
   model: string;
   baseUrl: string;
   apiKey: string;
@@ -97,12 +104,25 @@ export function getConfigVersion(): number {
 }
 
 export function getAiConfig(): AiConfig {
+  const provider = getSetting('ai.provider') || 'sensenova';
+  const shared = {
+    provider,
+    reasoningEffort: getSetting('ai.reasoningEffort') || 'low',
+    timeoutMs: Math.max(5000, parseInt(getSetting('ai.timeoutMs'), 10) || 60000),
+  };
+  if (provider === 'gemini-proxy') {
+    return {
+      ...shared,
+      model: getSetting('ai.geminiProxy.model'),
+      baseUrl: getSetting('ai.geminiProxy.baseUrl'),
+      apiKey: getSetting('ai.geminiProxy.apiKey'),
+    };
+  }
   return {
+    ...shared,
     model: getSetting('ai.model'),
     baseUrl: getSetting('ai.baseUrl') || 'https://token.sensenova.cn/v1',
     apiKey: getSetting('ai.apiKey'),
-    reasoningEffort: getSetting('ai.reasoningEffort') || 'low',
-    timeoutMs: Math.max(5000, parseInt(getSetting('ai.timeoutMs'), 10) || 60000),
   };
 }
 

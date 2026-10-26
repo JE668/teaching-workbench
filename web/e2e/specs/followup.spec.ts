@@ -46,9 +46,9 @@ test.describe('课后回访生成', () => {
 
     // 最终内容应包含默认勾选的 5 个板块段 + 两段收尾
     for (const sec of [
+      '【课程主题】',
+      '【课堂总结】',
       '【作业批改】',
-      '【课堂内容总结】',
-      '【课堂表现总结】',
       '【笔记/解题痕迹】',
       '【作业布置】',
       '【学生收获】',
@@ -73,7 +73,7 @@ test.describe('课后回访生成', () => {
     await expect(page.getByText('已复制回访内容，可直接发送给家长')).toBeVisible();
 
     const clip = await page.evaluate(() => navigator.clipboard.readText());
-    expect(clip).toContain('【课堂内容总结】');
+    expect(clip).toContain('【课程主题】');
   });
 
   test('小组课：多选学生一次归档多条，且文案不含姓名', async ({ page }) => {
@@ -149,7 +149,7 @@ test.describe('课后回访生成', () => {
     await gotoFollowUp(page);
     await page.getByLabel(/选择已有学生/).selectOption(String(studentId));
 
-    // 默认已勾选 5 个板块（作业批改、课堂内容总结、课堂表现总结、笔记/解题痕迹、作业布置），
+    // 默认已勾选 5 个板块（课程主题、课堂总结、作业批改、笔记/解题痕迹、作业布置），
     // 再补勾一个常规类与一个非常规类，计数随之变化
     await page.getByRole('button', { name: '错题专练', exact: true }).click();
     await page.getByRole('button', { name: '成绩分析', exact: true }).click();

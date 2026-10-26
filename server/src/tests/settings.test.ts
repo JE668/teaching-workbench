@@ -124,6 +124,64 @@ describe('应用设置 · 写入', () => {
     const { getAiConfig } = await import('../config/settings.js');
     assert.equal(getAiConfig().apiKey, 'sk-real-key-1234567890', '掩码不应覆盖真实密钥');
   });
+
+  test('切换 AI 服务商：gemini-proxy 配置独立，切回后 sensenova 配置无损', async () => {
+    // sensenova 侧的现状（前序用例写入过）
+    const before = await req('GET', '/api/settings', { token });
+    const sensenovaModel = before.body.settings['ai.model'];
+
+    // 切到 gemini-proxy 并写入它的专属配置
+    const put = await req('PUT', '/api/settings', {
+      token,
+      body: {
+        'ai.provider': 'gemini-proxy',
+        'ai.geminiProxy.model': 'gemini-3.8-flash',
+        'ai.geminiProxy.baseUrl': 'https://api.gemmaproxy.dpdns.org/v1',
+        'ai.geminiProxy.apiKey': 'gm-test-key-1234',
+      },
+    });
+    assert.equal(put.status, 200, JSON.stringify(put.body));
+
+    // 配置快照走 gemini-proxy 命名空间
+    const { getAiConfig } = await import('../config/settings.js');
+    const cfg = getAiConfig();
+    assert.equal(cfg.provider, 'gemini-proxy');
+    assert.equal(cfg.model, 'gemini-3.8-flash');
+    assert.equal(cfg.baseUrl, 'https://api.gemmaproxy.dpdns.org/v1');
+    assert.equal(cfg.apiKey, 'gm-test-key-1234');
+
+    // gemini 的 key 也只回传掩码
+    const mid = await req('GET', '/api/settings', { token });
+    assert.equal(mid.body.settings['ai.provider'], 'gemini-proxy');
+    assert.ok(mid.body.settings['ai.geminiProxy.apiKey'].configured);
+    assert.ok(mid.body.settings['ai.geminiProxy.apiKey'].masked.includes('••'));
+
+    // 切回 sensenova：原配置分毫未动
+    await req('PUT', '/api/settings', { token, body: { 'ai.provider': 'sensenova' } });
+    const after = await req('GET', '/api/settings', { token });
+    assert.equal(after.body.settings['ai.provider'], 'sensenova');
+    assert.equal(after.body.settings['ai.model'], sensenovaModel, 'sensenova 的模型不该被 gemini 写动');
+    const cfg2 = getAiConfig();
+    assert.equal(cfg2.provider, 'sensenova');
+    assert.equal(cfg2.model, sensenovaModel);
+    assert.equal(cfg2.apiKey, 'sk-real-key-1234567890', 'sensenova 的 key 不该被 gemini 覆盖');
+  });
+
+  test('未知服务商与非法 gemini baseUrl 被拒', async () => {
+    assert.equal(
+      (await req('PUT', '/api/settings', { token, body: { 'ai.provider': 'openai' } })).status,
+      400
+    );
+    assert.equal(
+      (
+        await req('PUT', '/api/settings', {
+          token,
+          body: { 'ai.geminiProxy.baseUrl': 'file:///etc/passwd' },
+        })
+      ).status,
+      400
+    );
+  });
 });
 
 describe('应用设置 · 立即生效', () => {

@@ -27,7 +27,7 @@ const base: FollowUpGenerateParams = {
 };
 
 describe('流程打卡类型 · 归一化', () => {
-  test('非法或缺失一律回落到课堂内容总结', () => {
+  test('非法或缺失一律回落到课程主题', () => {
     // 存量数据没有 module 列，读出来是 undefined，必须能安全兜住
     assert.equal(normalizeFollowUpModule(undefined), 'class_content');
     assert.equal(normalizeFollowUpModule(null), 'class_content');
@@ -35,7 +35,7 @@ describe('流程打卡类型 · 归一化', () => {
     assert.equal(normalizeFollowUpModule('乱写的值'), 'class_content');
   });
 
-  test('拆「课堂总结」之前的老值 class_summary 回落到课堂内容总结', () => {
+  test('拆「课堂总结」之前的老值 class_summary 回落到课程主题', () => {
     // DB 默认值与存量数据里都是 class_summary，不改 schema，靠映射兜住
     assert.equal(normalizeFollowUpModule('class_summary'), 'class_content');
     assert.deepEqual(normalizeFollowUpModules('class_summary'), ['class_content']);
@@ -54,11 +54,12 @@ describe('流程打卡类型 · 归一化', () => {
 });
 
 describe('流程打卡类型 · 提示词', () => {
-  test('不传 module 时默认课堂内容总结，且不追加模块专属要求', () => {
+  test('不传 module 时默认课程主题（class_content），且不追加模块专属要求', () => {
     const p = buildPrompt(base);
-    assert.match(p, /- 打卡类型：常规类 · 课堂内容总结/);
-    assert.match(p, /# 本次打卡类型：常规类 · 课堂内容总结/);
-    assert.ok(!p.includes('本模块专属要求'), '课堂内容总结没有专属要求，不应输出空标题');
+    const label = MODULE_GUIDANCE.class_content.label;
+    assert.match(p, new RegExp('- 打卡类型：常规类 · ' + label));
+    assert.match(p, new RegExp('# 本次打卡类型：常规类 · ' + label));
+    assert.ok(!p.includes('本模块专属要求'), '课程主题没有专属要求，不应输出空标题');
   });
 
   test('十六种类型都写进提示词，且三段标题保持完整', () => {
@@ -67,10 +68,10 @@ describe('流程打卡类型 · 提示词', () => {
       const g = MODULE_GUIDANCE[m];
       assert.match(p, new RegExp('- 打卡类型：' + g.group + ' · ' + g.label), m + ' 课堂信息');
       assert.match(p, new RegExp('# 本次打卡类型：' + g.group + ' · ' + g.label), m + ' 场景块');
-      // 课堂内容总结是通用模块，没有专属要求；其余 15 种必须各有一条针对性约束
+      // 课程主题是通用模块，没有专属要求；其余 15 种必须各有一条针对性约束
       if (m === 'class_content') {
         assert.equal(g.rules.length, 0);
-        assert.ok(!p.includes('本模块专属要求'), '课堂内容总结不应输出空的专属要求块');
+        assert.ok(!p.includes('本模块专属要求'), '课程主题不应输出空的专属要求块');
       } else {
         assert.ok(g.rules.length > 0, m + ' 应有专属要求');
         assert.ok(p.includes('# 本模块专属要求（' + g.label + '）'), m + ' 专属要求应写进提示词');
@@ -145,7 +146,7 @@ describe('流程打卡类型 · 提示词', () => {
     assert.ok(!preview.includes('批改的作业范围'), '预习资料不应出现作业批改的措辞');
   });
 
-  test('课堂内容总结在 1对1 与小组课下的措辞各自正确', () => {
+  test('课程主题在 1对1 与小组课下的措辞各自正确', () => {
     const one = buildPrompt({ ...base, module: 'class_content' });
     const group = buildPrompt({ ...base, module: 'class_content', courseType: 'group' });
     assert.match(one, /从内容掌握角度写：.*描述小明本节课的进步与亮点/);
@@ -158,18 +159,18 @@ describe('流程打卡类型 · 提示词', () => {
     assert.ok(!/(\{[a-zA-Z]+\})/.test(noteTraceGroup), '提示词里不应残留未替换的占位符');
   });
 
-  test('多次课的递进措辞在课堂内容总结里保留', () => {
+  test('多次课的递进措辞在课程主题里保留', () => {
     const p = buildPrompt({ ...base, module: 'class_content', sessionCount: 3 });
     assert.match(p, /体现知识之间的递进关系/);
     assert.match(p, /针对这 3 次课的综合情况布置巩固练习/);
   });
 
-  test('课堂表现总结只写课堂状态，不写知识点进度', () => {
+  test('课堂总结同时覆盖内容掌握与课堂表现', () => {
     const p = buildPrompt({ ...base, module: 'class_performance' });
-    assert.match(p, /【课堂表现总结】/);
+    assert.match(p, /【课堂总结】/);
+    assert.match(p, /内容掌握到什么程度/);
     assert.match(p, /注意力持续多久、愿不愿意主动发言/);
-    assert.match(p, /哪一步开始跟不上/);
-    assert.match(p, /要写具体的课堂行为细节/);
+    assert.match(p, /要同时覆盖内容掌握与课堂表现两方面/);
   });
 
   test('所有占位符都被替换，任何模块都不残留花括号', () => {
@@ -185,7 +186,7 @@ describe('流程打卡类型 · 提示词', () => {
 });
 
 describe('流程打卡类型 · 持久化', () => {
-  test('不传 module 时保存为课堂内容总结', async () => {
+  test('不传 module 时保存为课程主题', async () => {
     const f = await createFollowUp(token);
     assert.equal(f.module, 'class_content');
   });
@@ -197,12 +198,12 @@ describe('流程打卡类型 · 持久化', () => {
     }
   });
 
-  test('非法 module 回落课堂内容总结而不是报错', async () => {
+  test('非法 module 回落课程主题而不是报错', async () => {
     const f = await createFollowUp(token, { module: '乱写的值' });
     assert.equal(f.module, 'class_content');
   });
 
-  test('存量数据里的老值 class_summary 读出来回落到课堂内容总结', async () => {
+  test('存量数据里的老值 class_summary 读出来回落到课程主题', async () => {
     // DB 默认值是 class_summary，老记录整列都是它，读出必须能安全映射
     const f = await createFollowUp(token, { module: 'class_summary' as any });
     assert.equal(f.module, 'class_content');
