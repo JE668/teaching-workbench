@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import sharp from 'sharp';
 import { env } from '../config/env.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { getAiConfig, getConfigVersion, getSetting, AiConfig } from '../config/settings.js';
@@ -64,6 +65,23 @@ export interface FollowUpGenerateParams {
   /** 自定义称呼；不传则由 studentName 推导 */
   nickname?: string;
   images: string[];
+  /**
+   * 该学生近几次回访的内容。AI 生成不带记忆是最大的质量短板——
+   * 连续几周每次独立创作，容易反复写相似的句子。有了历史就能：
+   * ① 避开上次已经反馈过的内容；② 写出"上次提到的问题这次改善了"的进步轨迹。
+   * 小组课不传（通用反馈，无个人历史可比）。
+   */
+  history?: FollowUpHistoryItem[];
+}
+
+/** 历史回访条目（喂给模型用的精简形态） */
+export interface FollowUpHistoryItem {
+  /** 当次回访问的内容 */
+  content: string;
+  /** 当次课程内容，帮模型判断哪些知识点已经讲过 */
+  topic?: string;
+  /** 相对时间描述，如「上一次」「上两次」 */
+  when?: string;
 }
 
 // 字数区间要求。流程打卡新规：「打卡文字约 150 字且通俗易懂」，
@@ -179,9 +197,18 @@ export function describeAiError(
 }
 
 /**
- * 将本地上传图片转为 Base64 Data URL（含路径穿越与存在性校验）
+ * 将本地上传图片转为 Base64 Data URL（含路径穿越与存在性校验）。
+ *
+ * 原图直接编码体积很大（手机原图 3-10MB → base64 4-13MB），会把请求体撑到数 MB，
+ * 生成又慢又容易超时；而多数模型会先把图片缩放到固定尺寸再做视觉理解，
+ * 更高分辨率并不带来更好的识别，只是白白多传字节。
+ * 所以下降采样到长边 1600px、JPEG 质量 82 再编码，课堂作业的题目与字迹在这个尺寸下仍清晰可辨。
+ * 压缩失败时降级返回原图，保证可用性优先。
  */
-function imageToBase64DataUrl(imagePath: string): string {
+const AI_IMAGE_MAX_EDGE = 1600;
+const AI_IMAGE_JPEG_QUALITY = 82;
+
+export async function imageToBase64DataUrl(imagePath: string): Promise<string> {
   const uploadRoot = path.resolve(env.UPLOAD_DIR);
   const fullPath = path.isAbsolute(imagePath) ? imagePath : path.resolve(uploadRoot, imagePath);
 
@@ -192,6 +219,23 @@ function imageToBase64DataUrl(imagePath: string): string {
     throw new Error('图片文件不存在');
   }
 
+  try {
+    // withoutEnlargement：小于阈值的图不放大，避免把原本就小的图虚化
+    // sharp 重编码后固定输出 JPEG，所以 Data URL 前缀固定走 image/jpeg（不看原文件扩展名）
+    const { data } = await sharp(fullPath, { animated: false })
+      .resize({ width: AI_IMAGE_MAX_EDGE, height: AI_IMAGE_MAX_EDGE, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: AI_IMAGE_JPEG_QUALITY })
+      .toBuffer({ resolveWithObject: true });
+    return 'data:image/jpeg;base64,' + data.toString('base64');
+  } catch (error: any) {
+    // 降级：原图直读。压缩失败不该让整次生成失败
+    log.warn({ image: imagePath, err: error.message }, '图片压缩失败，改用原图');
+    return legacyBase64(fullPath);
+  }
+}
+
+/** 原图直读编码（压缩失败时的兜底） */
+function legacyBase64(fullPath: string): string {
   const ext = path.extname(fullPath).toLowerCase();
   const mimeTypes: Record<string, string> = {
     '.jpg': 'image/jpeg',
@@ -199,8 +243,7 @@ function imageToBase64DataUrl(imagePath: string): string {
     '.png': 'image/png',
     '.webp': 'image/webp',
   };
-  const mimeType = mimeTypes[ext] || 'image/png';
-  return 'data:' + mimeType + ';base64,' + fs.readFileSync(fullPath).toString('base64');
+  return 'data:' + (mimeTypes[ext] || 'image/png') + ';base64,' + fs.readFileSync(fullPath).toString('base64');
 }
 
 // ============ 流程打卡类型（模块）=
@@ -619,6 +662,27 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
     );
   }
 
+  // 历史上下文：AI 最大的质量短板是"没有记忆"。
+  // 这里刻意把指令写成"防重复 + 可引用进步点"两面：既避免照抄上次的话，
+  // 又允许呼应明确的进展（这才是家长最想看到的）。
+  const history = !isGroup && params.history ? params.history.filter((h) => h.content && h.content.trim()) : [];
+  if (history.length > 0) {
+    lines.push(
+      '# 历史回访记录（只用于避免重复，不要照搬）',
+      '下面是这个孩子最近几次回访已经写给家长的内容。你只负责本次课，因此：',
+      '- 【不要】复述下面已有的内容，也不要重复相同的句子、句式或细节（例如上次已写过"通分时容易漏乘分子"，这次就别再原样说一遍）',
+      '- 如果本次课在某个方面确有进展或改善，【可以】用一句话呼应它（例如"上次提到的漏乘分子问题这次已经掌握"），',
+      '  但必须落到本次课信息里真实发生的事，不要泛泛地写"比上次有进步"',
+      '- 历史记录里出现但本次课信息里没有再次出现的具体题目、数字、细节，一律不要写',
+      ''
+    );
+    history.forEach((h) => {
+      lines.push('**' + (h.when || '上一次') + '**' + (h.topic ? '｜' + h.topic : ''));
+      lines.push(h.content.trim());
+      lines.push('');
+    });
+  }
+
   // 打卡类型定位：让模型先明白「这次要覆盖哪几块」，再决定内容怎么写
   lines.push(
     multiBlock
@@ -730,10 +794,12 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
   }
 
   if (correction) {
+    // 修正指令必须讲清「差多少、往哪个方向」：只说"不符合要求"时，模型只能猜方向，
+    // 重试命中率很低——经常越改越偏，或者原地不动。
     lines.push(
       '',
       '# 重要修正',
-      '你上一次的输出是 ' + correction + '，不符合字数要求。',
+      correction,
       '请重新撰写，确保总字数落在 ' + wordRange.min + '-' + wordRange.max +
         ' 字之间，同时保持原有段落结构与内容质量。'
     );
@@ -743,18 +809,18 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
 }
 
 /** 组装 user 消息内容块：提示词 + 图片（Base64 Data URL） */
-function buildUserContent(
+async function buildUserContent(
   params: FollowUpGenerateParams,
   correction?: string,
   userId?: number
-): any[] {
+): Promise<any[]> {
   const userContent: any[] = [{ type: 'text', text: buildPrompt(params, correction, userId) }];
 
   for (const imagePath of params.images) {
     try {
       userContent.push({
         type: 'image_url',
-        image_url: { url: imageToBase64DataUrl(imagePath) },
+        image_url: { url: await imageToBase64DataUrl(imagePath) },
       });
     } catch (error: any) {
       log.warn({ image: imagePath, err: error.message }, '图片加载失败');
@@ -786,12 +852,12 @@ function buildUserContent(
  * SenseNova 自定义参数（reasoning_effort）需直接放入请求体，
  * OpenAI Node SDK 的类型定义未包含该字段，故用 any 透传。
  */
-function buildRequest(
+async function buildRequest(
   userId: number,
   params: FollowUpGenerateParams,
   correction?: string,
   stream = false
-): any {
+): Promise<any> {
   const config = getAiConfig(userId);
 
   const body: any = {
@@ -801,9 +867,10 @@ function buildRequest(
         role: 'system',
         content: '你是一位专业的1对1教育咨询师，擅长撰写课后回访反馈。输出简洁、专业、有温度。',
       },
-      { role: 'user', content: buildUserContent(params, correction, userId) },
+      { role: 'user', content: await buildUserContent(params, correction, userId) },
     ],
     max_tokens: 2000,
+    // 0.7：回访反馈需要一定的表达多样性，同一份课堂信息多次生成不至于逐字雷同
     temperature: 0.7,
     // 思考强度：可在前端设置页调整（默认 low）
     reasoning_effort: config.reasoningEffort,
@@ -871,7 +938,7 @@ export async function generateOnce(
 ): Promise<string> {
   return withAiSlot(async () => {
     const ai = getClient(userId, getAiConfig(userId));
-    const response = await ai.chat.completions.create(buildRequest(userId, params, correction));
+    const response = await ai.chat.completions.create(await buildRequest(userId, params, correction));
     return (response.choices[0].message.content || '').trim();
   });
 }
@@ -888,7 +955,7 @@ export async function* streamOnce(
   try {
     const ai = getClient(userId, getAiConfig(userId));
     const stream = (await ai.chat.completions.create(
-      buildRequest(userId, params, correction, true)
+      await buildRequest(userId, params, correction, true)
     )) as any;
     for await (const chunk of stream) {
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
@@ -967,6 +1034,34 @@ export async function* streamChat(
 }
 
 /**
+ * 生成纠偏指令文本。
+ * 只说"字数不符合要求"时模型只能猜该加还是该减，重试命中率很低；
+ * 讲清「当前字数、目标区间、还差多少、往哪个方向改」后明显更稳。
+ */
+export function correctionText(
+  current: number,
+  range: { min: number; max: number } = { min: MIN_WORDS, max: MAX_WORDS }
+): string {
+  if (current < range.min) {
+    return (
+      '你上一次的输出只有约 ' + current + ' 字，太短了（要求 ' +
+      range.min + '-' + range.max + ' 字），还差约 ' + (range.min - current) + ' 字。' +
+      '请在保持内容真实的前提下补充具体的课堂细节、知识点或练习要求，把内容写充实。'
+    );
+  }
+  if (current > range.max) {
+    return (
+      '你上一次的输出有约 ' + current + ' 字，太长了（要求 ' +
+      range.min + '-' + range.max + ' 字），超了约 ' + (current - range.max) + ' 字。' +
+      '请压缩表达：合并同类信息、删掉重复的铺垫和空话，保留最有信息量的细节，不要丢段落结构。'
+    );
+  }
+  return (
+    '你上一次的输出约 ' + current + ' 字，请调整到 ' + range.min + '-' + range.max + ' 字之间。'
+  );
+}
+
+/**
  * 生成课后回访内容。
  * 若首轮字数不落在要求区间，自动追加纠偏指令重试一次；
  * 若仍不达标，返回更接近区间的那一版，交由前端提示用户微调。
@@ -975,27 +1070,30 @@ export async function generateFollowUpContent(
   userId: number,
   params: FollowUpGenerateParams
 ): Promise<string> {
+  const wordRange = followUpWordRangeForParams(params);
   const first = await generateOnce(userId, params);
   const firstWords = countWords(first);
 
-  if (firstWords >= MIN_WORDS && firstWords <= MAX_WORDS) {
+  // 注意：字数区间随板块数放宽，这里必须用按板块数算出的区间，
+  // 而不是固定的 MIN/MAX——5 个板块 340 字是合格的，不能当成"太长"去重试。
+  if (firstWords >= wordRange.min && firstWords <= wordRange.max) {
     return first;
   }
 
-  log.warn({ firstWords, minWords: MIN_WORDS, maxWords: MAX_WORDS }, '首轮字数不在要求区间，触发重试');
+  log.warn({ firstWords, minWords: wordRange.min, maxWords: wordRange.max }, '首轮字数不在要求区间，触发重试');
 
   try {
-    const retry = await generateOnce(userId, params, '约 ' + firstWords + ' 字');
+    const retry = await generateOnce(userId, params, correctionText(firstWords, wordRange));
     const retryWords = countWords(retry);
 
     // 重试结果达标则采用
-    if (retryWords >= MIN_WORDS && retryWords <= MAX_WORDS) {
+    if (retryWords >= wordRange.min && retryWords <= wordRange.max) {
       return retry;
     }
 
     // 都没达标时，返回更接近区间的一版
     const distance = (n: number) =>
-      n < MIN_WORDS ? MIN_WORDS - n : n > MAX_WORDS ? n - MAX_WORDS : 0;
+      n < wordRange.min ? wordRange.min - n : n > wordRange.max ? n - wordRange.max : 0;
 
     return distance(retryWords) < distance(firstWords) ? retry : first;
   } catch (error: any) {

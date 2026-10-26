@@ -32,8 +32,14 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
   const { field, nickname } = parsed.data;
 
   const userId = req.userId!;
+  // JOIN 学生表拿姓名：monthly_reports 只存 student_id，之前直接读 report.student_name
+  // 永远是 undefined，导致 AI 拿不到称呼、只能退回默认。学生被删时 LEFT JOIN 保住报告本身。
   const report = db
-    .prepare('SELECT * FROM monthly_reports WHERE id = ? AND user_id = ?')
+    .prepare(
+      `SELECT r.*, s.name AS student_name FROM monthly_reports r
+       LEFT JOIN students s ON s.id = r.student_id AND s.user_id = r.user_id
+       WHERE r.id = ? AND r.user_id = ?`
+    )
     .get(id, userId) as any;
   if (!report) return res.status(404).json({ error: '报告不存在' });
 
@@ -46,15 +52,28 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
       .sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))
       .map((i) => ({ content: String(i.content || ''), type: String(i.type || ''), difficulty: String(i.difficulty || '') }));
 
-  // 最近的课后回访是「收获 / 进步 / 不足」的素材来源，取两条就够
+  // 回访是「收获 / 进步 / 不足」的主要素材。之前只取 2 条，而一个学生一个月
+  // 通常 8-12 次课——只给 2 条等于丢掉大部分素材，总结只能泛泛而谈。
+  // 这里按报告所属月份取，避免跨月串味。
+  const ym = String(report.year_month || '');
   const followUps = db
     .prepare(
       `SELECT topic, content FROM followups
-       WHERE user_id = ? AND student_id = ? AND content != ''
+       WHERE user_id = ? AND student_name = ? AND content != '' AND created_at LIKE ? || '-%'
        ORDER BY updated_at DESC, id DESC
-       LIMIT 2`
+       LIMIT 12`
     )
-    .all(userId, report.student_id) as { topic: string; content: string }[];
+    .all(userId, String(report.student_name || ''), ym) as { topic: string; content: string }[];
+
+  // 上个月这份学生的总结，用于「上月问题本月是否改善」的连续叙事
+  const prevRow = db
+    .prepare(
+      `SELECT summary_intro FROM monthly_reports
+       WHERE user_id = ? AND student_id = ? AND year_month < ? AND summary_intro != ''
+       ORDER BY year_month DESC, id DESC
+       LIMIT 1`
+    )
+    .get(userId, report.student_id, ym) as any;
 
   const params: ReportAiParams = {
     field: field as ReportAiField,
@@ -63,10 +82,11 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     grade: String(report.grade || ''),
     subject: String(report.subject || ''),
     term: String(report.term || ''),
-    yearMonth: String(report.year_month || ''),
+    yearMonth: ym,
     summaryCourses: pick('summary'),
     planCourses: pick('plan'),
     followUps,
+    prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
   };
 
   const sse = openSse(res);

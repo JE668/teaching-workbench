@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import {
   runFollowUpGeneration,
@@ -7,9 +8,12 @@ import {
   describeAiError,
   isWordCountOk,
   countWords,
+  correctionText,
   MIN_WORDS,
   MAX_WORDS,
   followUpWordRangeForParams,
+  type FollowUpGenerateParams,
+  type FollowUpHistoryItem,
 } from '../services/ai.js';
 import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule, normalizeFollowUpModules } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
@@ -34,6 +38,71 @@ function wordsDistance(
   return 0;
 }
 
+/** 单次 AI 请求最多带的课堂照片数。再多只会把请求体撑到数 MB，生成反而更慢 */
+const MAX_AI_IMAGES = 4;
+
+/**
+ * 取该学生最近的历史回访内容，作为本次生成的上下文。
+ * student_id 被删除时会置 NULL（ON DELETE SET NULL），所以要按姓名兜底。
+ * 小组课不查——通用反馈面向多位家长，没有个人历史可比，查了反而诱导模型塞个性化细节。
+ */
+export function fetchFollowUpHistory(
+  userId: number,
+  studentId: number | string | undefined,
+  studentName: string
+): FollowUpHistoryItem[] {
+  const id = Number(studentId);
+  const name = (studentName || '').trim();
+  if (!Number.isInteger(id) || !name) return [];
+
+  const rows = db
+    .prepare(
+      `SELECT topic, content, created_at FROM followups
+       WHERE user_id = ? AND content != '' AND student_name = ?
+         AND course_type = 'one_on_one'
+         AND (? = 0 OR student_id = ?)
+       ORDER BY created_at DESC, id DESC
+       LIMIT 5`
+    )
+    .all(userId, name, id, id) as { topic: string; content: string; created_at: string }[];
+
+  return rows.map((r, i) => ({
+    content: r.content,
+    topic: r.topic || undefined,
+    when: whenLabel(i),
+  }));
+}
+
+/** 相对时间描述：按倒序位置生成「上一次」「上两次」…… */
+function whenLabel(index: number): string {
+  const prev = index + 1;
+  if (prev === 1) return '上一次';
+  if (prev <= 5) return '上' + prev + '次';
+  return '更早的一次';
+}
+
+/** 构造生成参数。两个入口（非流式 / 流式）共用，避免参数漂移。导出供单测验证。 */
+export function buildGenerateParams(userId: number, body: any): FollowUpGenerateParams {
+  const courseType = normalizeCourseType(body.courseType);
+  // 历史只在 1 对 1 时带上：小组课是通用反馈，没有个人历史可比
+  const history = courseType === 'group' ? [] : fetchFollowUpHistory(userId, body.studentId, body.studentName);
+  return {
+    studentName: body.studentName || '',
+    grade: body.grade,
+    subject: body.subject,
+    topic: body.topic,
+    performance: body.performance,
+    mastery: body.mastery,
+    sessionCount: normalizeSessionCount(body.sessionCount),
+    courseType,
+    module: normalizeFollowUpModule(body.module),
+    modules: normalizeFollowUpModules(body.modules ?? body.module),
+    nickname: body.nickname,
+    images: (body.images || []).slice(0, MAX_AI_IMAGES),
+    history,
+  };
+}
+
 /** 校验 AI 生成入参（年级/学科/主题/表现/掌握程度必填，小组课可免姓名） */
 function validateGenerateInput(body: any): string | null {
   const { studentName, grade, subject, topic, performance, mastery } = body;
@@ -49,23 +118,8 @@ router.post('/generate', validateBody(followUpGenerateSchema), async (req: Authe
   if (error) return res.status(400).json({ error });
 
   try {
-    const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
-    const courseType = normalizeCourseType(req.body.courseType);
-
-    const content = await runFollowUpGeneration(req.userId!, {
-      studentName: studentName || '',
-      grade,
-      subject,
-      topic,
-      performance,
-      mastery,
-      sessionCount: normalizeSessionCount(req.body.sessionCount),
-      courseType,
-      module: normalizeFollowUpModule(req.body.module),
-      modules: normalizeFollowUpModules(req.body.modules ?? req.body.module),
-      nickname: req.body.nickname,
-      images: images || [],
-    });
+    const params = buildGenerateParams(req.userId!, req.body);
+    const content = await runFollowUpGeneration(req.userId!, params);
 
     const wordCount = countWords(content);
     res.json({ content, wordCount });
@@ -85,26 +139,10 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
   const error = validateGenerateInput(req.body);
   if (error) return res.status(400).json({ error });
 
-  const { studentName, grade, subject, topic, performance, mastery, images } = req.body;
-  const courseType = normalizeCourseType(req.body.courseType);
+  const params = buildGenerateParams(req.userId!, req.body);
 
   const sse = openSse(res);
   const { send } = sse;
-
-  const params = {
-    studentName: studentName || '',
-    grade,
-    subject,
-    topic,
-    performance,
-    mastery,
-    sessionCount: normalizeSessionCount(req.body.sessionCount),
-    courseType,
-    module: normalizeFollowUpModule(req.body.module),
-    modules: normalizeFollowUpModules(req.body.modules ?? req.body.module),
-    nickname: req.body.nickname,
-    images: images || [],
-  };
 
   try {
     let full = '';
@@ -124,7 +162,11 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
       send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
       try {
-        const retryContent = await retryGeneration(req.userId!, params, '约 ' + wordCount + ' 字');
+        const retryContent = await retryGeneration(
+          req.userId!,
+          params,
+          correctionText(wordCount, wordRange)
+        );
         const retryWords = countWords(retryContent);
         if (
           isWordCountOk(retryWords, wordRange.min, wordRange.max) ||
