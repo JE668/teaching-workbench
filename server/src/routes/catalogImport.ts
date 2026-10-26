@@ -263,12 +263,15 @@ router.delete('/imports/batch', (req: AuthenticatedRequest, res) => {
 
     let deleted = 0;
     db.transaction(() => {
-      for (const id of removedIds) {
-        deleted += db.prepare('DELETE FROM course_catalog WHERE import_id = ?').run(id).changes;
-      }
       if (removedIds.length > 0) {
+        // 之前是 for 循环逐条 DELETE，同一份代码里下面的 catalog_imports 已用 IN，
+        // 这里是无意遗留——一次多值删除更快，也少几次语句编译。
+        const qs = removedIds.map(() => '?').join(',');
+        deleted = db
+          .prepare('DELETE FROM course_catalog WHERE import_id IN (' + qs + ')')
+          .run(...removedIds).changes;
         db.prepare(
-          'DELETE FROM catalog_imports WHERE id IN (' + removedIds.map(() => '?').join(',') + ')',
+          'DELETE FROM catalog_imports WHERE id IN (' + qs + ')',
         ).run(...removedIds);
       }
     })();

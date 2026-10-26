@@ -35,6 +35,11 @@ export interface ReportAiParams {
   summaryCourses: ReportAiCourse[];
   planCourses: ReportAiCourse[];
   followUps: ReportAiFollowUp[];
+  /**
+   * 上一个月的报告总结。没有它，月度总结只能是孤立的单月陈述——
+   * 家长最想看的"上个月的问题这个月解决了吗"就写不出来。
+   */
+  prevSummary?: string;
 }
 
 /** 1对1 + 家长视角的公共红线，回访 / 月度总结口径一致 */
@@ -75,6 +80,26 @@ function followUpLines(items: ReportAiFollowUp[]): string {
     .join('\n\n');
 }
 
+/**
+ * 上月总结区块。核心价值是「连续叙事」：上个月提过的问题，
+ * 这个月有没有改善——这是家长最关心的，也是单月素材给不出来的。
+ * 明确禁止照抄上月原文，只要求呼应进展。
+ */
+function prevSummarySection(prevSummary?: string): string[] {
+  const text = (prevSummary || '').trim();
+  if (!text) return [];
+  return [
+    '# 上个月的报告总结（只用于呼应进展，不要照抄）',
+    '下面是一段连续叙事，家长手上会有上个月的那份总结，因此：',
+    '- 如果上个月提到的问题，本月确实有改善，【要】明确点出来（例如"上个月提到的……这个月已经能独立完成了"）',
+    '- 如果上个月的问题本月仍然存在，【要】如实说明并请家长配合，不要为了好看而说改善',
+    '- 【不要】照抄上个月的句子或数据，本段只写本月发生的事',
+    '',
+    text,
+    '',
+  ];
+}
+
 /** 写给家长的月度总结：7 个 emoji 段落，跟输入框占位符一一对应 */
 export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
   const w = who(p);
@@ -92,6 +117,7 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
     '# 这个学生最近的课后回访（收获 / 进步 / 不足的素材）',
     followUpLines(p.followUps),
     '',
+    ...prevSummarySection(p.prevSummary),
     '# 硬性要求',
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格。emoji 只用在段落开头的小标题上。',
     ...COMMON_RULES,
@@ -152,14 +178,19 @@ export function buildReportAiMessages(p: ReportAiParams): ChatMessage[] {
   return p.field === 'plan' ? buildReportPlanMessages(p) : buildReportSummaryMessages(p);
 }
 
-const AI_OPTIONS: ChatOptions = { temperature: 0.7, maxTokens: 1400 };
+// 两种任务的温度不同：总结必须贴住事实、稳定不漂移，所以更低；
+// 规划是前瞻建议，允许多一点表达弹性。之前两者共用 0.7。
+const SUMMARY_OPTIONS: ChatOptions = { temperature: 0.5, maxTokens: 1400 };
+const PLAN_OPTIONS: ChatOptions = { temperature: 0.75, maxTokens: 1400 };
+const optionsFor = (field: ReportAiField): ChatOptions =>
+  field === 'plan' ? PLAN_OPTIONS : SUMMARY_OPTIONS;
 
 /** 流式产出总结 / 规划的正文增量 */
 export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncGenerator<string> {
-  yield* runChatStream(userId, buildReportAiMessages(p), AI_OPTIONS);
+  yield* runChatStream(userId, buildReportAiMessages(p), optionsFor(p.field));
 }
 
 /** 非流式，供单测与兜底 */
 export async function generateReportAiOnce(userId: number, p: ReportAiParams): Promise<string> {
-  return runChatOnce(userId, buildReportAiMessages(p), AI_OPTIONS);
+  return runChatOnce(userId, buildReportAiMessages(p), optionsFor(p.field));
 }
