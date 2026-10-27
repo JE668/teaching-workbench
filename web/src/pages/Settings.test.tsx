@@ -503,6 +503,75 @@ describe('设置页 · 防止 .env 出厂值被冻结', () => {
     });
   });
 
+  it('切服务商必须换 Key：未保存的输入不落到新服务商的键，旧掩码不挂在新 label 下', async () => {
+    const user = userEvent.setup();
+    const settings: Record<string, any> = {
+      'ai.provider': 'sensenova',
+      'ai.model': factory['ai.model'],
+      'ai.reasoningEffort': factory['ai.reasoningEffort'],
+      'ai.baseUrl': factory['ai.baseUrl'],
+      'ai.timeoutMs': factory['ai.timeoutMs'],
+      'ai.apiKey': { configured: true, masked: '••••••••abcd' },
+    };
+    let overridden: string[] = [];
+    get.mockImplementation((path: string) => {
+      if (String(path) === '/settings/models') return Promise.resolve(DEFAULT_MODELS);
+      return Promise.resolve({
+        settings,
+        overridden,
+        meta: {
+          effortLevels: ['low'],
+          writableKeys: Object.keys(factory),
+          defaults: factory,
+        },
+      });
+    });
+    put.mockImplementation(async (_path: string, body: Record<string, string> = {}) => {
+      for (const [k, v] of Object.entries(body)) {
+        if (v === '' || v === factory[k]) {
+          delete settings[k];
+          overridden = overridden.filter((o) => o !== k);
+        } else {
+          settings[k] = v;
+          if (!overridden.includes(k)) overridden.push(k);
+        }
+      }
+      return { success: true };
+    });
+
+    renderWithProviders(<Settings />);
+    // SenseNova 侧已配置 Key，且用户刚输入了一个新 key（还没保存）
+    expect(await screen.findByText(/••••••••abcd/)).toBeInTheDocument();
+    const snKey = screen.getByLabelText('SenseNova API Key');
+    await user.type(snKey, 'sn-unsaved-key-123');
+
+    // 切到 Gemini 转发代理：两个服务商的 Key 是完全独立的两个键
+    await user.selectOptions(screen.getByLabelText('AI 服务商'), 'gemini-proxy');
+
+    // ① 输入框必须清空——否则这段 sensenova 的 key 会被下一次保存写进 gemini 的键
+    await waitFor(() => {
+      expect((screen.getByLabelText('Gemini 代理 API Key') as HTMLInputElement).value).toBe('');
+    });
+    // ② 旧服务商的掩码不能挂在新服务商的 label 下（load 返回前也不该看到）
+    expect(screen.queryByText(/••••••••abcd/)).not.toBeInTheDocument();
+
+    // ③ 此时点保存：绝不能把刚才那段 key 存成 gemini 的 key
+    await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    const bodyOf = (n: number) => put.mock.calls[n][1] as Record<string, string>;
+    expect(bodyOf(put.mock.calls.length - 1)['ai.geminiProxy.apiKey']).toBeUndefined();
+
+    // ④ 显式给 gemini 填一个自己的 key 才能提交，且只写自己的键
+    await user.type(screen.getByLabelText('Gemini 代理 API Key'), 'gemini-own-key-456');
+    await user.click(screen.getByRole('button', { name: /保存 AI 设置/ }));
+    await waitFor(() => {
+      expect(bodyOf(put.mock.calls.length - 1)).toEqual(
+        expect.objectContaining({ 'ai.geminiProxy.apiKey': 'gemini-own-key-456' })
+      );
+    });
+    expect(Object.keys(bodyOf(put.mock.calls.length - 1))).not.toContain('ai.apiKey');
+  });
+
   it('改过又改回出厂值：提交空串清掉覆盖，不留冻结值', async () => {
     const user = userEvent.setup();
     const settings: Record<string, any> = {

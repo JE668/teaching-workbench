@@ -263,7 +263,12 @@ export default function Settings() {
    *  ① 乐观更新：表单先切到位，不等网络往返——否则「接口地址」
    *    会先显示旧服务商的地址，用户若在此窗口手动改地址 / 保存，
    *    会把值写进错误的命名空间。
-   *  ② 切换期间禁用保存：load() 完成前保存同样会写错键。 */
+   *  ② 切换期间禁用保存：load() 完成前保存同样会写错键。
+   *  ③ 两个服务商的 Key 是完全独立的两个键（SENSENOVA_API_KEY /
+   *    GEMINI_PROXY_API_KEY），掩码显示和未保存的输入必须一起换——
+   *    只换 label 不换内容，用户会看到「新服务商的框里挂着旧服务商的
+   *    掩码」；更糟的是已输入但未保存的 Key 会被下一次保存写进
+   *    新服务商的键里，等于把 sensenova 的 key 存成 gemini 的 key。 */
   const [switching, setSwitching] = useState(false);
   const switchProvider = async (next: string) => {
     if (next === form.provider || switching) return;
@@ -281,6 +286,11 @@ export default function Settings() {
       timeoutMs: form.timeoutMs,
       promptStyle: form.promptStyle,
     });
+    // Key 先清空：load() 会填回新服务商自己的掩码。不清的话，旧服务商的
+    // 掩码会挂在新服务商的 label 下一闪，未保存的输入更会被写进新键。
+    setApiKey('');
+    setApiKeyMasked('');
+    setApiKeyConfigured(false);
     try {
       // 同 saveAi：服务商等于出厂默认时不要写成覆盖（否则「已自定义」里会多出
       // 一个从没改过的 ai.provider，用户会以为点错地方了）；之前改过、现在切回
