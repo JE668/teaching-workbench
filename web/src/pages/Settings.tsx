@@ -511,7 +511,7 @@ export default function Settings() {
               label="接口地址"
               value={form.baseUrl}
               onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-              placeholder={form.provider === 'gemini-proxy' ? 'https://api.gemmaproxy.dpdns.org/v1' : 'https://token.sensenova.cn/v1'}
+              placeholder={form.provider === 'gemini-proxy' ? 'https://your-gemini-proxy.example.com/v1' : 'https://token.sensenova.cn/v1'}
             />
             <p className="mt-1 text-xs text-slate-400">
               {overridden.includes(form.provider === 'gemini-proxy' ? 'ai.geminiProxy.baseUrl' : 'ai.baseUrl')

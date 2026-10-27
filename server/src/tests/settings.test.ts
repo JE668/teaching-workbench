@@ -195,7 +195,7 @@ describe('应用设置 · 写入', () => {
       body: {
         'ai.provider': 'gemini-proxy',
         'ai.geminiProxy.model': 'gemini-3.8-flash',
-        'ai.geminiProxy.baseUrl': 'https://api.gemmaproxy.dpdns.org/v1',
+        'ai.geminiProxy.baseUrl': 'https://gemini-proxy.example.com/v1',
         'ai.geminiProxy.apiKey': 'gm-test-key-1234',
       },
     });
@@ -206,7 +206,7 @@ describe('应用设置 · 写入', () => {
     const cfg = getAiConfig(uid);
     assert.equal(cfg.provider, 'gemini-proxy');
     assert.equal(cfg.model, 'gemini-3.8-flash');
-    assert.equal(cfg.baseUrl, 'https://api.gemmaproxy.dpdns.org/v1');
+    assert.equal(cfg.baseUrl, 'https://gemini-proxy.example.com/v1');
     assert.equal(cfg.apiKey, 'gm-test-key-1234');
 
     // gemini 的 key 也只回传掩码

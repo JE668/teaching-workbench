@@ -377,7 +377,7 @@ describe('设置页 · 防止 .env 出厂值被冻结', () => {
     'ai.apiKey': '',
     'ai.geminiProxy.provider': 'gemini-proxy',
     'ai.geminiProxy.model': 'gemini-3.8-flash',
-    'ai.geminiProxy.baseUrl': 'https://api.gemmaproxy.dpdns.org/v1',
+    'ai.geminiProxy.baseUrl': 'https://gemini-proxy.example.com/v1',
     'ai.geminiProxy.apiKey': '',
   };
 
