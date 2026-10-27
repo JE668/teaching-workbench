@@ -521,6 +521,60 @@ describe('可用模型列表', () => {
     assert.ok(idxVision < idxGen, '能读图的模型应排在图片创作模型之前');
   });
 
+  test('内置列表按服务商分桶：gemini 不混入 sensenova 模型', async () => {
+    const t = await createUser('models-gemini-bucket');
+    await req('PUT', '/api/settings', { token: t, body: { 'ai.provider': 'gemini-proxy' } });
+
+    const res = await req('GET', '/api/settings/models', { token: t });
+    assert.equal(res.body.source, 'builtin');
+    const ids = res.body.models.map((m: any) => m.id);
+    assert.ok(ids.includes('gemini-3.8-flash'), '应有 gemini 默认模型');
+    assert.ok(
+      !ids.some((id: string) => id.startsWith('sensenova-')),
+      'gemini 列表不得混入任何 sensenova 前缀模型'
+    );
+    assert.ok(!ids.includes('glm-5.2'), 'sensenova 平台的其它模型也不得混入');
+  });
+
+  test('内置列表按服务商分桶：sensenova 不混入 gemini 模型', async () => {
+    const fresh = await createUser('models-sn-bucket');
+    const res = await req('GET', '/api/settings/models', { token: fresh });
+    const ids = res.body.models.map((m: any) => m.id);
+    assert.ok(ids.includes('sensenova-6.8-flash-lite'));
+    assert.ok(
+      !ids.some((id: string) => id.startsWith('gemini-')),
+      'sensenova 列表不得混入 gemini 模型'
+    );
+    assert.ok(!ids.includes('gemma-4-31b-it'), 'gemma 也不得混入');
+  });
+
+  test('实时查询结果也按服务商过滤：gemini 网关返回 sensenova 模型时剔除', async () => {
+    const t = await createUser('models-gemini-filter');
+    const mock = await startMockModels({
+      data: [{ id: 'gemini-3.8-flash' }, { id: 'sensenova-6.8-flash-lite' }, { id: 'brand-new-gemini' }],
+    });
+
+    try {
+      await req('PUT', '/api/settings', {
+        token: t,
+        body: {
+          'ai.provider': 'gemini-proxy',
+          'ai.geminiProxy.apiKey': 'test-key',
+          'ai.geminiProxy.baseUrl': mock.url,
+        },
+      });
+
+      const res = await req('GET', '/api/settings/models', { token: t });
+      assert.equal(res.body.source, 'api');
+      const ids = res.body.models.map((m: any) => m.id);
+      assert.ok(ids.includes('gemini-3.8-flash'), 'gemini 自己的模型保留');
+      assert.ok(!ids.includes('sensenova-6.8-flash-lite'), '混入的 sensenova 模型应被剔除');
+      assert.ok(ids.includes('brand-new-gemini'), '未知模型保留（来自当前网关）');
+    } finally {
+      mock.close();
+    }
+  });
+
   test('接口返回已知模型时，元数据来自文档目录；未知模型给兜底', async () => {
     const t = await createUser('models-merge');
     const mock = await startMockModels({ data: [{ id: 'glm-5.2' }, { id: 'brand-new-model' }] });
