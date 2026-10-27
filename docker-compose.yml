@@ -21,6 +21,13 @@ services:
       - SENSENOVA_MODEL=${SENSENOVA_MODEL:-sensenova-6.8-flash-lite}
       - SENSENOVA_REASONING_EFFORT=${SENSENOVA_REASONING_EFFORT:-low}
       - SENSENOVA_TIMEOUT_MS=${SENSENOVA_TIMEOUT_MS:-60000}
+      # 【Gemini 转发代理】自建 OpenAI 兼容层，可选。不配也能用——只是设置页里
+      # 切到 gemini-proxy 时没有默认 Key。
+      # 这三行必须透传进容器：漏掉任何一行，.env 里配的 gemini Key 都到不了后端，
+      # 表现是「切换服务商后 gemini 一直报 401」，且日志里不会有任何提示。
+      - GEMINI_PROXY_API_KEY=${GEMINI_PROXY_API_KEY}
+      - GEMINI_PROXY_BASE_URL=${GEMINI_PROXY_BASE_URL:-https://api.gemmaproxy.dpdns.org/v1}
+      - GEMINI_PROXY_MODEL=${GEMINI_PROXY_MODEL:-gemini-3.8-flash}
       - DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-admin}
       - DEFAULT_ADMIN_PASS=${DEFAULT_ADMIN_PASS:-123456}
       - CORS_ORIGINS=${CORS_ORIGINS:-}

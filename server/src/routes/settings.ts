@@ -4,6 +4,7 @@ import {
   getAllSettings,
   getOverrides,
   getFallbackDefaults,
+  getSetting,
   setSettings,
   bumpConfigVersion,
   maskSecret,
@@ -11,6 +12,9 @@ import {
 } from '../config/settings.js';
 
 const router = Router();
+
+/** 支持的 AI 服务商。两个服务商的 model/baseUrl/apiKey 各自独立命名空间。 */
+export type Provider = 'sensenova' | 'gemini-proxy';
 
 /**
  * 内置的已知模型（兜底用）。
@@ -25,6 +29,8 @@ export interface ModelMeta {
   vision: boolean;
   /** 该模型支持的思考等级（来自官方文档，各模型不一致） */
   efforts: string[];
+  /** 所属服务商：内置列表按它过滤，避免一个服务商的下拉里混进另一家的模型 */
+  provider: Provider;
 }
 
 /**
@@ -36,6 +42,7 @@ export interface ModelMeta {
 const MODEL_META: ModelMeta[] = [
   {
     id: 'sensenova-6.8-flash-lite',
+    provider: 'sensenova',
     name: 'SenseNova 6.8 Flash Lite',
     description: '轻量多模态智能体 · 速度快（默认）',
     vision: true,
@@ -43,6 +50,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'deepseek-flash',
+    provider: 'sensenova',
     name: 'DeepSeek V4.1 Flash',
     description: '高效通用 · 支持多模态理解',
     vision: true,
@@ -50,6 +58,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'kimi-k3',
+    provider: 'sensenova',
     name: 'Kimi K3',
     description: '原生多模态 Agent · 1M 上下文',
     vision: true,
@@ -57,6 +66,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'glm-5.2',
+    provider: 'sensenova',
     name: 'GLM-5.2',
     description: '智谱旗舰 · 长程 Coding 与复杂工程（不支持读图）',
     vision: false,
@@ -64,6 +74,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'deepseek-v4-flash',
+    provider: 'sensenova',
     name: 'DeepSeek V4 Flash',
     description: '高效经济型通用模型（不支持读图）',
     vision: false,
@@ -71,6 +82,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'sensenova-u1.5-lite',
+    provider: 'sensenova',
     name: 'SenseNova U1.5 Lite',
     description: '图片创作模型 —— 不适用于回访生成',
     vision: false,
@@ -78,6 +90,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'sensenova-u1.5-fast',
+    provider: 'sensenova',
     name: 'SenseNova U1.5 Fast',
     description: '图片创作模型加速版 —— 不适用于回访生成',
     vision: false,
@@ -86,6 +99,7 @@ const MODEL_META: ModelMeta[] = [
   // ---------- Gemini 转发代理（自建，OpenAI 兼容层）----------
   {
     id: 'gemini-3.8-flash',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.8 Flash',
     description: 'Google 最新 Flash · 速度快（代理默认）',
     vision: true,
@@ -93,6 +107,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3.6-flash',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.6 Flash',
     description: '高效多模态 · 支持读图',
     vision: true,
@@ -100,6 +115,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3-flash-preview',
+    provider: 'gemini-proxy',
     name: 'Gemini 3 Flash (Preview)',
     description: '预览版多模态模型',
     vision: true,
@@ -107,6 +123,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-2.5-flash',
+    provider: 'gemini-proxy',
     name: 'Gemini 2.5 Flash',
     description: '稳定版多模态 · 支持读图',
     vision: true,
@@ -114,6 +131,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-2.5-flash-lite',
+    provider: 'gemini-proxy',
     name: 'Gemini 2.5 Flash Lite',
     description: '轻量多模态 · 成本低',
     vision: true,
@@ -121,6 +139,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3.5-flash-lite',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.5 Flash Lite',
     description: '轻量多模态 · 速度快',
     vision: true,
@@ -128,6 +147,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3.1-flash-lite',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.1 Flash Lite',
     description: '轻量多模态 · 速度快',
     vision: true,
@@ -135,6 +155,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemma-4-31b-it',
+    provider: 'gemini-proxy',
     name: 'Gemma 4 31B IT',
     description: '开源指令模型 · 支持读图',
     vision: true,
@@ -142,6 +163,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemma-4-26b-a4b-it',
+    provider: 'gemini-proxy',
     name: 'Gemma 4 26B A4B IT',
     description: '开源 MoE 指令模型 · 支持读图',
     vision: true,
@@ -149,6 +171,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3.8-flash-tts',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.8 Flash TTS',
     description: '语音合成模型 —— 不适用于回访生成',
     vision: false,
@@ -156,6 +179,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3.8-flash-lite-tts',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.8 Flash Lite TTS',
     description: '语音合成模型 —— 不适用于回访生成',
     vision: false,
@@ -163,6 +187,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-2.5-flash-preview-tts',
+    provider: 'gemini-proxy',
     name: 'Gemini 2.5 Flash Preview TTS',
     description: '语音合成模型 —— 不适用于回访生成',
     vision: false,
@@ -170,6 +195,7 @@ const MODEL_META: ModelMeta[] = [
   },
   {
     id: 'gemini-3.1-flash-tts-preview',
+    provider: 'gemini-proxy',
     name: 'Gemini 3.1 Flash TTS (Preview)',
     description: '语音合成模型 —— 不适用于回访生成',
     vision: false,
@@ -180,13 +206,14 @@ const MODEL_META: ModelMeta[] = [
 const META_BY_ID = new Map(MODEL_META.map((m) => [m.id, m]));
 
 /** 未知模型的兜底元数据（接口实时返回了文档没收录的新模型时使用） */
-function metaForUnknown(id: string): ModelMeta {
+function metaForUnknown(id: string, provider: Provider = 'sensenova'): ModelMeta {
   return {
     id,
     name: id,
     description: '平台返回的模型',
     vision: true,
     efforts: ['none', 'low', 'medium', 'high', 'max'],
+    provider,
   };
 }
 
@@ -201,7 +228,17 @@ function toOption(m: ModelMeta) {
   };
 }
 
-const BUILTIN_MODELS = MODEL_META.map(toOption);
+/** 内置列表按服务商分桶：选 sensenova 就只给 sensenova 的模型，选 Gemini 就只给 Gemini 的。
+ *  以前是一张 20 个模型混在一起的扁平表，gemini 的上游查询一失败，兜底就把 sensenova
+ *  的模型一起端出来，用户看到的「gemini 列表里混着 sensenova 模型」就是这么来的。 */
+const BUILTIN_BY_PROVIDER: Record<Provider, ReturnType<typeof toOption>[]> = {
+  sensenova: MODEL_META.filter((m) => m.provider === 'sensenova').map(toOption),
+  'gemini-proxy': MODEL_META.filter((m) => m.provider === 'gemini-proxy').map(toOption),
+};
+
+function builtinFor(provider: string) {
+  return BUILTIN_BY_PROVIDER[provider as 'sensenova' | 'gemini-proxy'] || BUILTIN_BY_PROVIDER['sensenova'];
+}
 
 /** 查询上游模型列表的超时：设置页不该因为上游卡住而打不开 */
 const MODELS_FETCH_TIMEOUT_MS = 8000;
@@ -239,6 +276,12 @@ async function fetchAvailableModels(userId: number): Promise<{
             raw
               .map((m: any) => (typeof m === 'string' ? m : m?.id))
               .filter((id): id is string => typeof id === 'string' && id.length > 0)
+              // 已知模型只留本服务商的（防止网关把另一家的模型混进来）；未知模型保留——
+              // 它是从当前网关实时查到的，就是当前服务商的模型
+              .filter((id) => {
+                const meta = META_BY_ID.get(id);
+                return !meta || meta.provider === config.provider;
+              })
           ),
         ].sort();
 
@@ -246,7 +289,9 @@ async function fetchAvailableModels(userId: number): Promise<{
           // 接口只返回 id；元数据（读图能力/思考等级）用文档目录补全，
           // 文档没收录的新模型给通用兜底
           return {
-            models: ids.map((id) => toOption(META_BY_ID.get(id) || metaForUnknown(id))),
+            models: ids.map((id) =>
+              toOption(META_BY_ID.get(id) || metaForUnknown(id, config.provider as Provider))
+            ),
             source: 'api',
             current: config.model,
           };
@@ -254,7 +299,7 @@ async function fetchAvailableModels(userId: number): Promise<{
       }
     } catch (err: any) {
       return {
-        models: BUILTIN_MODELS,
+        models: builtinFor(config.provider),
         source: 'builtin',
         error: err?.name === 'AbortError' ? '查询模型列表超时' : err?.message || '无法连接模型服务',
         current: config.model,
@@ -264,7 +309,7 @@ async function fetchAvailableModels(userId: number): Promise<{
     }
   }
 
-  return { models: BUILTIN_MODELS, source: 'builtin', current: config.model };
+  return { models: builtinFor(config.provider), source: 'builtin', current: config.model };
 }
 
 /** 可用模型列表（设置页下拉框的数据源） */
@@ -275,7 +320,7 @@ router.get('/models', async (req: any, res) => {
   } catch (error: any) {
     // 任何意外都不该让设置页打不开
     res.json({
-      models: BUILTIN_MODELS,
+      models: builtinFor(getSetting('ai.provider', req.userId!) || 'sensenova'),
       source: 'builtin',
       error: error?.message || '获取模型列表失败',
     });
