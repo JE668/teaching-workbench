@@ -853,13 +853,12 @@ async function buildUserContent(
  * OpenAI Node SDK 的类型定义未包含该字段，故用 any 透传。
  */
 async function buildRequest(
+  config: AiConfig,
   userId: number,
   params: FollowUpGenerateParams,
   correction?: string,
   stream = false
 ): Promise<any> {
-  const config = getAiConfig(userId);
-
   const body: any = {
     model: config.model,
     messages: [
@@ -937,8 +936,11 @@ export async function generateOnce(
   correction?: string
 ): Promise<string> {
   return withAiSlot(async () => {
-    const ai = getClient(userId, getAiConfig(userId));
-    const response = await ai.chat.completions.create(await buildRequest(userId, params, correction));
+    const config = getAiConfig(userId);
+    const ai = getClient(userId, config);
+    const response = await ai.chat.completions.create(
+      await buildRequest(config, userId, params, correction)
+    );
     return (response.choices[0].message.content || '').trim();
   });
 }
@@ -953,9 +955,10 @@ export async function* streamOnce(
   // 如果只在 create 时占一瞬间，等于没限流。
   await acquireAiSlot();
   try {
-    const ai = getClient(userId, getAiConfig(userId));
+    const config = getAiConfig(userId);
+    const ai = getClient(userId, config);
     const stream = (await ai.chat.completions.create(
-      await buildRequest(userId, params, correction, true)
+      await buildRequest(config, userId, params, correction, true)
     )) as any;
     for await (const chunk of stream) {
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta

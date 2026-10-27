@@ -174,8 +174,14 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
   ];
 }
 
-export function buildReportAiMessages(p: ReportAiParams): ChatMessage[] {
-  return p.field === 'plan' ? buildReportPlanMessages(p) : buildReportSummaryMessages(p);
+export function buildReportAiMessages(p: ReportAiParams, correction?: string): ChatMessage[] {
+  const msgs =
+    p.field === 'plan' ? buildReportPlanMessages(p) : buildReportSummaryMessages(p);
+  // 字数纠偏：追加为一条 user 消息，让模型在原素材基础上补/删，而不是重写
+  if (correction && correction.trim()) {
+    msgs.push({ role: 'user', content: correction });
+  }
+  return msgs;
 }
 
 // 两种任务的温度不同：总结必须贴住事实、稳定不漂移，所以更低；
@@ -185,12 +191,30 @@ const PLAN_OPTIONS: ChatOptions = { temperature: 0.75, maxTokens: 1400 };
 const optionsFor = (field: ReportAiField): ChatOptions =>
   field === 'plan' ? PLAN_OPTIONS : SUMMARY_OPTIONS;
 
+/**
+ * 字数区间，与 buildReport*Messages 里 prompt 的「总长 240-340 字 / 90-160 字」一致。
+ * 路由用它做门禁：首轮流式输出落在区间外时，追加纠偏指令重试一次（对齐回访的做法），
+ * 否则模型输出 400 字或 50 字都照单全收，家长看到的总结质量就没保障。
+ */
+export const REPORT_WORD_RANGE: Record<ReportAiField, { min: number; max: number }> = {
+  summary: { min: 240, max: 340 },
+  plan: { min: 90, max: 160 },
+};
+
+export function reportWordRange(field: ReportAiField): { min: number; max: number } {
+  return REPORT_WORD_RANGE[field];
+}
+
 /** 流式产出总结 / 规划的正文增量 */
 export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncGenerator<string> {
   yield* runChatStream(userId, buildReportAiMessages(p), optionsFor(p.field));
 }
 
-/** 非流式，供单测与兜底 */
-export async function generateReportAiOnce(userId: number, p: ReportAiParams): Promise<string> {
-  return runChatOnce(userId, buildReportAiMessages(p), optionsFor(p.field));
+/** 非流式，供单测与兜底。correction 为字数纠偏指令（重试时用，追加为一条 user 消息） */
+export async function generateReportAiOnce(
+  userId: number,
+  p: ReportAiParams,
+  correction?: string
+): Promise<string> {
+  return runChatOnce(userId, buildReportAiMessages(p, correction), optionsFor(p.field));
 }

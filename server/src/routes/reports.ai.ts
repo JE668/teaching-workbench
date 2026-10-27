@@ -1,7 +1,18 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { streamReportAi, type ReportAiParams, type ReportAiField } from '../services/reportAi.js';
+import {
+  countWords,
+  isWordCountOk,
+  correctionText,
+} from '../services/ai.js';
+import {
+  streamReportAi,
+  generateReportAiOnce,
+  reportWordRange,
+  type ReportAiParams,
+  type ReportAiField,
+} from '../services/reportAi.js';
 import { openSse } from '../utils/sse.js';
 import { log } from '../utils/logger.js';
 import { z } from 'zod';
@@ -91,6 +102,11 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
 
   const sse = openSse(res);
   const { send } = sse;
+
+  /** 距离字数区间的距离（用于两版都不达标时择优） */
+  const wordsDistance = (n: number, range: { min: number; max: number }) =>
+    n < range.min ? range.min - n : n > range.max ? n - range.max : 0;
+
   try {
     let full = '';
     for await (const delta of streamReportAi(req.userId!, params)) {
@@ -98,12 +114,41 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
       full += delta;
       send('delta', { text: delta });
     }
-    if (!full.trim()) {
+
+    let content = full.trim();
+    if (!content) {
       log.warn({ reportId: id, field }, 'AI 流式结束但未产出内容，发送 error 事件');
       send('error', { error: 'AI 未返回任何内容，请检查模型配置后重试' });
-    } else {
-      send('done', { content: full.trim() });
+      return;
     }
+
+    // 字数门禁：prompt 要求总结 240-340 字 / 规划 90-160 字。首轮落在区间外就追加
+    // 纠偏指令重试一次（对齐回访的做法），仍不达标则取更接近区间的一版。
+    // 之前没有这道门，模型输出 400 字或 50 字都照单全收，家长看到的总结质量没保障。
+    const wordRange = reportWordRange(field);
+    let wordCount = countWords(content);
+    if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
+      send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
+      try {
+        const retryContent = await generateReportAiOnce(
+          req.userId!,
+          params,
+          correctionText(wordCount, wordRange)
+        );
+        const retryWords = countWords(retryContent);
+        if (
+          isWordCountOk(retryWords, wordRange.min, wordRange.max) ||
+          wordsDistance(retryWords, wordRange) < wordsDistance(wordCount, wordRange)
+        ) {
+          content = retryContent;
+          wordCount = retryWords;
+        }
+      } catch (retryError: any) {
+        log.warn({ err: retryError.message }, '报告 AI 重试失败，保留首轮结果');
+      }
+    }
+
+    send('done', { content, wordCount });
   } catch (error: any) {
     const message = String(error?.message || 'AI 生成失败');
     log.error({ error: message, reportId: id, field }, '月度总结 / 规划 AI 生成失败');
