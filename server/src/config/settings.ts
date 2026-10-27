@@ -58,6 +58,24 @@ export function getAllSettings(userId: number): Record<string, string> {
   return out;
 }
 
+/**
+ * 只返回 .env / 内置兜底，不含数据库覆盖。
+ *
+ * 前端拿它做一件事：判断表单里某个值究竟是「用户自己改过的」还是「只是 .env 的出厂值
+ * 被回显上来」。不做这个区分，一次"没改任何东西只点保存"就会把所有出厂值写成覆盖，
+ * 从此 .env 怎么改、切服务商怎么切，界面上都还是那份冻结的旧值。
+ *
+ * 密钥同样只给掩码，不落明文。
+ */
+export function getFallbackDefaults(): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const key of WRITABLE) {
+    const value = FALLBACK[key]?.() ?? '';
+    out[key] = key.includes('.apiKey') ? maskSecret(value) : value;
+  }
+  return out;
+}
+
 /** 只返回上一层的显式覆盖值（用于前端回显"是否被自定义过"） */
 export function getOverrides(userId: number): Record<string, string> {
   const out: Record<string, string> = {};
@@ -73,8 +91,10 @@ export function setSetting(key: string, value: string, userId: number): void {
     throw new Error('不支持的设置项: ' + key);
   }
 
-  if (value === '') {
-    // 空值 = 清除覆盖，回落到 .env
+  if (value === '' || value === (FALLBACK[key]?.() ?? '')) {
+    // 空值、或「与出厂值完全相同」都清除覆盖：留一份和 .env 一模一样的覆盖没有任何
+    // 意义，只会把 .env 冻结住 —— 之后 .env 怎么改、切服务商怎么切，界面上追不上。
+    // 这也是前端"没改任何东西却点保存"的后端兜底，两侧都不用互相信任。
     db.prepare('DELETE FROM settings_user WHERE user_id = ? AND key = ?').run(userId, key);
     return;
   }
