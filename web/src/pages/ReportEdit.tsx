@@ -452,6 +452,7 @@ export default function ReportEdit() {
         { field },
         {
           onDelta: (text) => appendIntro(introKey, text),
+          onRegenerating: () => toast.info('字数不达标，正在重新生成一次……'),
           onDone: ({ content }) => {
             if (!content) {
               toast.error('AI 未返回任何内容，请检查模型配置后重试');

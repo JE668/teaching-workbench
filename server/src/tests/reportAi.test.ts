@@ -209,6 +209,12 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
 
   beforeEach(() => {
     resetChatGenerator();
+    // 任何触发「字数重试」的用例都走这条：按 field 返回达标正文（总结 250 / 规划 100），
+    // 避免重试打到真实网络。专门测重试的用例会在自身里再覆盖 setChatGenerator。
+    setChatGenerator(async (_userId: number, messages: { role: string; content: string }[]) => {
+      const isPlan = (messages[1]?.content || '').includes('课程规划说明');
+      return isPlan ? '规'.repeat(100) : '总'.repeat(250);
+    });
   });
 
   async function streamField(
@@ -221,8 +227,8 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
     setChatStreamer(
       streamer ??
         (async function* () {
-          yield '本月总结的';
-          yield '流式正文';
+          // 默认给达标正文（总结 250 字），不触发字数重试
+          yield '总'.repeat(250);
         })
     );
     const res = await fetch(url(`/api/reports/${reportId}/ai/stream`), {
@@ -230,7 +236,24 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
       body: JSON.stringify({ field }),
     });
-    return { status: res.status, contentType: res.headers.get('content-type'), raw: await res.text() };
+    const contentType = res.headers.get('content-type');
+    const raw = await res.text();
+    const events = raw
+      .split('\n\n')
+      .map((f) => f.trim())
+      .filter(Boolean)
+      .map((frame) => {
+        const evMatch = /^event:\s*(.+)$/m.exec(frame);
+        const dataMatch = /^data:\s*(.+)$/m.exec(frame);
+        let data: any = null;
+        try {
+          data = dataMatch ? JSON.parse(dataMatch[1]) : null;
+        } catch {
+          data = dataMatch ? dataMatch[1] : null;
+        }
+        return { event: evMatch ? evMatch[1] : 'message', data };
+      });
+    return { status: res.status, contentType, events, raw };
   }
 
   test('未登录不能生成', async () => {
@@ -259,13 +282,55 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
   });
 
   test('总结流式返回 delta 事件并在 done 里给出完整正文', async () => {
-    const { status, contentType, raw } = await streamField('summary');
+    const { status, contentType, events } = await streamField('summary');
     assert.equal(status, 200);
     assert.ok(contentType && contentType.includes('text/event-stream'));
-    assert.ok(raw.includes('event: delta'));
-    assert.ok(raw.includes('data: ' + JSON.stringify({ text: '本月总结的' })));
-    assert.ok(raw.includes('event: done'));
-    assert.ok(raw.includes('本月总结的流式正文'));
+    assert.ok(events.some((e) => e.event === 'delta'));
+    const done = events.find((e) => e.event === 'done');
+    assert.ok(done, '应有 done 事件');
+    assert.equal(done.data.content, '总'.repeat(250));
+    assert.equal(done.data.wordCount, 250);
+    assert.ok(!events.some((e) => e.event === 'regenerating'), '字数达标不应触发重试');
+  });
+
+  test('字数不达标时发出 regenerating 并以重试结果收尾', async () => {
+    const tooShort = '太短了。';
+    const good = '总'.repeat(250);
+    setChatGenerator(async () => good);
+
+    const { events } = await streamField(
+      'summary',
+      async function* () {
+        yield tooShort;
+      }
+    );
+    const regen = events.find((e) => e.event === 'regenerating');
+    assert.ok(regen, '应发出 regenerating 事件');
+    assert.equal(regen.data.wordCount, 3, '「太短了。」去标点应为 3 字');
+    const done = events.find((e) => e.event === 'done');
+    assert.ok(done);
+    assert.equal(done.data.content, good, '应以重试版本收尾');
+    assert.equal(done.data.wordCount, 250);
+    assert.equal(events[events.length - 1].event, 'done', 'done 必须是最后一个事件');
+  });
+
+  test('重试的纠偏指令追加为一条 user 消息', async () => {
+    const seen: { role: string; content: string }[] = [];
+    setChatGenerator(async (_userId: number, messages: { role: string; content: string }[]) => {
+      seen.push(...messages);
+      return '总'.repeat(250);
+    });
+
+    await streamField(
+      'summary',
+      async function* () {
+        yield '太短了。';
+      }
+    );
+    const last = seen[seen.length - 1];
+    assert.equal(last.role, 'user');
+    assert.ok(last.content.includes('太短了'), '纠偏指令应指出太短');
+    assert.ok(seen.length > 2, '应在 system + user 之外追加纠偏消息');
   });
 
   test('总结与规划的提示词不是同一份（任务指令都不同）', async () => {
