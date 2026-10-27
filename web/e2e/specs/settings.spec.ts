@@ -142,6 +142,7 @@ test.describe('设置页', () => {
 
     // 设置按账号独立保存；本用例走默认登录账号，结束仍切回以免影响共享库里的后续生成用例
     const token = await getToken(page);
+    const GEMINI_TEST_URL = 'https://gemini-proxy.example.com/v1';
     const restoreProvider = async () => {
       await page.request.put('/api/settings', {
         headers: { Authorization: 'Bearer ' + token },
@@ -150,18 +151,26 @@ test.describe('设置页', () => {
     };
 
     try {
+      // 代码不再内置 gemini 代理默认地址（避免自建域名进仓库），所以这里用 API 给该命名空间
+      // 预置一个测试地址，再刷新，验证「切换即跟随到用户配的值」，而不是某个硬编码默认
+      await page.request.put('/api/settings', {
+        headers: { Authorization: 'Bearer ' + token },
+        data: { 'ai.provider': 'sensenova', 'ai.geminiProxy.baseUrl': GEMINI_TEST_URL },
+      });
+      await page.reload();
+
       // 记下 SenseNova 当前的模型与接口地址（接口地址在测试环境里指向本地 mock，
       // 所以断言基准值而不是硬编码官方地址——重点验证「切走再切回后仍是自己的地址」）
       const modelSelect = page.getByLabel('模型', { exact: true });
       const sensenovaModel = await modelSelect.inputValue();
       const baseUrlInput = page.getByLabel('接口地址');
       const sensenovaUrl = await baseUrlInput.inputValue();
-      expect(sensenovaUrl).not.toMatch(/gemmaproxy/);
+      expect(sensenovaUrl).not.toBe(GEMINI_TEST_URL);
 
-      // 切到 Gemini 转发代理：接口地址立即变成代理地址，Key 输入框的 label 跟着换
+      // 切到 Gemini 转发代理：接口地址立即变成用户配的地址，Key 输入框的 label 跟着换
       await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
       await expect(page.getByText('已切换 AI 服务商').first()).toBeVisible();
-      await expect(baseUrlInput).toHaveValue(/gemmaproxy\.dpdns\.org/);
+      await expect(baseUrlInput).toHaveValue(GEMINI_TEST_URL);
       const geminiKey = page.getByLabel('Gemini 代理 API Key');
       await expect(geminiKey).toBeVisible();
 
@@ -180,7 +189,7 @@ test.describe('设置页', () => {
 
       // 再切回 Gemini：接口地址跟着切，Key 显示已配置（独立保存住了）
       await page.getByLabel('AI 服务商').selectOption('gemini-proxy');
-      await expect(baseUrlInput).toHaveValue(/gemmaproxy\.dpdns\.org/);
+      await expect(baseUrlInput).toHaveValue(GEMINI_TEST_URL);
       await expect(page.getByText(/已配置/).first()).toBeVisible();
     } finally {
       await restoreProvider();
