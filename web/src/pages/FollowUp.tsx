@@ -51,7 +51,6 @@ import { useDraftSync, DraftPayload } from '../hooks/useDraftSync';
 import { useImageUpload } from '../hooks/useImageUpload';
 import { useGroupManagement } from '../hooks/useGroupManagement';
 import { usePreferences } from '../hooks/usePreferences';
-import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
