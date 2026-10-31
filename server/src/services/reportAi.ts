@@ -138,7 +138,7 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
   ];
 }
 
-/** 写给家长的课程规划：一句总括 + 分点，不带 emoji（跟输入框占位符口径一致） */
+/** 写给家长的课程规划：结构化模板（目标 + 内容），不带 emoji，针对上月不足给对策 */
 export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
   const w = who(p);
   const month = monthLabel(nextYearMonth(p.yearMonth));
@@ -150,26 +150,32 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
     w + '，' + [p.grade, p.subject, p.term].filter(Boolean).join('·'),
     '规划月份：' + nextYearMonth(p.yearMonth) + suffix(month),
     '',
-    '# ' + (month || '下月') + '计划上的内容',
+    '# ' + (month || '下月') + '计划上的课程内容',
     courseLines(p.planCourses),
     '',
-    '# 本月总结里已写的收获和不足（规划要顺着它往下接）',
-    p.summaryCourses.length
-      ? '本月上过：\n' + courseLines(p.summaryCourses)
-      : '（本月还没有内容）',
+    '# 本月总结里已写的收获和不足（规划要针对性回应，不要只列课程）',
+    p.prevSummary && p.prevSummary.trim()
+      ? p.prevSummary.trim()
+      : p.summaryCourses.length
+        ? '本月上过：\n' + courseLines(p.summaryCourses)
+        : '（本月还没有内容）',
     '',
     '# 硬性要求',
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格，也**不要用 emoji**。',
+    '2. 必须针对上月「不足/建议」给出本月的具体教学安排，不能只罗列课程名称。',
+    '3. 每条内容要写清「要让孩子会什么、练到什么程度」，拒绝空泛表述。',
     ...COMMON_RULES,
     '',
     '# 输出格式（务必按此排版，总长 90-160 字）',
-    '第一行：一句话总括，形如「本月计划完成 ' + (planCount || '若干') + ' 次课，重点在……」。',
-    '后面按课程内容分点，每点一行，用「1.」「2.」这样的序号起头，说清这一步要让孩子会什么。',
-    '只有 1 点时不要加序号，直接写内容。',
+    '🎯 核心目标：一句话总括本月教学重点与预期达成',
+    '📚 重点内容：',
+    '   1. [课程1] —— 让孩子会什么、练到什么程度',
+    '   2. [课程2] —— ……',
+    '（只有 1 点时不要加序号，直接写内容）',
   ].join('\n');
 
   return [
-    { role: 'system', content: '你是一位1对1教育培训机构的教学顾问，写给家长的课程规划要简短、可执行。' },
+    { role: 'system', content: '你是一位1对1教育培训机构的教学顾问，写给家长的课程规划要简短、可执行、有针对性。' },
     { role: 'user', content: user },
   ];
 }
@@ -195,14 +201,25 @@ const optionsFor = (field: ReportAiField): ChatOptions =>
  * 字数区间，与 buildReport*Messages 里 prompt 的「总长 240-340 字 / 90-160 字」一致。
  * 路由用它做门禁：首轮流式输出落在区间外时，追加纠偏指令重试一次（对齐回访的做法），
  * 否则模型输出 400 字或 50 字都照单全收，家长看到的总结质量就没保障。
+ * 规划按课次数动态放宽：基础 90-160 字，每超 3 门课放宽 15 字上限。
  */
 export const REPORT_WORD_RANGE: Record<ReportAiField, { min: number; max: number }> = {
   summary: { min: 240, max: 340 },
   plan: { min: 90, max: 160 },
 };
 
-export function reportWordRange(field: ReportAiField): { min: number; max: number } {
-  return REPORT_WORD_RANGE[field];
+export function reportWordRange(field: ReportAiField, courseCount?: number): { min: number; max: number } {
+  const base = REPORT_WORD_RANGE[field];
+  if (field === 'plan' && courseCount && courseCount > 3) {
+    // 每超 3 门课，上限放宽 15 字（下限不变，保证精炼）
+    const extra = Math.floor((courseCount - 1) / 3) * 15;
+    return { min: base.min, max: base.max + extra };
+  }
+  return base;
+}
+
+export function isWordCountOk(n: number, min: number, max: number): boolean {
+  return n >= min && n <= max;
 }
 
 /** 流式产出总结 / 规划的正文增量 */

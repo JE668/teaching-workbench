@@ -3,13 +3,13 @@ import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import {
   countWords,
-  isWordCountOk,
   correctionText,
 } from '../services/ai.js';
 import {
   streamReportAi,
   generateReportAiOnce,
   reportWordRange,
+  isWordCountOk,
   type ReportAiParams,
   type ReportAiField,
 } from '../services/reportAi.js';
@@ -122,10 +122,11 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
       return;
     }
 
-    // 字数门禁：prompt 要求总结 240-340 字 / 规划 90-160 字。首轮落在区间外就追加
-    // 纠偏指令重试一次（对齐回访的做法），仍不达标则取更接近区间的一版。
+    // 字数门禁：prompt 要求总结 240-340 字 / 规划 90-160 字（按课次数动态放宽）。
+    // 首轮落在区间外就追加纠偏指令重试一次（对齐回访的做法），仍不达标则取更接近区间的一版。
     // 之前没有这道门，模型输出 400 字或 50 字都照单全收，家长看到的总结质量没保障。
-    const wordRange = reportWordRange(field);
+    const planCourseCount = field === 'plan' ? params.planCourses.length : undefined;
+    const wordRange = reportWordRange(field, planCourseCount);
     let wordCount = countWords(content);
     if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
       send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
