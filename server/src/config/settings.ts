@@ -137,11 +137,15 @@ export function getAiConfig(userId: number): AiConfig {
     timeoutMs: Math.max(5000, parseInt(getSetting('ai.timeoutMs', userId), 10) || 60000),
   };
   if (provider === 'gemini-proxy') {
+    const rawBaseUrl = getSetting('ai.geminiProxy.baseUrl', userId);
     return {
       ...shared,
       model: getSetting('ai.geminiProxy.model', userId),
-      baseUrl: getSetting('ai.geminiProxy.baseUrl', userId),
+      // 防御：去尾部斜杠，避免与 OpenAI SDK 拼接时出现双重 /v1
+      baseUrl: rawBaseUrl ? rawBaseUrl.replace(/\/+$/, '') : '',
       apiKey: getSetting('ai.geminiProxy.apiKey', userId),
+      // gemini-proxy（免费层）偶发慢，适当加大默认超时
+      timeoutMs: Math.max(shared.timeoutMs, 120000),
     };
   }
   return {
