@@ -1,7 +1,7 @@
 import { runChatStream, runChatOnce, type ChatMessage, type ChatOptions } from './ai.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
-import { SUMMARY_SECTION_TITLES, PLAN_SECTION_TITLES, SUMMARY_WORD_RANGE, planWordRange } from '../../shared/reportTemplate.js';
+import { SUMMARY_SECTION_TITLES, PLAN_SECTION_TITLES, SUMMARY_WORD_RANGE, planWordRange } from '../shared/reportTemplate.js';
 
 /**
  * 月度总结与课程规划的 AI 编写。

@@ -27,7 +27,7 @@ import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { cn, saveBlob } from '../lib/utils';
 import { downloadReportCard, type ReportCardBlock, type ReportCardInput } from '../lib/reportCard';
-import { getSummaryPlaceholder, getPlanPlaceholder } from '../../shared/reportTemplate';
+import { getSummaryPlaceholder, getPlanPlaceholder } from '../shared/reportTemplate';
 import {
   ATTENDANCE_OPTIONS,
   CatalogCourseOption,

@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: server/package-lock.json
 
       - name: Copy shared module
-        run: cp -r shared server/shared
+        run: cp -r shared server/src/shared
         working-directory: ${{ github.workspace }}
 
       - name: Install dependencies
@@ -60,7 +60,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Copy shared module
-        run: cp -r shared web/shared
+        run: cp -r shared web/src/shared
         working-directory: ${{ github.workspace }}
 
       - name: Install dependencies
@@ -166,8 +166,8 @@ jobs:
 
       - name: Copy shared module for e2e
         run: |
-          cp -r shared server/shared
-          cp -r shared web/shared
+          cp -r shared server/src/shared
+          cp -r shared web/src/shared
 
       # 复用 runner 自带的 Google Chrome（channel: 'chrome'），无需下载浏览器
       - name: Show Chrome version
