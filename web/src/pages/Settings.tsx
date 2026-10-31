@@ -33,7 +33,7 @@ interface SettingsState {
 /** AI 服务商清单：id 与服务端设置键的命名空间一一对应 */
 const AI_PROVIDERS = [
   { value: 'sensenova', label: 'SenseNova 官方' },
-  { value: 'gemini-proxy', label: 'Gemini 转发代理（自建）' },
+  { value: 'gemini-proxy', label: 'Google Gemini（自建代理）' },
 ];
 
 /** 当前 provider 下的设置键名：sensenova 沿用历史键，gemini-proxy 用独立命名空间 */

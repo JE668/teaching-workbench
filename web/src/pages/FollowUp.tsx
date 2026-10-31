@@ -51,6 +51,7 @@ import { useDraftSync, DraftPayload } from '../hooks/useDraftSync';
 import { useImageUpload } from '../hooks/useImageUpload';
 import { useGroupManagement } from '../hooks/useGroupManagement';
 import { usePreferences } from '../hooks/usePreferences';
+import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -168,9 +169,15 @@ export default function FollowUp() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => restored?.draft || '');
   const [saving, setSaving] = useState(false);
+  const [providerLabel, setProviderLabel] = useState('SenseNova 多模态');
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
+    // 获取当前 AI 服务商，用于状态栏显示
+    api.get('/settings').then((r) => {
+      const provider = r.settings?.['ai.provider'] || 'sensenova';
+      setProviderLabel(provider === 'gemini-proxy' ? 'Google Gemini' : 'SenseNova 多模态');
+    }).catch(() => {});
   }, []);
 
   // 历史联想：选中的学生有历史就用它的，否则用全局（新学生也有词可用）
@@ -631,7 +638,7 @@ export default function FollowUp() {
 
           <div className="flex items-center gap-2 rounded-xl bg-white px-3.5 py-2 text-xs shadow-soft ring-1 ring-slate-100">
             <Sparkles className="h-3.5 w-3.5 text-brand-500" />
-            <span className="font-medium text-slate-600">SenseNova 多模态</span>
+            <span className="font-medium text-slate-600">{providerLabel}</span>
           </div>
         </div>
       </div>

@@ -17,7 +17,7 @@ import { useToast } from '../components/ui/Toast';
 import { cn } from '../lib/utils';
 
 const features = [
-  { icon: Sparkles, title: 'AI 智能生成', desc: '基于 SenseNova 多模态大模型' },
+  { icon: Sparkles, title: 'AI 智能生成', desc: '基于 SenseNova / Google Gemini 多模态大模型' },
   { icon: ImageIcon, title: '图片理解', desc: '粘贴作业、试卷，自动融入回访' },
   { icon: FileText, title: '规范三段式', desc: '课堂内容 · 学生收获 · 课后任务' },
   { icon: ShieldCheck, title: '档案归档', desc: '每次回访自动归入学生档案' },
@@ -114,7 +114,7 @@ export default function Login() {
             </div>
           </div>
 
-          <p className="text-xs text-white/40">© 2026 教学服务工作台 · Powered by SenseNova</p>
+          <p className="text-xs text-white/40">© 2026 教学服务工作台 · Powered by SenseNova & Google Gemini</p>
         </div>
       </div>
 
