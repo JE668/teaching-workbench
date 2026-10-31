@@ -19,7 +19,8 @@ function getClient(userId: number, config: AiConfig): OpenAI {
   const cached = clients.get(userId);
   if (!cached || cached.version !== getConfigVersion(userId)) {
     if (!config.apiKey) {
-      throw new Error('未配置 SENSENOVA_API_KEY，请在「设置」页或 .env 中填写');
+      const keyName = config.provider === 'gemini-proxy' ? 'GEMINI_PROXY_API_KEY' : 'SENSENOVA_API_KEY';
+      throw new Error(`未配置 ${keyName}，请在「设置」页或 .env 中填写`);
     }
     const entry = { client: new OpenAI({
       apiKey: config.apiKey,

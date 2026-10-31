@@ -218,7 +218,11 @@ class ApiClient {
       if (res.status === 401) {
         this.handleUnauthorized(path, !!this.token);
       }
-      throw new Error(err.error || '请求失败');
+      // 抛出带 status / detail 的错误，便于上层展示完整信息
+      const e = new Error(err.error || '请求失败') as Error & { status?: number; detail?: any };
+      e.status = res.status;
+      e.detail = err;
+      throw e;
     }
     if (!res.body) {
       throw new Error('当前环境不支持流式响应');

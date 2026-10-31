@@ -235,9 +235,18 @@ export default function Settings() {
       for (const [key, value] of Object.entries(fields)) {
         // 后端没回这个键、也不是自定义项 → 前端对它没有意见，不要提交空串
         // （否则等于把「我不知道」伪装成「请清空」）
-        if (!String(effective[key] ?? '') && !overridden.includes(key)) continue;
+        // 修复：只有当值等于出厂值且未被覆盖时才跳过；新值（≠出厂值）必须进入 dirty 检查
+        const effectiveValue = String(effective[key] ?? '');
+        const defaultValue = String(defaults[key] ?? '');
+        const isDefaultValue = value === defaultValue;
+        const isOverridden = overridden.includes(key);
+        
+        // 情况1：值等于出厂值且未被覆盖 → 跳过（没改过，本来就没覆盖）
+        // 情况2：值等于出厂值但已被覆盖 → 写空串清掉覆盖（恢复出厂）
+        // 情况3：值不等于出厂值 → 进入 dirty 检查（这是用户真正的自定义）
+        if (isDefaultValue && !isOverridden) continue;
         if (dirty(key, value)) patch[key] = value;
-        else if (overridden.includes(key)) patch[key] = '';
+        else if (isOverridden) patch[key] = '';
       }
       // 只有真的输入了新 key 才提交（否则会把掩码写回去）
       if (apiKey.trim()) patch[keys.apiKey] = apiKey.trim();
