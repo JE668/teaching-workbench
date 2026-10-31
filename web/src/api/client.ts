@@ -199,7 +199,7 @@ class ApiClient {
       onDelta?: (text: string) => void;
       onRegenerating?: (wordCount: number) => void;
       onDone?: (payload: { content: string; wordCount: number; regenerated: boolean }) => void;
-      onError?: (message: string) => void;
+      onError?: (message: string, error?: { status?: number; detail?: any }) => void;
     },
     signal?: AbortSignal
   ): Promise<void> {
@@ -256,7 +256,7 @@ class ApiClient {
         handlers.onDone?.(data);
       } else if (event === 'error') {
         finished = true;
-        handlers.onError?.(data.error || '生成失败');
+        handlers.onError?.(data.error || '生成失败', { status: data.status, detail: data.detail });
       }
     };
 
