@@ -22,13 +22,13 @@ function getClient(userId: number, config: AiConfig): OpenAI {
       const keyName = config.provider === 'gemini-proxy' ? 'GEMINI_PROXY_API_KEY' : 'SENSENOVA_API_KEY';
       throw new Error(`未配置 ${keyName}，请在「设置」页或 .env 中填写`);
     }
+    // gemini-proxy 层已实现重试/降级，这里关闭 SDK 重试避免双重重试导致延迟叠加
+    const sdkRetries = config.provider === 'gemini-proxy' ? 0 : 1;
     const entry = { client: new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
-      // 超时收紧（SDK 默认 10 分钟，用户等不起）
       timeout: config.timeoutMs,
-      // SDK 层仅重试 1 次（网络抖动/5xx）；字数不达标的业务重试由本服务自行控制
-      maxRetries: 1,
+      maxRetries: sdkRetries,
       }),
       version: getConfigVersion(userId),
     };
@@ -990,15 +990,19 @@ function buildChatRequest(
   stream: boolean
 ): any {
   const config = getAiConfig(userId);
-  return {
+  const base = {
     model: config.model,
     messages,
     max_tokens: opts.maxTokens ?? 1600,
     temperature: opts.temperature ?? 0.7,
-    // 思考强度：与回访共用同一份「设置」页配置
-    reasoning_effort: config.reasoningEffort,
     stream,
   };
+  // gemini-proxy (Google OpenAI 兼容层) 不支持 reasoning_effort 字段
+  // 也避免把 SenseNova 专用参数透传给其它兼容层
+  if (config.provider !== 'gemini-proxy') {
+    return { ...base, reasoning_effort: config.reasoningEffort };
+  }
+  return base;
 }
 
 /** 通用单次调用（非流式）。进闸门，与回访的 generateOnce 同口径 */
