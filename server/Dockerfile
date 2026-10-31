@@ -11,6 +11,8 @@ RUN npm ci
 
 # 复制源码并编译 TypeScript
 COPY . .
+# 复制 shared 模块到 src/shared，供 TypeScript 导入解析
+RUN cp -r ../shared ./src/shared 2>/dev/null || true
 RUN npm run build
 
 # 移除 devDependencies，但保留 build 阶段编译出的 better-sqlite3.node，
