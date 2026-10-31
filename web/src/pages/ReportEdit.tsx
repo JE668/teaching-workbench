@@ -15,6 +15,7 @@ import {
   Plus,
   Sparkles,
   Trash2,
+  AlertCircle,
 } from 'lucide-react';
 import { api } from '../api/client';
 import Button from '../components/ui/Button';
@@ -26,6 +27,7 @@ import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { cn, saveBlob } from '../lib/utils';
 import { downloadReportCard, type ReportCardBlock, type ReportCardInput } from '../lib/reportCard';
+import { getSummaryPlaceholder, getPlanPlaceholder } from '../../shared/reportTemplate';
 import {
   ATTENDANCE_OPTIONS,
   CatalogCourseOption,
@@ -185,6 +187,7 @@ export default function ReportEdit() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [aiError, setAiError] = useState<{ status?: number; detail?: any; message: string } | null>(null);
 
   const reload = useCallback(
     async (silent = true) => {
@@ -444,6 +447,7 @@ export default function ReportEdit() {
     const controller = new AbortController();
     aiAbort.current = controller;
     setAiField(field);
+    setAiError(null); // 清除之前的错误
     setIntro(introKey, '');
 
     try {
@@ -461,12 +465,30 @@ export default function ReportEdit() {
             void patchText(introKey, content);
             toast.success('AI 编写完成，可以直接改');
           },
-          onError: (msg) => toast.error(msg),
+          onError: (msg, err) => {
+            const status = err?.status;
+            const detail = err?.detail;
+            setAiError({
+              status,
+              detail,
+              message: msg,
+            });
+            toast.error(msg);
+          },
         },
         controller.signal
       );
     } catch (e) {
-      if ((e as Error)?.name !== 'AbortError') toast.error(e instanceof Error ? e.message : 'AI 编写失败');
+      if ((e as Error)?.name !== 'AbortError') {
+        const status = (e as any)?.status;
+        const detail = (e as any)?.detail;
+        setAiError({
+          status,
+          detail,
+          message: e instanceof Error ? e.message : 'AI 编写失败',
+        });
+        toast.error(e instanceof Error ? e.message : 'AI 编写失败');
+      }
     } finally {
       if (aiAbort.current === controller) {
         aiAbort.current = null;
@@ -603,7 +625,7 @@ export default function ReportEdit() {
                 AI 编写
               </Button>
             }
-            placeholder={'📚课堂情况：本月计划x次课\n📖学习内容：\n🎯本月收获：\n🏆进步表现：\n📝本月不足：\n💡建议：\n🎯下月目标：'}
+            placeholder={getSummaryPlaceholder()}
             value={report.summary_intro}
             onChange={(e) => setReport({ ...report, summary_intro: e.target.value })}
             onBlur={(e) => void patchText('summary_intro', e.target.value)}
@@ -611,7 +633,29 @@ export default function ReportEdit() {
           />
         }
         body={
-          <ItemTable cols={SUMMARY_COLS} items={summaryItems} onPatch={patchItem} onRemove={removeItem} onMove={moveItem} />
+          <>
+            {aiError && aiField === 'summary' && (
+              <div className="mb-3 p-3 rounded-xl bg-red-50 ring-1 ring-red-100 animate-fade-up">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                  <div className="flex-1">
+                    <p className="text-xs font-medium text-red-700">AI 生成失败</p>
+                    <p className="mt-1 text-xs text-red-600 font-mono">{aiError.message}</p>
+                    {aiError.status && <p className="mt-1 text-xs text-red-500">HTTP {aiError.status}</p>}
+                    {aiError.detail && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-red-500 cursor-pointer underline">查看完整错误详情</summary>
+                        <pre className="mt-1 text-[10px] text-red-400 bg-red-100 p-2 rounded overflow-auto max-h-24 whitespace-pre-wrap">
+                          {JSON.stringify(aiError.detail, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            <ItemTable cols={SUMMARY_COLS} items={summaryItems} onPatch={patchItem} onRemove={removeItem} onMove={moveItem} />
+          </>
         }
       />
 
@@ -653,7 +697,7 @@ export default function ReportEdit() {
               AI 编写
             </Button>
           }
-          placeholder="本月打算讲哪些内容、重点攻克什么…"
+          placeholder={getPlanPlaceholder()}
           value={report.plan_intro}
           onChange={(e) => setReport({ ...report, plan_intro: e.target.value })}
           onBlur={(e) => void patchText('plan_intro', e.target.value)}
@@ -662,6 +706,26 @@ export default function ReportEdit() {
       }
       body={
         <>
+          {aiError && aiField === 'plan' && (
+            <div className="mb-3 p-3 rounded-xl bg-red-50 ring-1 ring-red-100 animate-fade-up">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                <div className="flex-1">
+                  <p className="text-xs font-medium text-red-700">AI 生成失败</p>
+                  <p className="mt-1 text-xs text-red-600 font-mono">{aiError.message}</p>
+                  {aiError.status && <p className="mt-1 text-xs text-red-500">HTTP {aiError.status}</p>}
+                  {aiError.detail && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-red-500 cursor-pointer underline">查看完整错误详情</summary>
+                      <pre className="mt-1 text-[10px] text-red-400 bg-red-100 p-2 rounded overflow-auto max-h-24 whitespace-pre-wrap">
+                        {JSON.stringify(aiError.detail, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <ItemTable cols={PLAN_COLS} items={planItems} onPatch={patchItem} onRemove={removeItem} onMove={moveItem} />
 
           {examItems.length > 0 && (

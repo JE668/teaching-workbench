@@ -69,12 +69,12 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
   const ym = String(report.year_month || '');
   const followUps = db
     .prepare(
-      `SELECT topic, content FROM followups
+      `SELECT topic, content, images FROM followups
        WHERE user_id = ? AND student_name = ? AND content != '' AND created_at LIKE ? || '-%'
        ORDER BY updated_at DESC, id DESC
        LIMIT 12`
     )
-    .all(userId, String(report.student_name || ''), ym) as { topic: string; content: string }[];
+    .all(userId, String(report.student_name || ''), ym) as { topic: string; content: string; images: string }[];
 
   // 上个月这份学生的总结，用于「上月问题本月是否改善」的连续叙事
   const prevRow = db
@@ -96,7 +96,7 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     yearMonth: ym,
     summaryCourses: pick('summary'),
     planCourses: pick('plan'),
-    followUps,
+    followUps: followUps.map(f => ({ topic: f.topic, content: f.content, images: f.images ? JSON.parse(f.images) : [] })),
     prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
   };
 

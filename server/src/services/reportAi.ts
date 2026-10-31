@@ -1,6 +1,7 @@
 import { runChatStream, runChatOnce, type ChatMessage, type ChatOptions } from './ai.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
+import { SUMMARY_SECTION_TITLES, PLAN_SECTION_TITLES, SUMMARY_WORD_RANGE, planWordRange } from '../../shared/reportTemplate.js';
 
 /**
  * 月度总结与课程规划的 AI 编写。
@@ -21,6 +22,7 @@ export interface ReportAiCourse {
 export interface ReportAiFollowUp {
   topic: string;
   content: string;
+  images?: string[];
 }
 
 export interface ReportAiParams {
@@ -122,14 +124,8 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格。emoji 只用在段落开头的小标题上。',
     ...COMMON_RULES,
     '',
-    '# 输出格式（务必按此排版，正好 7 行，每行一个段落，总长 240-340 字）',
-    '📚课堂情况：' + (p.summaryCourses.filter((c) => (c.content || '').trim()).length || '若干') + ' 次课，……',
-    '📖学习内容：',
-    '🎯本月收获：',
-    '🏆进步表现：',
-    '📝本月不足：',
-    '💡建议：',
-    '🎯下月目标：',
+    '# 输出格式（务必按此排版，正好 7 行，每行一个段落，总长 ' + SUMMARY_WORD_RANGE.min + '-' + SUMMARY_WORD_RANGE.max + ' 字）',
+    ...SUMMARY_SECTION_TITLES,
   ].join('\n');
 
   return [
@@ -143,6 +139,13 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
   const w = who(p);
   const month = monthLabel(nextYearMonth(p.yearMonth));
   const planCount = p.planCourses.filter((c) => (c.content || '').trim()).length;
+  const wordRange = planWordRange(planCount);
+  
+  // 收集回访中的图片路径（用于 OCR/图片理解素材）
+  const followUpImages = p.followUps
+    .flatMap(f => f.images || [])
+    .filter((img): img is string => Boolean(img && img.trim()));
+  
   const user = [
     '请写这一块报告的课程规划说明。',
     '',
@@ -160,19 +163,26 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
         ? '本月上过：\n' + courseLines(p.summaryCourses)
         : '（本月还没有内容）',
     '',
+    followUpImages.length > 0 ? [
+      '# 本月回访中的图片素材（作业、试卷、练习本等，供针对性规划参考）',
+      followUpImages.map((img, i) => `${i + 1}. ${img}`).join('\n'),
+      '',
+    ].join('\n') : '',
     '# 硬性要求',
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格，也**不要用 emoji**。',
     '2. 必须针对上月「不足/建议」给出本月的具体教学安排，不能只罗列课程名称。',
     '3. 每条内容要写清「要让孩子会什么、练到什么程度」，拒绝空泛表述。',
+    followUpImages.length > 0
+      ? '4. 若图片素材中可见具体题型/错题/薄弱点，请在规划中针对性安排对应练习或讲解。'
+      : '',
     ...COMMON_RULES,
     '',
-    '# 输出格式（务必按此排版，总长 90-160 字）',
-    '核心目标：一句话总括本月教学重点与预期达成',
-    '重点内容：',
+    '# 输出格式（务必按此排版，总长 ' + wordRange.min + '-' + wordRange.max + ' 字）',
+    ...PLAN_SECTION_TITLES,
     '   1. [课程1] —— 让孩子会什么、练到什么程度',
     '   2. [课程2] —— ……',
     '（只有 1 点时不要加序号，直接写内容）',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   return [
     { role: 'system', content: '你是一位1对1教育培训机构的教学顾问，写给家长的课程规划要简短、可执行、有针对性。' },

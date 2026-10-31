@@ -162,6 +162,7 @@ export default function FollowUp() {
   const [generating, setGenerating] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [regenerating, setRegenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<{ status?: number; detail?: any; message: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [content, setContent] = useState(() => restored?.content || '');
   const [editing, setEditing] = useState(false);
@@ -382,6 +383,7 @@ export default function FollowUp() {
 
     setGenerating(true);
     setRegenerating(false);
+    setGenerationError(null); // 清除之前的错误
     setContent('');
     setDraft('');
     setEditing(false);
@@ -409,7 +411,18 @@ export default function FollowUp() {
             setDraft(final);
             toast.success(regenerated ? '已重新生成并调整字数' : 'AI 生成完成，可编辑后保存');
           },
-          onError: (msg) => toast.error(msg),
+          onError: (msg, err) => {
+            // err 可能包含 status / detail（来自 client.ts 的增强错误对象）
+            const status = err?.status;
+            const detail = err?.detail;
+            setGenerationError({
+              status,
+              detail,
+              message: msg,
+            });
+            // 仍保留 toast 作为兜底
+            toast.error(msg);
+          },
         },
         controller.signal
       );
@@ -417,6 +430,13 @@ export default function FollowUp() {
       if (err?.name === 'AbortError') {
         toast.info('已取消生成');
       } else {
+        const status = err?.status;
+        const detail = err?.detail;
+        setGenerationError({
+          status,
+          detail,
+          message: err?.message || '生成失败',
+        });
         toast.error(err?.message || '生成失败');
       }
     } finally {
@@ -1283,6 +1303,29 @@ export default function FollowUp() {
                 <p className="mt-2 text-center text-xs text-brand-600">
                   首轮字数不达标，正在重新生成…
                 </p>
+              )}
+
+              {generationError && !generating && (
+                <div className="mt-3 p-3 rounded-xl bg-red-50 ring-1 ring-red-100">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                    <div className="flex-1">
+                      <p className="text-xs font-medium text-red-700">AI 生成失败</p>
+                      <p className="mt-1 text-xs text-red-600 font-mono">{generationError.message}</p>
+                      {generationError.status && (
+                        <p className="mt-1 text-xs text-red-500">HTTP {generationError.status}</p>
+                      )}
+                      {generationError.detail && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-red-500 cursor-pointer underline">查看完整错误详情</summary>
+                          <pre className="mt-1 text-[10px] text-red-400 bg-red-100 p-2 rounded overflow-auto max-h-24 whitespace-pre-wrap">
+                            {JSON.stringify(generationError.detail, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
 
             </div>
