@@ -41,6 +41,16 @@ jobs:
         working-directory: server
         run: rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
 
+      - name: Download Tesseract language data
+        working-directory: server
+        run: |
+          set -euo pipefail
+          mkdir -p tessdata
+          # Download Chinese Simplified and English traineddata files
+          curl -L -o tessdata/chi_sim.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/chi_sim.traineddata
+          curl -L -o tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+          echo "TESSDATA_PREFIX=$(pwd)/tessdata" >> $GITHUB_ENV
+
       - name: Type check & build
         working-directory: server
         run: npm run build
@@ -48,7 +58,7 @@ jobs:
       - name: Run test suite
         working-directory: server
         env:
-          TESSDATA_PREFIX: ${{ github.workspace }}/server
+          TESSDATA_PREFIX: ${{ github.workspace }}/server/tessdata
         run: npm test
 
   test-web:
