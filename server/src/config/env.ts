@@ -114,4 +114,6 @@ export const env = {
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000',
   UPLOAD_DIR: path.resolve(DATA_DIR, 'uploads'),
   DATA_DIR,
+  // Tesseract OCR 语言数据目录（CI 中需下载 chi_sim.traineddata、eng.traineddata）
+  TESSDATA_PREFIX: process.env.TESSDATA_PREFIX || path.resolve(DATA_DIR, 'tessdata'),
 };

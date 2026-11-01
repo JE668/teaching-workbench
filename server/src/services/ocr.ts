@@ -10,6 +10,7 @@
 import { createWorker } from 'tesseract.js';
 import { db } from '../config/database.js';
 import { log } from '../utils/logger.js';
+import { env } from '../config/env.js';
 
 // 全局 worker 单例（懒加载）
 let workerPromise: Promise<any> | null = null;
@@ -17,8 +18,11 @@ let workerPromise: Promise<any> | null = null;
 async function getWorker() {
   if (!workerPromise) {
     workerPromise = (async () => {
+      // 显式指定语言数据路径，避免 CI 中相对路径问题
+      const langPath = env.TESSDATA_PREFIX || process.env.TESSDATA_PREFIX;
       const worker = await createWorker('chi_sim+eng', 1, {
         logger: (m) => log.debug({ ocr: m.status, progress: m.progress }, 'OCR 进度'),
+        langPath: langPath, // 关键：显式指定语言数据目录
       });
       return worker;
     })();
