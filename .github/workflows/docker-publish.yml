@@ -18,6 +18,9 @@ jobs:
   test:
     name: Backend Tests
     runs-on: ubuntu-latest
+    env:
+      # 设置 TESSDATA_PREFIX 供所有步骤使用（特别是测试步骤中的 tesseract.js）
+      TESSDATA_PREFIX: ${{ github.workspace }}/server/tessdata
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -49,7 +52,10 @@ jobs:
           # Download Chinese Simplified and English traineddata files
           curl -L -o tessdata/chi_sim.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/chi_sim.traineddata
           curl -L -o tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
-          echo "TESSDATA_PREFIX=$(pwd)/tessdata" >> $GITHUB_ENV
+          # Verify downloads
+          ls -la tessdata/
+          file tessdata/chi_sim.traineddata
+          file tessdata/eng.traineddata
 
       - name: Type check & build
         working-directory: server
@@ -57,8 +63,6 @@ jobs:
 
       - name: Run test suite
         working-directory: server
-        env:
-          TESSDATA_PREFIX: ${{ github.workspace }}/server/tessdata
         run: npm test
 
   test-web:
