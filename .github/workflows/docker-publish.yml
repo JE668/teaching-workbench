@@ -37,6 +37,10 @@ jobs:
         working-directory: server
         run: npm ci
 
+      - name: Clear TypeScript cache
+        working-directory: server
+        run: rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
+
       - name: Type check & build
         working-directory: server
         run: npm run build
@@ -66,6 +70,10 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: npm ci
+
+      - name: Clear TypeScript cache
+        working-directory: web
+        run: rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
 
       - name: Type check（含测试代码）
         working-directory: web
@@ -168,6 +176,11 @@ jobs:
         run: |
           cp -r shared server/src/shared
           cp -r shared web/src/shared
+
+      - name: Clear TypeScript cache (e2e)
+        run: |
+          cd server && rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
+          cd ../web && rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
 
       # 复用 runner 自带的 Google Chrome（channel: 'chrome'），无需下载浏览器
       - name: Show Chrome version
