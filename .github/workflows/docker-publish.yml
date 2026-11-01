@@ -40,20 +40,18 @@ jobs:
             fi
           fi
           
-          echo "Installing Tesseract OCR via apt..."
+          echo "Installing Tesseract OCR via apt (with retry)..."
           
-          # Wait for apt lock with longer timeout
-          for i in {1..60}; do
-            if ! lsof /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && ! lsof /var/lib/apt/lists/lock >/dev/null 2>&1; then
+          # Retry apt-get install with exponential backoff
+          for attempt in {1..5}; do
+            echo "Attempt $attempt/5 to install tesseract..."
+            if DEBIAN_FRONTEND=noninteractive apt-get update -y && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng; then
+              echo "✅ apt install succeeded on attempt $attempt"
               break
             fi
-            echo "Waiting for apt lock... ($i/60)"
-            sleep 2
+            echo "Attempt $attempt failed, waiting before retry..."
+            sleep $((attempt * 5))
           done
-          
-          # Use explicit locking and non-interactive mode
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update -y && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
           
           # Verify installation
           tesseract --list-langs | grep -E 'chi_sim|eng' || {
