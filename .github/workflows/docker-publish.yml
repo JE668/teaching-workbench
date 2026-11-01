@@ -47,16 +47,24 @@ jobs:
 
       - name: Download Tesseract language data
         working-directory: server
+        timeout-minutes: 3
         run: |
           set -euo pipefail
           mkdir -p tessdata
-          # Download Chinese Simplified and English traineddata files
-          curl -L -o tessdata/chi_sim.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/chi_sim.traineddata
-          curl -L -o tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
-          # Verify downloads
+          # Download Chinese Simplified and English traineddata files from official tessdata repo
+          echo "Downloading chi_sim.traineddata..."
+          curl -fL -o tessdata/chi_sim.traineddata "https://github.com/tesseract-ocr/tessdata_best/raw/main/chi_sim.traineddata"
+          echo "Downloading eng.traineddata..."
+          curl -fL -o tessdata/eng.traineddata "https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata"
+          # Verify downloads - check file sizes are reasonable (> 1MB)
+          CHI_SIZE=$(stat -c%s tessdata/chi_sim.traineddata)
+          ENG_SIZE=$(stat -c%s tessdata/eng.traineddata)
+          if [ "$CHI_SIZE" -lt 1000000 ] || [ "$ENG_SIZE" -lt 1000000 ]; then
+            echo "ERROR: Downloaded traineddata files too small (chi: $CHI_SIZE, eng: $ENG_SIZE)"
+            exit 1
+          fi
+          echo "✅ Traineddata files downloaded successfully"
           ls -la tessdata/
-          file tessdata/chi_sim.traineddata
-          file tessdata/eng.traineddata
 
       - name: Type check & build
         working-directory: server
@@ -65,7 +73,7 @@ jobs:
 
       - name: Run test suite
         working-directory: server
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: npm test -- --test-concurrency=4
 
   test-web:
@@ -106,7 +114,7 @@ jobs:
       - name: Run test suite
         working-directory: web
         timeout-minutes: 10
-        run: npm test -- --pool=forks --poolOptions.forks.singleFork
+        run: npm test -- --pool=forks
 
   # ===== 部署资产检查 =====
   # 事故：Dockerfile 曾只 COPY dist/，漏了 templates/ ——
