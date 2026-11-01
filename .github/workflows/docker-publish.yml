@@ -48,7 +48,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "Installing Tesseract OCR and language packs via apt..."
-          apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
+          
+          # Wait for apt lock to be released (in case another process is using apt)
+          for i in {1..30}; do
+            if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for apt lock to be released... ($i/30)"
+            sleep 2
+          done
+          
+          DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
+          
           # Verify installation
           tesseract --list-langs | grep -E 'chi_sim|eng' || {
             echo "ERROR: Required languages not installed"
