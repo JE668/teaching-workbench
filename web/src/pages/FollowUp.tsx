@@ -8,6 +8,7 @@ import {
   Wand2,
   Save,
   Check,
+  CheckCircle2,
   Pencil,
   Copy,
   ClipboardList,
@@ -19,6 +20,8 @@ import {
   Camera,
   Wifi,
   WifiOff,
+  TrendingUp,
+  Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -673,6 +676,54 @@ export default function FollowUp() {
                       ? `已选 ${form.modules.length} 个（建议 ${FOLLOWUP_MIN_BLOCKS} 个以上）`
                       : `已选 ${form.modules.length} 个，够用`}
                   </span>
+                </div>
+                {/* 预设模板卡片 */}
+                <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="预设板块组合">
+                  <button
+                    type="button"
+                    title="学校标准流程：课程主题+课堂总结+作业批改+笔记痕迹+作业布置（5 板块，符合校规）"
+                    onClick={() => setForm((prev) => ({ ...prev, modules: DEFAULT_FOLLOWUP_MODULES }))}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-all duration-200',
+                      form.modules.length === DEFAULT_FOLLOWUP_MODULES.length &&
+                        DEFAULT_FOLLOWUP_MODULES.every(m => form.modules.includes(m))
+                        ? 'bg-emerald-50 text-emerald-700 ring-emerald-200 shadow-soft'
+                        : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                    )}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    标准 5 板块
+                  </button>
+                  <button
+                    type="button"
+                    title="针对弱项：错题专练+成绩分析+阶测反馈+规划调整（4 板块，专项提升）"
+                    onClick={() => setForm((prev) => ({ ...prev, modules: ['mistake_drill', 'grade_analysis', 'stage_test', 'plan_adjust'] }))}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-all duration-200',
+                      form.modules.length === 4 &&
+                        ['mistake_drill', 'grade_analysis', 'stage_test', 'plan_adjust'].every(m => form.modules.includes(m))
+                        ? 'bg-amber-50 text-amber-700 ring-amber-200 shadow-soft'
+                        : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                    )}
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    重点攻坚
+                  </button>
+                  <button
+                    type="button"
+                    title="应急极速：仅课程主题+作业布置（2 板块，最快出文案）"
+                    onClick={() => setForm((prev) => ({ ...prev, modules: ['class_content', 'homework_assign'] }))}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-all duration-200',
+                      form.modules.length === 2 &&
+                        ['class_content', 'homework_assign'].every(m => form.modules.includes(m))
+                        ? 'bg-sky-50 text-sky-700 ring-sky-200 shadow-soft'
+                        : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
+                    )}
+                  >
+                    <Zap className="h-3.5 w-3.5" />
+                    极速版
+                  </button>
                 </div>
                 {FOLLOWUP_MODULE_GROUPS.map((g) => (
                   <div key={g.group} className="mb-2.5">

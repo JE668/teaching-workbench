@@ -211,6 +211,17 @@ export default function ReportEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // URL 参数触发 AI 生成：?aiGenerate=summary 或 ?aiGenerate=plan
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const aiGenerate = searchParams.get('aiGenerate');
+    if (aiGenerate === 'summary' && report?.summary_enabled && summaryItems.length > 0) {
+      void runAi('summary');
+    } else if (aiGenerate === 'plan' && report?.plan_enabled && planItems.length > 0) {
+      void runAi('plan');
+    }
+  }, [report?.summary_enabled, report?.plan_enabled, summaryItems.length, planItems.length, searchParams]);
+
   const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
 

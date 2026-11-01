@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
+import { recordDraftHistory } from './draftHistory.js';
 
 const router = Router();
 
@@ -111,6 +112,9 @@ router.put('/', (req: any, res) => {
       `INSERT INTO drafts (user_id, payload, updated_at) VALUES (?, ?, datetime('now','+8 hours'))
        ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`
     ).run(userId, json);
+
+    // 记录到历史（自动保存来源）
+    recordDraftHistory(userId, payload, 'auto', clientId);
 
     // 不回发给发起方：它本地已经是最新的，回发反而会打断正在输入的光标
     broadcast(userId, clientId, 'draft', { payload, from: clientId, at: Date.now() });

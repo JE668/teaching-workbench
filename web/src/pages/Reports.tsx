@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   BookOpenCheck,
   CalendarRange,
@@ -13,6 +13,9 @@ import {
   Trash2,
   TrendingUp,
   Users,
+  Sparkles,
+  Loader2,
+  X,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Student } from '../types';
@@ -61,6 +64,7 @@ function StatTile({
 
 export default function Reports() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [reports, setReports] = useState<MonthlyReport[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +80,9 @@ export default function Reports() {
   const [deleting, setDeleting] = useState(false);
   /** 跨月进度弹窗当前看的学生 */
   const [progressStudent, setProgressStudent] = useState<{ id: number; name: string } | null>(null);
+  /** 正在生成总结/规划的报告 ID 集合，用于按钮 loading 态 */
+  const [generatingSummaryIds, setGeneratingSummaryIds] = useState<Set<number>>(new Set());
+  const [generatingPlanIds, setGeneratingPlanIds] = useState<Set<number>>(new Set());
 
   const loadReports = useCallback(async (stu = '') => {
     const query = stu ? '?studentId=' + encodeURIComponent(stu) : '';
@@ -336,6 +343,45 @@ export default function Reports() {
                               打开
                             </Button>
                           </Link>
+                          {/* AI 生成总结按钮 */}
+                          {!r.summary_enabled && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="AI 生成本月总结"
+                              aria-label="AI 生成总结"
+                              onClick={async () => {
+                                const modal = await import('./ReportEdit').then(m => m.default);
+                                // 这里需要在列表页直接调用 AI 生成，不跳转编辑页
+                                // 简化：先跳转到编辑页，由编辑页处理生成
+                                navigate(`/reports/${r.id}?aiGenerate=summary`);
+                              }}
+                              disabled={generatingSummaryIds.has(r.id)}
+                            >
+                              {generatingSummaryIds.has(r.id) ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
+                              ) : (
+                                <Sparkles className="h-4 w-4 text-emerald-500" />
+                              )}
+                            </Button>
+                          )}
+                          {/* AI 生成规划按钮 */}
+                          {!r.plan_enabled && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="AI 生成本月规划"
+                              aria-label="AI 生成规划"
+                              onClick={() => navigate(`/reports/${r.id}?aiGenerate=plan`)}
+                              disabled={generatingPlanIds.has(r.id)}
+                            >
+                              {generatingPlanIds.has(r.id) ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
+                              ) : (
+                                <Sparkles className="h-4 w-4 text-brand-500" />
+                              )}
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"

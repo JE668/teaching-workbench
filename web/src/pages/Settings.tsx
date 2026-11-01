@@ -136,6 +136,8 @@ export default function Settings() {
   const [useCustomModel, setUseCustomModel] = useState(false);
   // 模型列表整个没取到时（网络异常/后端不可用），要明确告知而不是静默变输入框
   const [modelsFailed, setModelsFailed] = useState(false);
+  // API Key 防抖定时器
+  const apiKeyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * 拉取可用模型列表（首次加载与"重新获取"共用）。
@@ -545,6 +547,15 @@ export default function Settings() {
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
+              onBlur={() => {
+                // 防抖触发模型列表获取
+                if (apiKeyDebounceRef.current) clearTimeout(apiKeyDebounceRef.current);
+                apiKeyDebounceRef.current = setTimeout(() => {
+                  if (apiKey.trim()) {
+                    loadModels(form.reasoningEffort);
+                  }
+                }, 800);
+              }}
               placeholder={apiKeyConfigured ? '已配置（留空则不修改）' : '请填写服务商的 API Key'}
               icon={<KeyRound className="h-4 w-4" />}
             />

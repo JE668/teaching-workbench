@@ -13,6 +13,7 @@ import studentRoutes from './routes/students.js';
 import followupRoutes from './routes/followups.js';
 import uploadRoutes from './routes/uploads.js';
 import draftRoutes from './routes/draft.js';
+import draftHistoryRoutes from './routes/draftHistory.js';
 import observationDraftRoutes from './routes/observations.draft.js';
 import groupRoutes from './routes/groups.js';
 import settingsRoutes from './routes/settings.js';
@@ -149,6 +150,7 @@ export function createApp() {
   app.use('/api/reports', authMiddleware, reportRoutes);
   app.use('/api/reports', authMiddleware, reportAiRoutes);
   app.use('/api/draft', authMiddleware, draftRoutes);
+  app.use('/api/draft', authMiddleware, draftHistoryRoutes);
   app.use('/api', authMiddleware, uploadRoutes);
 
   // ========== 错误处理 ==========
