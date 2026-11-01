@@ -47,23 +47,38 @@ jobs:
 
       - name: Download Tesseract language data
         working-directory: server
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           mkdir -p tessdata
-          # Download Chinese Simplified and English traineddata files from official tessdata repo
-          echo "Downloading chi_sim.traineddata..."
-          curl -fL -o tessdata/chi_sim.traineddata "https://github.com/tesseract-ocr/tessdata_best/raw/main/chi_sim.traineddata"
-          echo "Downloading eng.traineddata..."
-          curl -fL -o tessdata/eng.traineddata "https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata"
+          echo "Downloading Tesseract language data..."
+          
+          # Use a more reliable download approach with explicit output and error handling
+          download_file() {
+            local url=$1
+            local output=$2
+            echo "Downloading $output from $url"
+            curl -fSL --retry 3 --retry-delay 5 -o "$output.tmp" "$url" && mv "$output.tmp" "$output"
+          }
+          
+          # Download from tessdata_best (more complete) with proper error handling
+          download_file "https://github.com/tesseract-ocr/tessdata_best/raw/main/chi_sim.traineddata" "tessdata/chi_sim.traineddata"
+          download_file "https://github.com/tesseract-ocr/tessdata_best/raw/main/eng.traineddata" "tessdata/eng.traineddata"
+          
           # Verify downloads - check file sizes are reasonable (> 1MB)
-          CHI_SIZE=$(stat -c%s tessdata/chi_sim.traineddata)
-          ENG_SIZE=$(stat -c%s tessdata/eng.traineddata)
+          CHI_SIZE=$(stat -c%s tessdata/chi_sim.traineddata 2>/dev/null || stat -f%z tessdata/chi_sim.traineddata)
+          ENG_SIZE=$(stat -c%s tessdata/eng.traineddata 2>/dev/null || stat -f%z tessdata/eng.traineddata)
+          
+          echo "chi_sim.traineddata size: $CHI_SIZE bytes"
+          echo "eng.traineddata size: $ENG_SIZE bytes"
+          
           if [ "$CHI_SIZE" -lt 1000000 ] || [ "$ENG_SIZE" -lt 1000000 ]; then
             echo "ERROR: Downloaded traineddata files too small (chi: $CHI_SIZE, eng: $ENG_SIZE)"
+            ls -la tessdata/
             exit 1
           fi
-          echo "✅ Traineddata files downloaded successfully"
+          
+          echo "✅ Traineddata files downloaded and verified successfully"
           ls -la tessdata/
 
       - name: Type check & build
