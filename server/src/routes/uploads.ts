@@ -5,6 +5,7 @@ import fs from 'fs';
 import { env } from '../config/env.js';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
+import { log } from '../utils/logger.js';
 import {
   stagingDirFor,
   discardStagedImage,

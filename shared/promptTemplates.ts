@@ -7,7 +7,11 @@
  * - REPORT_PROMPT_VERSION：模板版本号，生成时记入数据库便于回放
  */
 
-import type { FollowUpModule } from '../server/src/types/index.js';
+export type FollowUpModule = 
+  | 'class_content' | 'homework_review' | 'class_performance' | 'notes_trace'
+  | 'quiz_test' | 'preview' | 'review_consolidation' | 'learning_method'
+  | 'focus_habits' | 'emotional_state' | 'parent_communication' | 'special_events'
+  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic';
 
 // ============ 版本号 ============
 // 修改任何模板内容后，必须递增此版本号
@@ -101,7 +105,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
     },
     rules: ['必须区分「粗心」「概念不清」「完全不会」三类错因，不要笼统说「有错题」。'],
   },
-  notes_traces: {
+  notes_trace: {
     label: '笔记/解题痕迹',
     group: '常规类',
     point: '看孩子课堂笔记、草稿纸、解题步骤，判断吸收程度与书写规范。',

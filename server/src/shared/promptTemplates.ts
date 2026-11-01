@@ -7,7 +7,11 @@
  * - REPORT_PROMPT_VERSION：模板版本号，生成时记入数据库便于回放
  */
 
-import type { FollowUpModule } from '../server/src/types/index.js';
+export type FollowUpModule = 
+  | 'class_content' | 'homework_review' | 'class_performance' | 'notes_trace'
+  | 'quiz_test' | 'preview' | 'review_consolidation' | 'learning_method'
+  | 'focus_habits' | 'emotional_state' | 'parent_communication' | 'special_events'
+  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic';
 
 // ============ 版本号 ============
 // 修改任何模板内容后，必须递增此版本号
@@ -43,6 +47,8 @@ export interface ModuleGuidance {
   point: string;
   /** 三段的写法指引（约字数上限沿用学校「约 150 字」的总控口径） */
   sections: { classContent: string; gains: string; homework: string };
+  /** 小组课专用的三段写法（面向全班，不用学生称呼） */
+  groupSections?: { classContent: string; gains: string; homework: string };
   /** 本模块特有的补充要求，追加在通用硬性要求之外 */
   rules: string[];
 }
@@ -62,6 +68,11 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
       homework: '{homeworkDefault}，任务围绕这节课讲的内容展开。约 35-50 字。',
     },
     rules: [],
+    groupSections: {
+      classContent: '描述同学们在{speechScope}的学习表现与进度{multiRecap}，要与{grade}{subject}的课程标准相衔接。约 50-65 字。',
+      gains: '对全班的整体评价：{gainsDefault}{gainsTail}，点出集体掌握好的、集体还需加强的。约 50-65 字。',
+      homework: '{homeworkDefault}，面向全班的巩固任务。约 35-50 字。',
+    },
   },
   class_performance: {
     label: '课堂总结',
@@ -94,7 +105,7 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
     },
     rules: ['必须区分「粗心」「概念不清」「完全不会」三类错因，不要笼统说「有错题」。'],
   },
-  notes_traces: {
+  notes_trace: {
     label: '笔记/解题痕迹',
     group: '常规类',
     point: '看孩子课堂笔记、草稿纸、解题步骤，判断吸收程度与书写规范。',

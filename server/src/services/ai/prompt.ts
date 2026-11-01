@@ -1,10 +1,10 @@
-import { normalizeFollowUpModule, FOLLOWUP_MODULES } from '../utils/mappers.js';
-import type { FollowUpModule } from '../types/index.js';
+import { normalizeFollowUpModule, FOLLOWUP_MODULES } from '../../utils/mappers.js';
+import type { FollowUpModule } from '../../types/index.js';
 import { COMMON_RULES, MODULE_GUIDANCE, REPORT_PROMPT_VERSION } from '../../shared/promptTemplates.js';
-import { getOcrText } from './ocr.js';
+import { getOcrText } from '../ocr.js';
 import { getSetting, getAiConfig } from '../../config/settings.js';
 import { countWords } from './utils.js';
-import { log } from '../utils/logger.js';
+import { log } from '../../utils/logger.js';
 
 // ========== 常量 ==========
 
@@ -234,17 +234,17 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
     lines.push('【学生收获】', fill(CLOSING_GAINS), '', '【课后任务】', fill(CLOSING_HOMEWORK), '');
   } else {
     // 小组课使用 groupSections（如有），否则回落到普通 sections
-    const useGroupSections = isGroup && mod.groupSections;
+    const useGroupSections = isGroup && !!mod.groupSections;
     lines.push(
       '# 输出格式（严格三段，段标题必须一字不差地原样保留）',
       '【课堂内容】',
-      fill(useGroupSections ? mod.groupSections.classContent : mod.sections.classContent),
+      fill(useGroupSections ? mod.groupSections!.classContent : mod.sections.classContent),
       '',
       '【学生收获】',
-      fill(useGroupSections ? mod.groupSections.gains : mod.sections.gains),
+      fill(useGroupSections ? mod.groupSections!.gains : mod.sections.gains),
       '',
       '【课后任务】',
-      fill(useGroupSections ? mod.groupSections.homework : mod.sections.homework),
+      fill(useGroupSections ? mod.groupSections!.homework : mod.sections.homework),
       ''
     );
   }

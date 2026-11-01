@@ -35,17 +35,6 @@ const WRITABLE = Object.keys(FALLBACK);
 
 export const SETTING_KEYS = WRITABLE;
 
-function readRaw(key: string, userId: number): string | null {
-  try {
-    const row = db
-      .prepare('SELECT value FROM settings_user WHERE user_id = ? AND key = ?')
-      .get(userId, key) as any;
-    return row ? String(row.value) : null;
-  } catch {
-    return null; // 表还没建好等情况：退回默认值
-  }
-}
-
 /**
  * 读取某个账号的设置。userId 缺省时只走 .env / 内置兜底（给 buildPrompt
  * 这类无请求上下文的纯函数复用，同时保证单测不需要数据库）。
@@ -88,6 +77,18 @@ export function getOverrides(userId: number): Record<string, string> {
     if (stored !== null && stored !== '') out[key] = stored;
   }
   return out;
+}
+
+/** 供内部使用：读取原始值（用于审计对比） */
+export function readRaw(key: string, userId: number): string | null {
+  try {
+    const row = db
+      .prepare('SELECT value FROM settings_user WHERE user_id = ? AND key = ?')
+      .get(userId, key) as any;
+    return row ? String(row.value) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function setSetting(key: string, value: string, userId: number): void {

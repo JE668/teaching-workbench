@@ -1,4 +1,5 @@
 import type { Response, Request } from 'express';
+import { log } from './logger.js';
 
 /**
  * 打开一条 SSE 响应并返回写接口。回访和月度总结的流式路由共用这一份。

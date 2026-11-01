@@ -307,7 +307,7 @@ export async function* streamChat(
 
 // Re-export utilities
 export { countWords, imageToBase64DataUrl, correctionText, MIN_WORDS, MAX_WORDS } from './utils.js';
-export { followUpWordRangeForParams, isWordCountOk, MODULE_GUIDANCE } from './prompt.js';
+export { followUpWordRangeForParams, isWordCountOk, MODULE_GUIDANCE, FollowUpGenerateParams, FollowUpHistoryItem } from './prompt.js';
 export { getSharedClient, getClient } from './client.js';
 
 // ============ 兼容层：旧路由/测试依赖的导出 ============
