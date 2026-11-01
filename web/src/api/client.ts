@@ -410,6 +410,24 @@ class ApiClient {
   delete(path: string) {
     return this.request(path, { method: 'DELETE' });
   }
+
+  /** 草稿历史相关 API */
+  async getDraftHistory(limit?: number): Promise<{ history: any[] }> {
+    const params = limit ? `?limit=${limit}` : '';
+    return this.request(`/draft/history${params}`);
+  }
+
+  async restoreDraftHistory(id: number, clientId?: string): Promise<{ success: boolean; payload: any }> {
+    return this.post(`/draft/history/${id}/restore`, { clientId });
+  }
+
+  async deleteDraftHistory(id: number): Promise<{ success: boolean }> {
+    return this.delete(`/draft/history/${id}`);
+  }
+
+  async clearDraftHistory(): Promise<{ success: boolean }> {
+    return this.delete(`/draft/history`);
+  }
 }
 
 /** 从 Content-Disposition 里取文件名，优先 RFC 5987 的 UTF-8 编码形式 */

@@ -61,6 +61,7 @@ import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { countWords, copyText, cn, relativeTime } from '../lib/utils';
+import { Loader2, RotateCcw, Trash2, Clock, ArrowLeft, Archive } from 'lucide-react';
 import { extractDroppedImages } from '../lib/dropFiles';
 import { VoiceButton } from '../components/ui/VoiceButton';
 
@@ -172,6 +173,9 @@ export default function FollowUp() {
   const [draft, setDraft] = useState(() => restored?.draft || '');
   const [saving, setSaving] = useState(false);
   const [providerLabel, setProviderLabel] = useState('SenseNova 多模态');
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [draftHistory, setDraftHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
@@ -309,6 +313,49 @@ export default function FollowUp() {
       toast.info('已恢复上次未保存的内容');
     }
   }, [restored]);
+
+  // 草稿历史相关函数
+  const loadDraftHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await api.getDraftHistory(20);
+      setDraftHistory(res.history || []);
+    } catch (err: any) {
+      toast.error('加载草稿历史失败：' + err.message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const restoreDraft = async (item: any) => {
+    try {
+      const res = await api.restoreDraftHistory(item.id);
+      if (res.success && res.payload) {
+        // 恢复表单数据
+        setForm((prev) => ({ ...prev, ...res.payload.form }));
+        setImages(res.payload.images || []);
+        setSelectedIds(res.payload.selectedIds || []);
+        setContent(res.payload.content || '');
+        setDraft(res.payload.draft || '');
+        setShowHistoryPanel(false);
+        toast.success('已恢复到 ' + relativeTime(item.createdAt) + ' 的版本');
+      }
+    } catch (err: any) {
+      toast.error('恢复失败：' + err.message);
+    }
+  };
+
+  const deleteDraft = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('确定删除这条历史记录吗？')) return;
+    try {
+      await api.deleteDraftHistory(id);
+      setDraftHistory((prev) => prev.filter((h) => h.id !== id));
+      toast.success('已删除');
+    } catch (err: any) {
+      toast.error('删除失败：' + err.message);
+    }
+  };
 
   // 生成耗时计时：让用户知道请求在跑，而不是卡死
   useEffect(() => {
@@ -642,8 +689,38 @@ export default function FollowUp() {
             <Sparkles className="h-3.5 w-3.5 text-brand-500" />
             <span className="font-medium text-slate-600">{providerLabel}</span>
           </div>
+
+          {/* 草稿历史按钮 */}
+          <button
+            type="button"
+            onClick={() => {
+              setShowHistoryPanel(!showHistoryPanel);
+              if (!showHistoryPanel) loadDraftHistory();
+            }}
+            className={cn(
+              'flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs shadow-soft ring-1 transition-all duration-200',
+              showHistoryPanel
+                ? 'bg-brand-50 text-brand-700 ring-brand-200 shadow-soft'
+                : 'bg-white text-slate-600 ring-slate-100 hover:bg-slate-50'
+            )}
+            title={showHistoryPanel ? '关闭历史面板' : '查看草稿历史（最近 20 条自动保存）'}
+          >
+            <History className="h-3.5 w-3.5" />
+            <span className="font-medium">草稿历史</span>
+          </button>
         </div>
       </div>
+
+      {/* 草稿历史侧边面板 */}
+      {showHistoryPanel && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          onClick={() => setShowHistoryPanel(false)}
+          aria-hidden="true"
+        >
+          <div className="absolute inset-0 bg-black/30" />
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ===== 左侧：信息录入 ===== */}
@@ -1531,6 +1608,138 @@ export default function FollowUp() {
           )}
         </div>
       </div>
+
+      {/* 草稿历史侧边栏（桌面端） */}
+      {showHistoryPanel && (
+        <aside className="fixed right-0 top-0 h-full w-96 lg:static lg:h-auto lg:w-auto lg:grid-cols-1" style={{ zIndex: 40 }}>
+          <div className="lg:col-span-1">
+            <Card className="h-full flex flex-col">
+              <CardHeader
+                title="草稿历史"
+                description="最近 20 条自动保存记录，点击可恢复"
+                icon={<Archive className="h-4 w-4" />}
+                action={
+                  draftHistory.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!window.confirm('确定清空所有草稿历史吗？')) return;
+                        try {
+                          await api.clearDraftHistory();
+                          setDraftHistory([]);
+                          toast.success('已清空历史');
+                        } catch (err: any) {
+                          toast.error('清空失败：' + err.message);
+                        }
+                      }}
+                      className="text-xs text-red-500 hover:underline"
+                    >
+                      清空全部
+                    </button>
+                  ) : null
+                }
+              />
+              <div className="flex-1 overflow-y-auto p-4">
+                {loadingHistory ? (
+                  <div className="flex items-center justify-center h-32">
+                    <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+                  </div>
+                ) : draftHistory.length === 0 ? (
+                  <div className="text-center py-8 text-slate-400">
+                    <History className="mx-auto h-10 w-10 mb-2 opacity-50" />
+                    <p className="text-sm">暂无草稿历史</p>
+                    <p className="text-xs mt-1">编辑内容时会自动记录</p>
+                  </div>
+                ) : (
+                  <ul className="space-y-3" role="list">
+                    {draftHistory.map((item) => (
+                      <li
+                        key={item.id}
+                        onClick={() => restoreDraft(item)}
+                        className="group relative p-3 rounded-xl bg-slate-50 ring-1 ring-slate-100 hover:bg-slate-100 hover:ring-slate-200 transition-all cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between gap-2 pr-8">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-xs mb-1">
+                              <span className="font-medium text-slate-700 truncate">
+                                {item.payload?.form?.studentName || item.payload?.form?.topic || '未命名草稿'}
+                              </span>
+                              <span className="text-slate-400 whitespace-nowrap">
+                                {relativeTime(item.createdAt)}
+                              </span>
+                              <span
+                                className={cn(
+                                  'rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset',
+                                  item.source === 'ai'
+                                    ? 'bg-purple-50 text-purple-700 ring-purple-200'
+                                    : item.source === 'manual'
+                                    ? 'bg-brand-50 text-brand-700 ring-brand-200'
+                                    : 'bg-slate-50 text-slate-600 ring-slate-200'
+                                )}
+                              >
+                                {item.source === 'ai' ? 'AI' : item.source === 'manual' ? '手动' : '自动'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 line-clamp-2">
+                              {item.payload?.content
+                                ? item.payload.content.slice(0, 80) + '…'
+                                : item.payload?.draft
+                                ? item.payload.draft.slice(0, 80) + '…'
+                                : item.payload?.form?.performance
+                                ? item.payload.form.performance.slice(0, 80) + '…'
+                                : '无内容预览'}
+                            </div>
+                            {item.payload?.form?.modules?.length && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {item.payload.form.modules.slice(0, 4).map((m: string) => (
+                                  <span
+                                    key={m}
+                                    className="rounded px-1.5 py-0.5 text-[10px] bg-white text-slate-500 ring-1 ring-slate-200"
+                                  >
+                                    {FOLLOWUP_MODULE_LABELS[m as any] || m}
+                                  </span>
+                                ))}
+                                {item.payload.form.modules.length > 4 && (
+                                  <span className="rounded px-1.5 py-0.5 text-[10px] bg-white text-slate-400 ring-1 ring-slate-200">
+                                    +{item.payload.form.modules.length - 4}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => deleteDraft(item.id, e)}
+                            className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-opacity p-1"
+                            aria-label="删除此历史记录"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+                          <span>点击恢复此版本</span>
+                          <RotateCcw className="h-3 w-3" />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Card>
+          </div>
+        </aside>
+      )}
+
+      {/* 移动端抽屉遮罩 */}
+      {showHistoryPanel && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          onClick={() => setShowHistoryPanel(false)}
+          aria-hidden="true"
+        >
+          <div className="absolute inset-0 bg-black/30" />
+        </div>
+      )}
     </div>
   );
 }
