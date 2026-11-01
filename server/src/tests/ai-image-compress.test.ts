@@ -6,7 +6,7 @@ import path from 'path';
 import sharp from 'sharp';
 import { startServer, stopServer } from './helpers.js';
 import { env } from '../config/env.js';
-import { imageToBase64DataUrl } from '../services/ai.js';
+import { imageToBase64DataUrl } from '../services/ai/utils.js';
 
 /**
  * 第 4 项：AI 请求前压缩图片。

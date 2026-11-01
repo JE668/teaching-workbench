@@ -1,4 +1,4 @@
-import { getSharedClient, withAiSlot, acquireAiSlot, releaseAiSlot, describeAiError } from './ai.js';
+import { getSharedClient, withAiSlot, acquireAiSlot, releaseAiSlot, describeAiError } from './ai/index.js';
 import { getAiConfig } from '../config/settings.js';
 import { OVERALL_GRADE_LABELS } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';

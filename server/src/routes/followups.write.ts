@@ -11,7 +11,7 @@ import {
   normalizeFollowUpModules,
   serializeFollowUpModules,
 } from '../utils/mappers.js';
-import { countWords } from '../services/ai.js';
+import { countWords } from '../services/ai/index.js';
 import { commitImages } from '../services/imageLifecycle.js';
 import { validateBody } from '../utils/validation.js';
 import { followUpCreateSchema, followUpUpdateSchema } from '../utils/schemas.js';

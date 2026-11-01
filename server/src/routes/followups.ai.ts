@@ -8,13 +8,11 @@ import {
   describeAiError,
   isWordCountOk,
   countWords,
-  correctionText,
-  MIN_WORDS,
-  MAX_WORDS,
   followUpWordRangeForParams,
   type FollowUpGenerateParams,
   type FollowUpHistoryItem,
-} from '../services/ai.js';
+} from '../services/ai/index.js';
+import { correctionText, MIN_WORDS, MAX_WORDS } from '../services/ai/utils.js';
 import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule, normalizeFollowUpModules } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
@@ -141,25 +139,32 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
 
   const params = buildGenerateParams(req.userId!, req.body);
 
-  const sse = openSse(res);
+  const sse = openSse(req, res);
   const { send } = sse;
 
   try {
     let full = '';
+    let phase = 'generating';
+    // 阶段标记：首次开始生成
+    send('phase', { phase, message: '开始生成回访内容...' }, { id: 'phase-generating' });
+
     for await (const delta of runStreamGeneration(req.userId!, params)) {
-      if (sse.isGone()) break; // 客户端已断开，停止消耗
+      if (sse.isGone()) break;
       full += delta;
       send('delta', { text: delta });
     }
+
+    phase = 'checking';
+    send('phase', { phase, message: '检查字数是否达标...' }, { id: 'phase-checking' });
 
     let content = full.trim();
     let wordCount = countWords(content);
     let regenerated = false;
 
-    // 字数不达标 -> 追加纠偏指令重试一次。区间按板块数放宽：
-    // 覆盖 8 个板块的内容天然比 1 个板块长，用死区间会把合格的长文判成不合格。
     const wordRange = followUpWordRangeForParams(params);
     if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
+      phase = 'regenerating';
+      send('phase', { phase, message: '字数不达标，正在重试...' }, { id: 'phase-regenerating' });
       send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
       try {
         const retryContent = await retryGeneration(
@@ -181,6 +186,8 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
       }
     }
 
+    phase = 'done';
+    send('phase', { phase, message: '生成完成' }, { id: 'phase-done' });
     send('done', { content, wordCount, regenerated });
   } catch (error: any) {
     const { message } = describeAiError(error);

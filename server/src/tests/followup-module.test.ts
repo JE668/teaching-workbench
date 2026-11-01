@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, createUser, createStudent, createFollowUp } from './helpers.js';
-import { buildPrompt, MODULE_GUIDANCE, FollowUpGenerateParams, followUpWordRange } from '../services/ai.js';
+import { buildPrompt, MODULE_GUIDANCE, FollowUpGenerateParams, followUpWordRangeForParams } from '../services/ai/prompt.js';
 import { normalizeFollowUpModule, normalizeFollowUpModules, FOLLOWUP_MODULES } from '../utils/mappers.js';
 import type { FollowUpModule } from '../types/index.js';
 

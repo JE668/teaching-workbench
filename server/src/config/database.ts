@@ -276,6 +276,56 @@ export function initDatabase() {
     )
   `);
 
+  // 图片 OCR 文本存储：上传时识别，AI 生成时作为额外上下文
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS image_ocr (
+      user_id INTEGER NOT NULL,
+      image_path TEXT NOT NULL,
+      text TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      PRIMARY KEY (user_id, image_path)
+    )
+  `);
+
+  // 设置变更审计：记录谁在什么时候改了什么配置，用于问题排查
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      changed_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_settings_audit_user_time ON settings_audit(user_id, changed_at DESC)');
+
+  // AI 调用指标：记录每次 AI 请求的关键指标，便于性能分析与成本核算
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ai_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      endpoint TEXT NOT NULL,           -- 如 followup_stream, report_summary, report_plan
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      latency_ms INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,             -- success, error, retry
+      error_message TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      word_count INTEGER,
+      word_range_min INTEGER,
+      word_range_max INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_ai_metrics_user_time ON ai_metrics(user_id, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_ai_metrics_endpoint ON ai_metrics(endpoint, status)');
+
   // 小组课分组预设（如"周六上午三年级班"）
   db.exec(`
     CREATE TABLE IF NOT EXISTS groups (

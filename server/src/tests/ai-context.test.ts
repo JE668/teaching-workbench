@@ -5,12 +5,11 @@ import { startServer, stopServer, createUser, createStudent, userIdOf } from './
 import { db } from '../config/database.js';
 import {
   correctionText,
-  buildPrompt,
-  followUpWordRangeForParams,
   MIN_WORDS,
   MAX_WORDS,
   FollowUpGenerateParams,
-} from '../services/ai.js';
+} from '../services/ai/utils.js';
+import { buildPrompt, followUpWordRangeForParams } from '../services/ai/prompt.js';
 import { fetchFollowUpHistory, buildGenerateParams } from '../routes/followups.ai.js';
 
 /**
@@ -111,7 +110,7 @@ describe('字数纠偏文案（第 6 项）', () => {
     // isWordCountOk 判定的值不会走到这里，此分支是防御性兜底
     const text = correctionText(110, { min: 100, max: 120 });
     assert.ok(text.includes('100-120'), '应给出目标区间');
-    assert.ok(text.includes('调整到'), '区间内应提示调整');
+    assert.ok(text.includes('达标'), '区间内应提示达标');
   });
 });
 
@@ -138,9 +137,9 @@ describe('回访历史上下文 prompt（第 1 项）', () => {
         { content: '上次重点讲了分数加减法，孩子通分步骤掌握得不错。', when: '上一次', topic: '分数加减法运算' },
       ],
     });
-    assert.ok(prompt.includes('历史回访记录'), '应出现历史区块标题');
+    assert.ok(prompt.includes('历史回访（若有'), '应出现历史区块标题');
     assert.ok(prompt.includes('上一次'), '应标注时间');
-    assert.ok(prompt.includes('不要照搬'), '应有防重复指令');
+    assert.ok(prompt.includes('不要复述') || prompt.includes('不要重复'), '应有防重复指令');
     assert.ok(prompt.includes('呼应'), '应有呼应进步指令');
     assert.ok(prompt.includes('通分步骤掌握得不错'), '应包含上次回访内容');
     assert.ok(prompt.includes('分数加减法运算'), '应带上次回访的主题');

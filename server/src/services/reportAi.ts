@@ -1,7 +1,9 @@
-import { runChatStream, runChatOnce, type ChatMessage, type ChatOptions } from './ai.js';
+import { runChatOnce, runChatStream, type ChatMessage, type ChatOptions } from './ai/index.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
 import { SUMMARY_SECTION_TITLES, PLAN_SECTION_TITLES, SUMMARY_WORD_RANGE, planWordRange } from '../shared/reportTemplate.js';
+import { COMMON_RULES } from '../shared/promptTemplates.js';
+import { recordAiMetrics } from './aiMetrics.js';
 
 /**
  * 月度总结与课程规划的 AI 编写。
@@ -43,16 +45,6 @@ export interface ReportAiParams {
    */
   prevSummary?: string;
 }
-
-/** 1对1 + 家长视角的公共红线，回访 / 月度总结口径一致 */
-const COMMON_RULES = [
-  '2. 只有一对一教学。严禁出现「小组讨论」「小组合作」「同学们」「多名学生」「全班」等集体表述。',
-  '3. 不要出现学生的全名，也不要出现别的学生。',
-  '4. 只写上面给到的内容。不要编造具体分数、考试排名、名次变化、课堂纪律细节，' +
-    '没有回访记录时收获和不足就只依据课程内容清单来写。',
-  '5. 收获和进步要落到具体课程内容上，不足要写成家长可以配合的动作，不要情绪化、不要指责孩子。',
-  '6. 直接输出正文，不要前言、不要「以下是」这类话，不要重复段落小标题以外的任何说明。',
-];
 
 function who(p: ReportAiParams): string {
   const name = (p.studentName || '').trim();
@@ -234,7 +226,41 @@ export function isWordCountOk(n: number, min: number, max: number): boolean {
 
 /** 流式产出总结 / 规划的正文增量 */
 export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncGenerator<string> {
-  yield* runChatStream(userId, buildReportAiMessages(p), optionsFor(p.field));
+  const endpoint = p.field === 'plan' ? 'report_plan_stream' : 'report_summary_stream';
+  const { getAiConfig, getClient, countWords } = await import('./ai/index.js');
+  const config = getAiConfig(userId);
+  const start = Date.now();
+  let fullContent = '';
+  let recorded = false;
+  try {
+    for await (const delta of runChatStream(userId, buildReportAiMessages(p), optionsFor(p.field))) {
+      fullContent += delta;
+      yield delta;
+    }
+    recorded = true;
+    await recordAiMetrics({
+      userId,
+      provider: config.provider,
+      model: config.model,
+      endpoint,
+      latencyMs: Date.now() - start,
+      status: 'success',
+      wordCount: countWords(fullContent),
+    });
+  } catch (error: any) {
+    if (!recorded) {
+      await recordAiMetrics({
+        userId,
+        provider: config.provider,
+        model: config.model,
+        endpoint,
+        latencyMs: Date.now() - start,
+        status: 'error',
+        errorMessage: error.message,
+      });
+    }
+    throw error;
+  }
 }
 
 /** 非流式，供单测与兜底。correction 为字数纠偏指令（重试时用，追加为一条 user 消息） */
@@ -243,5 +269,32 @@ export async function generateReportAiOnce(
   p: ReportAiParams,
   correction?: string
 ): Promise<string> {
-  return runChatOnce(userId, buildReportAiMessages(p, correction), optionsFor(p.field));
+  const endpoint = p.field === 'plan' ? 'report_plan_once' : 'report_summary_once';
+  const { getAiConfig, countWords } = await import('./ai/index.js');
+  const config = getAiConfig(userId);
+  const start = Date.now();
+  try {
+    const content = await runChatOnce(userId, buildReportAiMessages(p, correction), optionsFor(p.field));
+    await recordAiMetrics({
+      userId,
+      provider: config.provider,
+      model: config.model,
+      endpoint,
+      latencyMs: Date.now() - start,
+      status: 'success',
+      wordCount: countWords(content),
+    });
+    return content;
+  } catch (error: any) {
+    await recordAiMetrics({
+      userId,
+      provider: config.provider,
+      model: config.model,
+      endpoint,
+      latencyMs: Date.now() - start,
+      status: 'error',
+      errorMessage: error.message,
+    });
+    throw error;
+  }
 }

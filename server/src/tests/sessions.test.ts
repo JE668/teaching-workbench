@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, url, createUser, createStudent, createFollowUp } from './helpers.js';
-import { buildPrompt } from '../services/ai.js';
+import { buildPrompt } from '../services/ai/prompt.js';
 import { normalizeSessionCount } from '../utils/mappers.js';
 
 let token = '';

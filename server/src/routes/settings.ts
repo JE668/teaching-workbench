@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { db } from '../config/database.js';
 import {
   SETTING_KEYS,
   getAllSettings,
@@ -10,6 +11,7 @@ import {
   maskSecret,
   getAiConfig,
 } from '../config/settings.js';
+import { log } from '../utils/logger.js';
 
 const router = Router();
 
@@ -374,6 +376,7 @@ router.put('/', (req: any, res) => {
   try {
     const body = req.body || {};
     const patch: Record<string, string> = {};
+    const auditEntries: Array<[number, string, string | null, string]> = [];
 
     for (const key of SETTING_KEYS) {
       if (!(key in body)) continue;
@@ -412,6 +415,12 @@ router.put('/', (req: any, res) => {
         return res.status(400).json({ error: '风格偏好不超过 500 字' });
       }
 
+      // 记录旧值用于审计
+      const oldValue = readRaw(key, req.userId!) || null;
+      if (oldValue !== value) {
+        auditEntries.push([req.userId!, key, oldValue, value]);
+      }
+
       patch[key] = value;
     }
 
@@ -422,6 +431,18 @@ router.put('/', (req: any, res) => {
     setSettings(patch, req.userId!);
     // 让该账号的 AI 客户端按新配置重建
     bumpConfigVersion(req.userId!);
+
+    // 写入审计日志
+    if (auditEntries.length > 0) {
+      const stmt = db.prepare(
+        `INSERT INTO settings_audit (user_id, key, old_value, new_value, changed_at)
+         VALUES (?, ?, ?, ?, datetime('now','+8 hours'))`
+      );
+      const tx = db.transaction((entries: Array<[number, string, string | null, string]>) => {
+        for (const e of entries) stmt.run(...e);
+      });
+      tx(auditEntries);
+    }
 
     res.json({ success: true, updated: Object.keys(patch) });
   } catch (error: any) {

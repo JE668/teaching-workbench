@@ -24,6 +24,10 @@ const FALLBACK: Record<string, () => string> = {
   'ai.timeoutMs': () => String(env.SENSENOVA_TIMEOUT_MS),
   // 回访 prompt 的风格补充。留空 = 用内置默认语气，不追加任何内容。
   'ai.prompt.style': () => '',
+  // AI 生成质量守护
+  'ai.quality.maxRetries': () => '2',           // 字数/内容不达标时最多重试次数
+  'ai.quality.dedupThreshold': () => '0.7',     // 与历史内容相似度阈值（0-1），超阈值触发重写
+  'ai.quality.enableFactCheck': () => 'true',   // 规划生成后是否做事实核对钩子
 };
 
 /** 前端不允许写入的键（防止写入任意内容） */
@@ -121,6 +125,10 @@ export interface AiConfig {
   apiKey: string;
   reasoningEffort: string;
   timeoutMs: number;
+  // 质量守护参数
+  qualityMaxRetries: number;
+  qualityDedupThreshold: number;
+  qualityEnableFactCheck: boolean;
 }
 
 /** 配置版本号（按账号分桶）：变化时让该账号缓存的 AI 客户端失效 */
@@ -135,6 +143,9 @@ export function getAiConfig(userId: number): AiConfig {
     provider,
     reasoningEffort: getSetting('ai.reasoningEffort', userId) || 'low',
     timeoutMs: Math.max(5000, parseInt(getSetting('ai.timeoutMs', userId), 10) || 60000),
+    qualityMaxRetries: Math.max(0, parseInt(getSetting('ai.quality.maxRetries', userId), 10) || 2),
+    qualityDedupThreshold: Math.max(0, Math.min(1, parseFloat(getSetting('ai.quality.dedupThreshold', userId)) || 0.7)),
+    qualityEnableFactCheck: getSetting('ai.quality.enableFactCheck', userId) !== 'false',
   };
   if (provider === 'gemini-proxy') {
     const rawBaseUrl = getSetting('ai.geminiProxy.baseUrl', userId);

@@ -1,4 +1,4 @@
-import { getSharedClient, withAiSlot, describeAiError } from './ai.js';
+import { getSharedClient, withAiSlot, describeAiError } from './ai/index.js';
 import { getAiConfig } from '../config/settings.js';
 import { log } from '../utils/logger.js';
 import {

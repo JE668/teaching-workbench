@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, createUser, createStudent, createFollowUp } from './helpers.js';
-import { setFollowUpGenerator, resetFollowUpGenerator } from '../services/ai.js';
+import { setFollowUpGenerator, resetFollowUpGenerator } from '../services/ai/index.js';
 
 let token = '';
 

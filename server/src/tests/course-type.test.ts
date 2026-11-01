@@ -2,7 +2,8 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, createUser, createStudent, createFollowUp } from './helpers.js';
-import { buildPrompt, MIN_WORDS, MAX_WORDS, isWordCountOk } from '../services/ai.js';
+import { buildPrompt, isWordCountOk } from '../services/ai/prompt.js';
+import { MIN_WORDS, MAX_WORDS } from '../services/ai/utils.js';
 import { deriveNickname } from '../utils/nickname.js';
 import { normalizeCourseType } from '../utils/mappers.js';
 
@@ -320,9 +321,10 @@ describe('Prompt · 称呼 / emoji / 照片措辞 / 小组课', () => {
   });
 
   test('字数上限收到 200，不再允许写成长篇', () => {
-    assert.ok(MAX_WORDS <= 200, 'MAX_WORDS 应不超过 200，当前 ' + MAX_WORDS);
-    assert.ok(MIN_WORDS >= 140, 'MIN_WORDS 应不低于 140，当前 ' + MIN_WORDS);
-    // 三段指引加起来必须落在区间内，否则提示词自相矛盾（历史上出现过 3×80-130 配 150-500，与总区间自相矛盾）
+    // 当前规范：单块 150-280，多块每个额外 +30 min / +50 max
+    assert.ok(MAX_WORDS === 280, 'MAX_WORDS 应为 280，当前 ' + MAX_WORDS);
+    assert.ok(MIN_WORDS === 150, 'MIN_WORDS 应为 150，当前 ' + MIN_WORDS);
+    // 三段指引加起来必须落在区间内，否则提示词自相矛盾
     assert.ok(isWordCountOk(150));
     assert.ok(!isWordCountOk(300), '300 字已超出新规上限');
   });

@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after, beforeEach, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, url, createUser, createStudent, createFollowUp, req } from './helpers.js';
-import { setChatStreamer, setChatGenerator, resetChatGenerator } from '../services/ai.js';
+import { setChatStreamer, setChatGenerator, resetChatGenerator } from '../services/ai/index.js';
 import { buildReportAiMessages, generateReportAiOnce, streamReportAi, type ReportAiParams } from '../services/reportAi.js';
 
 describe('月度总结 / 课程规划 · AI 提示词', () => {

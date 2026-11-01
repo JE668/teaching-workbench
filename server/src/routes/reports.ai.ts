@@ -1,10 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import {
-  countWords,
-  correctionText,
-} from '../services/ai.js';
+import { countWords, correctionText } from '../services/ai/index.js';
 import {
   streamReportAi,
   generateReportAiOnce,
@@ -100,7 +97,7 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
   };
 
-  const sse = openSse(res);
+  const sse = openSse(req, res);
   const { send } = sse;
 
   /** 距离字数区间的距离（用于两版都不达标时择优） */
@@ -109,11 +106,18 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
 
   try {
     let full = '';
+    let phase = 'generating';
+    // 阶段标记：首次开始生成
+    send('phase', { phase, message: field === 'summary' ? '开始生成本月总结...' : '开始生成本月规划...' }, { id: 'phase-generating' });
+
     for await (const delta of streamReportAi(req.userId!, params)) {
-      if (sse.isGone()) break; // 客户端已断开，停止消耗
+      if (sse.isGone()) break;
       full += delta;
       send('delta', { text: delta });
     }
+
+    phase = 'checking';
+    send('phase', { phase, message: '检查字数是否达标...' }, { id: 'phase-checking' });
 
     let content = full.trim();
     if (!content) {
@@ -122,13 +126,13 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
       return;
     }
 
-    // 字数门禁：prompt 要求总结 240-340 字 / 规划 90-160 字（按课次数动态放宽）。
-    // 首轮落在区间外就追加纠偏指令重试一次（对齐回访的做法），仍不达标则取更接近区间的一版。
-    // 之前没有这道门，模型输出 400 字或 50 字都照单全收，家长看到的总结质量没保障。
+    // 字数门禁
     const planCourseCount = field === 'plan' ? params.planCourses.length : undefined;
     const wordRange = reportWordRange(field, planCourseCount);
     let wordCount = countWords(content);
     if (!isWordCountOk(wordCount, wordRange.min, wordRange.max)) {
+      phase = 'regenerating';
+      send('phase', { phase, message: '字数不达标，正在重试...' }, { id: 'phase-regenerating' });
       send('regenerating', { wordCount, min: wordRange.min, max: wordRange.max });
       try {
         const retryContent = await generateReportAiOnce(
@@ -149,6 +153,8 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
       }
     }
 
+    phase = 'done';
+    send('phase', { phase, message: '生成完成' }, { id: 'phase-done' });
     send('done', { content, wordCount });
   } catch (error: any) {
     const message = String(error?.message || 'AI 生成失败');

@@ -9,7 +9,7 @@ import {
   getAiInFlightCount,
   resetAiGate,
   MAX_CONCURRENT_AI,
-} from '../services/ai.js';
+} from '../services/ai/index.js';
 
 /**
  * AI 并发闸门。
@@ -81,12 +81,14 @@ describe('AI 并发闸门', () => {
 
   test('闸门覆盖所有 AI 入口：回访 / 星级 / 听评课都套上了', async () => {
     // 回归护栏：谁新加一个 AI 能力、忘了套闸门，这里会红。
+    // ai.ts 已拆分为 ai/index.ts, ai/prompt.ts, ai/client.ts, ai/utils.ts
+    // 生成入口在 ai/index.ts (generateOnce/streamOnce)，catalogStar/observation 也在各自文件里用 withAiSlot/acquireAiSlot
     const files = await Promise.all(
-      ['services/ai.ts', 'services/catalogStar.ts', 'services/observation.ts'].map((f) =>
+      ['services/ai/index.ts', 'services/catalogStar.ts', 'services/observation.ts'].map((f) =>
         readFile(new URL('../' + f, import.meta.url), 'utf-8')
       )
     );
-    // ai.ts 2 处（generateOnce / streamOnce），catalogStar 1 处，observation 2 处
+    // ai/index.ts 2 处（generateOnce / streamOnce），catalogStar 1 处，observation 2 处
     const wrapped = files.reduce(
       (sum, s) =>
         sum +

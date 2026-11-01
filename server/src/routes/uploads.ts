@@ -10,6 +10,7 @@ import {
   discardStagedImage,
   STAGING_DIR_NAME,
 } from '../services/imageLifecycle.js';
+import { ocrImages, saveOcrResults } from '../services/ocr.js';
 
 const router = Router();
 
@@ -139,6 +140,17 @@ router.post('/upload', (req: AuthenticatedRequest, res) => {
         error: '仅支持 ' + ALLOWED_LABEL + ' 格式的图片，收到的文件不是有效图片',
       });
     }
+
+    // 异步 OCR 识别，不阻塞上传响应
+    const absolutePaths = paths.map((p) => path.resolve(env.UPLOAD_DIR, p.replace(/^_staging\//, '')));
+    setImmediate(async () => {
+      try {
+        const results = await ocrImages(absolutePaths);
+        await saveOcrResults(userId, results);
+      } catch (e: any) {
+        log.warn({ err: e.message }, '后台 OCR 失败');
+      }
+    });
 
     res.json({
       paths,

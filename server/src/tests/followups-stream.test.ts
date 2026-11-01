@@ -8,7 +8,7 @@ import {
   resetFollowUpGenerator,
   MIN_WORDS,
   MAX_WORDS,
-} from '../services/ai.js';
+} from '../services/ai/index.js';
 
 let token = '';
 
