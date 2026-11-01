@@ -11,7 +11,7 @@ export type FollowUpModule =
   | 'class_content' | 'homework_review' | 'class_performance' | 'notes_trace'
   | 'quiz_test' | 'preview' | 'review_consolidation' | 'learning_method'
   | 'focus_habits' | 'emotional_state' | 'parent_communication' | 'special_events'
-  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic';
+  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic' | 'extra_class';
 
 // ============ 版本号 ============
 // 修改任何模板内容后，必须递增此版本号
@@ -302,4 +302,4 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
 } as const;
 
 // ============ 类型导出 ============
-export type { FollowUpModule };
+// FollowUpModule 已在顶部导出，此处不再重复导出
