@@ -7,13 +7,40 @@
  * - REPORT_PROMPT_VERSION：模板版本号，生成时记入数据库便于回放
  */
 
-export type FollowUpModule = 
-  | 'class_content' | 'homework_review' | 'class_performance' | 'notes_trace'
-  | 'quiz_test' | 'preview' | 'review_consolidation' | 'learning_method'
-  | 'focus_habits' | 'emotional_state' | 'parent_communication' | 'special_events'
-  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic' | 'extra_class'
-  | 'habit_building' | 'mindset_coaching' | 'method_guidance' | 'reading_expression'
-  | 'competition_prep' | 'interest_expansion' | 'other';
+export type FollowUpModule =
+  | 'preview'
+  | 'homework_review'
+  | 'class_content'
+  | 'class_performance'
+  | 'note_trace'
+  | 'mistake_drill'
+  | 'homework_assign'
+  | 'accumulation'
+  | 'exam_prep'
+  | 'grade_analysis'
+  | 'stage_test'
+  | 'plan_adjust'
+  | 'student_request'
+  | 'academic_assist'
+  | 'extra_class'
+  | 'makeup_plan'
+  | 'learning_method'
+  | 'focus_habits'
+  | 'emotional_state'
+  | 'parent_communication'
+  | 'special_events'
+  | 'knowledge_gaps'
+  | 'next_week_focus'
+  | 'custom_topic'
+  | 'habit_building'
+  | 'mindset_coaching'
+  | 'method_guidance'
+  | 'reading_expression'
+  | 'competition_prep'
+  | 'interest_expansion'
+  | 'quiz_test'
+  | 'review_consolidation'
+  | 'other';
 
 // ============ 版本号 ============
 // 修改任何模板内容后，必须递增此版本号
@@ -107,7 +134,22 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
     },
     rules: ['必须区分「粗心」「概念不清」「完全不会」三类错因，不要笼统说「有错题」。'],
   },
-  notes_trace: {
+  mistake_drill: {
+    label: '错题专练',
+    group: '常规类',
+    point: '针对积累的错题进行分类专项训练，反馈训练方法与掌握进度。',
+    scene:
+      '错题本/错题标记归类：按错因（粗心/概念/迁移）分组，每组设计变式题、限时练、复盘反思。',
+    sections: {
+      classContent:
+        '本次专练覆盖哪几类错题{multiRecap}，用了什么变式题、限时多久。约 50-65 字。',
+      gains:
+        '{call}对每类错题的掌握进度（如：概念类已能独立做出、粗心类仍需圈画训练）。约 50-65 字。',
+      homework: '每类错题再留 2 道变式题，周末混合复测 5 道。约 35-50 字。',
+    },
+    rules: ['必须写清「练了哪几类、用什么变式、掌握到什么程度」，不能只写「做了错题专练」。'],
+  },
+  note_trace: {
     label: '笔记/解题痕迹',
     group: '常规类',
     point: '看孩子课堂笔记、草稿纸、解题步骤，判断吸收程度与书写规范。',
@@ -393,6 +435,141 @@ export const MODULE_GUIDANCE: Record<FollowUpModule, ModuleGuidance> = {
       homework: '自定义的配套建议与任务。约 35-50 字。',
     },
     rules: [],
+  },
+  homework_assign: {
+    label: '作业布置',
+    group: '常规类',
+    point: '记录本次课布置的作业内容、用意、预计用时，方便家长监督落实。',
+    scene:
+      '课后布置作业：写明做什么、为什么做、怎么做、预计多久，避免家长只看作业本不知道意图。',
+    sections: {
+      classContent:
+        '本次布置的作业内容与题量{multiRecap}（如：P45 1-5 题、专项练习册 P12）。约 50-65 字。',
+      gains:
+        '布置意图：针对哪个薄弱点、巩固哪个知识点、训练哪种能力。约 50-65 字。',
+      homework: '预计用时、完成标准（如：独立完成、限时 30 分钟、错题必须订正）。约 35-50 字。',
+    },
+    rules: ['必须写清「做什么、为什么做、怎么评判完成」三要素。'],
+  },
+  accumulation: {
+    label: '积累打卡',
+    group: '非常规类',
+    point: '记录背诵、默写、词汇积累等长期坚持类任务的完成情况。',
+    scene:
+      '每日/每周积累任务：古诗文背诵、英语单词默写、数学公式默写等，重在坚持与复盘。',
+    sections: {
+      classContent:
+        '本周积累任务完成情况{multiRecap}（如：古诗 3 首全背、单词 50 个全对）。约 50-65 字。',
+      gains:
+        '{call}坚持打卡天数、准确率趋势、遗忘曲线复现情况。约 50-65 字。',
+      homework: '下周继续同频打卡，新增/调整内容（如：增加 1 首古诗、单词量 +10）。约 35-50 字。',
+    },
+    rules: ['必须给出可量化的完成指标（天数/准确率/用时），不要只写「坚持得不错」。'],
+  },
+  exam_prep: {
+    label: '考试备考',
+    group: '非常规类',
+    point: '针对即将到来的考试（期中/期末/单元测）的复习进度、重点、模考反馈。',
+    scene:
+      '考前 1-2 周的专项复习：按考纲梳理重点、模拟卷实战、错题回滚、心态调适。',
+    sections: {
+      classContent:
+        '本阶段复习覆盖板块、模考分数段、重点攻克难点{multiRecap}。约 50-65 字。',
+      gains:
+        '{call}各板块拿分率、易丢分陷阱、时间分配策略执行情况。约 50-65 字。',
+      homework: '按考纲权重每天 1 套限时练、错题回滚 3 道、考前 1 天仅看错题本。约 35-50 字。',
+    },
+    rules: ['必须引用具体考纲/教材章节/真题编号，不要笼统说「复习了」。'],
+  },
+  grade_analysis: {
+    label: '成绩分析',
+    group: '非常规类',
+    point: '阶段性成绩单/排名变化的深度拆解：进步在哪、退步在哪、原因归因。',
+    scene:
+      '拿到成绩单/排名后：不只报分数，要拆解到知识点/题型/非智力因素层面，给出下阶段策略。',
+    sections: {
+      classContent:
+        '本次考试总分/排名/各科得分率{multiRecap}，与上次对比变化。约 50-65 字。',
+      gains:
+        '归因：进步源于哪些动作（如：错题本坚持）、退步因何（如：粗心/基础漏洞/时间不够）。约 50-65 字。',
+      homework: '针对退板块制定「本周 3 道同源题+下周模考 1 套」的闭环计划。约 35-50 字。',
+    },
+    rules: ['必须写清「因果归因+下一步动作」，不能只报分数排名。'],
+  },
+  stage_test: {
+    label: '阶段测评',
+    group: '非常规类',
+    point: '非正式考试的阶段性测评（如月考、单元测、周测）的反馈与复盘。',
+    scene:
+      '教学阶段节点的测评：覆盖范围明确、难度适中、快速出结果、当周内完成复盘。',
+    sections: {
+      classContent:
+        '本次测评范围、题型分布、{call}得分率与班级/年级均值对比{multiRecap}。约 50-65 字。',
+      gains:
+        '强项/弱项板块、非智力因素影响（审题/时间/心态）、知识点级别的丢分分布。约 50-65 字。',
+      homework: '弱项板块各补 2 道同源题，强项板块拓展 1 道变式题。约 35-50 字。',
+    },
+    rules: ['必须给出板块级得分率与具体补救动作，不能只写「考得一般」。'],
+  },
+  plan_adjust: {
+    label: '计划调整',
+    group: '非常规类',
+    point: '根据学情变化、进度偏差、家庭配合度，调整后续教学计划与节奏。',
+    scene:
+      '发现进度落后/超前、孩子状态变化、家庭配合不足时，及时调整后续 2-4 周计划。',
+    sections: {
+      classContent:
+        '触发调整的原因（进度/状态/配合）、调整前后的计划对比{multiRecap}。约 50-65 字。',
+      gains:
+        '{call}对新计划的接受度、预期达成概率、需家长配合的具体事项。约 50-65 字。',
+      homework: '家长端配合动作（如：监督预习/限制电子产品/陪伴打卡），落实到每天。约 35-50 字。',
+    },
+    rules: ['必须写清「为什么调、怎么调、家长配合什么」，不能只写「调整了计划」。'],
+  },
+  student_request: {
+    label: '学生诉求',
+    group: '非常规类',
+    point: '记录孩子主动提出的学习需求、偏好、困惑，作为调整教学的重要参考。',
+    scene:
+      '孩子说「我想多练几道应用题」「这章太难能不能慢点」「我想试试思维导图」等主动表达。',
+    sections: {
+      classContent:
+        '孩子提出的具体诉求{multiRecap}（原话或意译）、触发场景。约 50-65 字。',
+      gains:
+        '老师如何响应、是否采纳、采纳后的试教效果。约 50-65 字。',
+      homework: '落实诉求的具体安排（如：下周加 2 道应用题、引入思维导图复习）。约 35-50 字。',
+    },
+    rules: ['必须记录孩子「原话/原意」，体现尊重学生主体性。'],
+  },
+  academic_assist: {
+    label: '学业协助',
+    group: '非常规类',
+    point: '学校作业辅导、课外辅导班衔接、寒暑假衔接教材等校内外学业的统筹反馈。',
+    scene:
+      '家长反馈学校作业量大/辅导班进度快/衔接教材难，老师统筹校内外任务、给出优先级建议。',
+    sections: {
+      classContent:
+        '校内外任务冲突/重叠情况{multiRecap}，老师给出的优先级建议与取舍。约 50-65 字。',
+      gains:
+        '{call}当前负荷饱和度、执行新优先级后的完成质量与心态。约 50-65 字。',
+      homework: '本周执行清单：保留/暂停/调整哪些校外任务，每天预留多少时间给校内。约 35-50 字。',
+    },
+    rules: ['必须给出可执行的「保留/暂停/调整」三清单，避免孩子两头跑、累崩溃。'],
+  },
+  makeup_plan: {
+    label: '补课计划',
+    group: '非常规类',
+    point: '因请假/生病/进度落后制定的专项补课计划：补什么、何时补、补几节、验收标准。',
+    scene:
+      '非计划性缺课或进度严重滞后：制定针对性补课方案，明确内容、时间、节次、考核指标。',
+    sections: {
+      classContent:
+        '缺课/落后原因、需补课时数、安排的具体时间与节次{multiRecap}。约 50-65 字。',
+      gains:
+        '补课要攻克的具体知识点、预期经过几节课达到什么程度。约 50-65 字。',
+      homework: '补课期间的配套自学任务、家长端监督事项、阶段性验收方式。约 35-50 字。',
+    },
+    rules: ['必须写清「补什么内容、练到什么程度、怎么验收」，不能只写「补 2 节课」。'],
   },
   other: {
     label: '其他',
