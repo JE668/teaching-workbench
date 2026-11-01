@@ -7,9 +7,8 @@ import {
   correctionText,
   MIN_WORDS,
   MAX_WORDS,
-  FollowUpGenerateParams,
 } from '../services/ai/utils.js';
-import { buildPrompt, followUpWordRangeForParams } from '../services/ai/prompt.js';
+import { buildPrompt, followUpWordRangeForParams, FollowUpGenerateParams } from '../services/ai/prompt.js';
 import { fetchFollowUpHistory, buildGenerateParams } from '../routes/followups.ai.js';
 
 /**
@@ -116,8 +115,9 @@ describe('字数纠偏文案（第 6 项）', () => {
 
 describe('多板块字数区间（第 6 项修复）', () => {
   test('多板块时区间随板块数放宽', () => {
-    const single = followUpWordRangeForParams({ module: 'class_content' });
+    const single = followUpWordRangeForParams({ ...base, module: 'class_content' });
     const triple = followUpWordRangeForParams({
+      ...base,
       modules: ['class_content', 'class_performance', 'homework_review'],
     });
     assert.ok(triple.min > single.min, '多板块下限应更高');
@@ -125,7 +125,7 @@ describe('多板块字数区间（第 6 项修复）', () => {
   });
 
   test('未给板块时按单板块计算', () => {
-    assert.deepEqual(followUpWordRangeForParams({}), { min: MIN_WORDS, max: MAX_WORDS });
+    assert.deepEqual(followUpWordRangeForParams({ ...base }), { min: MIN_WORDS, max: MAX_WORDS });
   });
 });
 

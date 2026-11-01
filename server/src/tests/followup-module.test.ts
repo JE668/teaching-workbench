@@ -97,7 +97,7 @@ describe('流程打卡类型 · 提示词', () => {
     }
     assert.match(p, /【学生收获】/);
     assert.match(p, /【课后任务】/);
-    const r = followUpWordRange(mods.length);
+    const r = followUpWordRangeForParams({ ...base, modules: mods });
     assert.match(p, new RegExp(r.min + '-' + r.max + ' 字之间'));
     assert.ok(!p.includes('【课堂内容】'), '多板块模式不应再出现旧的课堂内容段标题');
     assert.ok(p.includes('# 各板块专属要求'));
