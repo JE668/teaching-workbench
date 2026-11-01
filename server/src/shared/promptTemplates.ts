@@ -11,7 +11,9 @@ export type FollowUpModule =
   | 'class_content' | 'homework_review' | 'class_performance' | 'notes_trace'
   | 'quiz_test' | 'preview' | 'review_consolidation' | 'learning_method'
   | 'focus_habits' | 'emotional_state' | 'parent_communication' | 'special_events'
-  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic' | 'extra_class';
+  | 'knowledge_gaps' | 'next_week_focus' | 'custom_topic' | 'extra_class'
+  | 'habit_building' | 'mindset_coaching' | 'method_guidance' | 'reading_expression'
+  | 'competition_prep' | 'interest_expansion' | 'other';
 
 // ============ 版本号 ============
 // 修改任何模板内容后，必须递增此版本号
