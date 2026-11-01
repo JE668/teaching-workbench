@@ -1,4 +1,21 @@
-test:
+name: Build & Publish Docker Images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  # PR 分支只跑测试、不发布镜像（镜像构建对 GITHUB_TOKEN 有权限要求，且不应污染 GHCR）
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ===== 先跑测试，通过后才构建镜像 =====
+  test:
     name: Backend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -75,3 +92,258 @@ test:
         working-directory: server
         timeout-minutes: 15
         run: npm test -- --test-concurrency=4
+
+  test-web:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # 前端测试不需要 Tesseract，显式清除避免继承 test job 的 TESSDATA_PREFIX 导致 OCR 报错
+      TESSDATA_PREFIX: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Copy shared module
+        run: cp -r shared web/src/shared
+        working-directory: ${{ github.workspace }}
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Clear TypeScript cache
+        working-directory: web
+        run: rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
+
+      - name: Type check（含测试代码）
+        working-directory: web
+        timeout-minutes: 5
+        run: npm run typecheck
+
+      - name: Run test suite
+        working-directory: web
+        timeout-minutes: 10
+        run: npm test -- --pool=forks
+
+  # ===== 部署资产检查 =====
+  # 事故：Dockerfile 曾只 COPY dist/，漏了 templates/ ——
+  # 本地和测试环境模板都在，测试全绿，只有线上容器 ENOENT，Word 导出 500。
+  # 这个 job 不依赖 docker 守护进程，纯静态校验。
+  deploy-assets:
+    name: Docker Deploy Assets & Runtime Guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: 模板文件必须打进生产镜像
+        run: |
+          set -euo pipefail
+
+          test -f server/templates/observation-template.docx || {
+            echo "::error::缺少 Word 模板文件 server/templates/observation-template.docx"; exit 1; }
+
+          grep -q 'COPY --from=build /app/templates ./templates' server/Dockerfile || {
+            echo "::error::Dockerfile 未 COPY templates/ —— 生产镜像缺失 Word 模板，导出会 500"; exit 1; }
+
+          for f in server/templates/*; do
+            n="${f##*/}"
+            case "$(cat server/.dockerignore 2>/dev/null || true)" in
+              *"templates"*|*"$n"*)
+                echo "::error::.dockerignore 排除了 $n（生产镜像将缺失该文件）"; exit 1 ;;
+            esac
+          done
+
+          echo "✅ 模板文件已纳入生产镜像"
+
+      # 事故复盘：容器默认时区是 UTC，曾导致整库时间戳慢 8 小时、待回访少算一天。
+      # 代码里已统一用显式 '+8 hours'，这里做静态巡检防止回退。
+      # 唯一例外是 timezone-migration.test.ts —— 它的用例就是在造 UTC 偏差数据。
+      - name: SQLite 时间戳必须是北京墙钟
+        run: |
+          set -euo pipefail
+
+          BAD=$(grep -rn "datetime('now'" server/src --include='*.ts' \
+                | grep -v '8 hours' \
+                | grep -v 'tests/timezone-migration.test.ts' \
+                | grep -vE '^[^:]+:[0-9]+:[[:space:]]*[*//]' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::发现未带 +8 hours 的 SQLite 时间戳（容器默认 UTC，会慢 8 小时）："
+            echo "$BAD"
+            exit 1
+          fi
+
+          grep -q "TZ=Asia/Shanghai" server/Dockerfile || {
+            echo "::error::server/Dockerfile 缺 ENV TZ=Asia/Shanghai"; exit 1; }
+          grep -q "TZ=Asia/Shanghai" docker-compose.yml || {
+            echo "::error::docker-compose.yml 缺 TZ=Asia/Shanghai"; exit 1; }
+
+          echo "✅ 时区守护通过"
+
+      - name: package.json 必须声明 Node 版本下限
+        run: |
+          set -euo pipefail
+          for f in server/package.json web/package.json; do
+            grep -q '"engines"' "$f" || { echo "::error::$f 缺 engines 字段"; exit 1; }
+            grep -q '"node":' "$f" || { echo "::error::$f 的 engines 缺 node"; exit 1; }
+          done
+          echo "✅ engines 声明齐全"
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test, test-web]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Copy shared module for e2e
+        run: |
+          cp -r shared server/src/shared
+          cp -r shared web/src/shared
+
+      - name: Clear TypeScript cache (e2e)
+        run: |
+          cd server && rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
+          cd ../web && rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
+
+      # 复用 runner 自带的 Google Chrome（channel: 'chrome'），无需下载浏览器
+      - name: Show Chrome version
+        run: google-chrome --version || true
+
+      - name: Build backend & frontend
+        working-directory: web
+        run: npm run e2e:prepare
+
+      - name: Run E2E tests
+        working-directory: web
+        timeout-minutes: 15
+        run: npx playwright test --workers=2
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build-backend:
+    name: Build & Push Backend
+    # PR 阶段只验证测试与 E2E，镜像发布留给 main / tag
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # deploy-assets 必须挡在镜像构建前：模板或时区守护一破就不能发镜像
+    needs: [test, deploy-assets, e2e]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Copy shared module
+        run: cp -r shared server/src/shared
+        working-directory: ${{ github.workspace }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push Backend
+        uses: docker/build-push-action@v7
+        timeout-minutes: 25
+        with:
+          context: ./server
+          push: true
+          # 烤进镜像的提交号：/health 和容器环境变量都能看到，用来确认线上跑的是哪一版
+          # 坑：必须写成字符串，不能写成映射。build-push-action 的 action.yml 里 build-args
+          # 没声明 type，GitHub 平台默认按字符串校验，传映射直接报
+          # "A mapping was not expected"（本地 js-yaml/psych 只查语法、不查 action 输入类型，
+          # 所以本地全绿、只有 GitHub 的校验器报错）。格式是每行一个 KEY=VALUE
+          build-args: |
+            BUILD_SHA=${{ github.sha }}
+          # 标签策略：latest（部署用）+ 提交 SHA（回滚用，可精确定位）
+          tags: |
+            ghcr.io/je668/teaching-workbench-backend:latest
+            ghcr.io/je668/teaching-workbench-backend:${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+          labels: |
+            org.opencontainers.image.title=teaching-workbench-backend
+            org.opencontainers.image.description=1对1教学工作台后端
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+  build-frontend:
+    name: Build & Push Frontend
+    # 同上：PR 不发布镜像
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test-web, deploy-assets, e2e]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Copy shared module
+        run: cp -r shared web/src/shared
+        working-directory: ${{ github.workspace }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push Frontend
+        uses: docker/build-push-action@v7
+        timeout-minutes: 20
+        with:
+          context: ./web
+          push: true
+          # 标签策略：latest（部署用）+ 提交 SHA（回滚用，可精确定位）
+          tags: |
+            ghcr.io/je668/teaching-workbench-frontend:latest
+            ghcr.io/je668/teaching-workbench-frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          labels: |
+            org.opencontainers.image.title=teaching-workbench-frontend
+            org.opencontainers.image.description=1对1教学工作台前端
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
