@@ -11,15 +11,33 @@ export function countWords(text: string): number {
 
 /** 图片转 Base64 Data URL（供 OpenAI vision 输入） */
 export async function imageToBase64DataUrl(relPath: string): Promise<string> {
-  const absPath = path.resolve(env.UPLOAD_DIR, relPath.replace(/^_staging\//, ''));
-  const buffer = await sharp(absPath).resize(2048, 2048, { fit: 'inside', withoutEnlargement: true }).toBuffer();
-  const mime = (() => {
-    const ext = path.extname(absPath).toLowerCase();
-    if (ext === '.png') return 'image/png';
-    if (ext === '.webp') return 'image/webp';
-    return 'image/jpeg';
-  })();
-  return 'data:' + mime + ';base64,' + buffer.toString('base64');
+  const cleanRel = relPath.replace(/^_staging\//, '');
+  
+  // 路径穿越保护
+  if (cleanRel.includes('..') || path.isAbsolute(cleanRel)) {
+    throw new Error('非法的图片路径');
+  }
+  
+  const absPath = path.resolve(env.UPLOAD_DIR, cleanRel);
+  
+  // 文件必须存在
+  if (!fs.existsSync(absPath)) {
+    throw new Error('图片文件不存在');
+  }
+  
+  // 尝试用 sharp 处理（压缩、格式统一为 JPEG）
+  try {
+    const buffer = await sharp(absPath)
+      .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85, force: true }) // 统一输出 JPEG
+      .toBuffer();
+    return 'data:image/jpeg;base64,' + buffer.toString('base64');
+  } catch (err) {
+    // sharp 解不开（非图片或损坏）→ 走 legacyBase64 兜底：原文件内容直接 base64
+    // 这是刻意的容错：一张坏图不该让整个 AI 生成请求失败
+    const fallback = fs.readFileSync(absPath);
+    return 'data:image/jpeg;base64,' + fallback.toString('base64');
+  }
 }
 
 /** 模板片段填充：把 {变量} 替换成实际值，缺省留空 */
