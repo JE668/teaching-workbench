@@ -18,6 +18,7 @@ jobs:
   test:
     name: Backend Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       # 设置 TESSDATA_PREFIX 供所有步骤使用（特别是测试步骤中的 tesseract.js）
       TESSDATA_PREFIX: ${{ github.workspace }}/server/tessdata
@@ -59,15 +60,18 @@ jobs:
 
       - name: Type check & build
         working-directory: server
+        timeout-minutes: 5
         run: npm run build
 
       - name: Run test suite
         working-directory: server
-        run: npm test
+        timeout-minutes: 10
+        run: npm test -- --test-concurrency=4
 
   test-web:
     name: Frontend Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       # 前端测试不需要 Tesseract，显式清除避免继承 test job 的 TESSDATA_PREFIX 导致 OCR 报错
       TESSDATA_PREFIX: ""
@@ -96,11 +100,13 @@ jobs:
 
       - name: Type check（含测试代码）
         working-directory: web
+        timeout-minutes: 5
         run: npm run typecheck
 
       - name: Run test suite
         working-directory: web
-        run: npm test
+        timeout-minutes: 10
+        run: npm test -- --pool=forks --poolOptions.forks.singleFork
 
   # ===== 部署资产检查 =====
   # 事故：Dockerfile 曾只 COPY dist/，漏了 templates/ ——
@@ -109,6 +115,7 @@ jobs:
   deploy-assets:
     name: Docker Deploy Assets & Runtime Guards
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -169,6 +176,7 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [test, test-web]
     steps:
       - name: Checkout
@@ -211,7 +219,8 @@ jobs:
 
       - name: Run E2E tests
         working-directory: web
-        run: npx playwright test
+        timeout-minutes: 15
+        run: npx playwright test --workers=2
 
       - name: Upload Playwright report
         if: always()
@@ -227,6 +236,7 @@ jobs:
     # PR 阶段只验证测试与 E2E，镜像发布留给 main / tag
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # deploy-assets 必须挡在镜像构建前：模板或时区守护一破就不能发镜像
     needs: [test, deploy-assets, e2e]
     steps:
@@ -249,6 +259,7 @@ jobs:
 
       - name: Build & Push Backend
         uses: docker/build-push-action@v7
+        timeout-minutes: 25
         with:
           context: ./server
           push: true
@@ -275,6 +286,7 @@ jobs:
     # 同上：PR 不发布镜像
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [test-web, deploy-assets, e2e]
     steps:
       - name: Checkout
@@ -296,6 +308,7 @@ jobs:
 
       - name: Build & Push Frontend
         uses: docker/build-push-action@v7
+        timeout-minutes: 20
         with:
           context: ./web
           push: true
