@@ -778,7 +778,7 @@ export default function FollowUp() {
                     className={cn(
                       'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-all duration-200',
                       form.modules.length === 4 &&
-                        ['mistake_drill', 'grade_analysis', 'stage_test', 'plan_adjust'].every(m => form.modules.includes(m))
+                        (['mistake_drill', 'grade_analysis', 'stage_test', 'plan_adjust'] as const).every(m => form.modules.includes(m))
                         ? 'bg-amber-50 text-amber-700 ring-amber-200 shadow-soft'
                         : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
                     )}
@@ -793,7 +793,7 @@ export default function FollowUp() {
                     className={cn(
                       'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium ring-1 transition-all duration-200',
                       form.modules.length === 2 &&
-                        ['class_content', 'homework_assign'].every(m => form.modules.includes(m))
+                        (['class_content', 'homework_assign'] as const).every(m => form.modules.includes(m))
                         ? 'bg-sky-50 text-sky-700 ring-sky-200 shadow-soft'
                         : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50'
                     )}
@@ -1691,12 +1691,12 @@ export default function FollowUp() {
                             </div>
                             {item.payload?.form?.modules?.length && (
                               <div className="mt-1.5 flex flex-wrap gap-1">
-                                {item.payload.form.modules.slice(0, 4).map((m: string) => (
+                                {item.payload.form.modules.slice(0, 4).map((m: FollowUpModule) => (
                                   <span
                                     key={m}
                                     className="rounded px-1.5 py-0.5 text-[10px] bg-white text-slate-500 ring-1 ring-slate-200"
                                   >
-                                    {FOLLOWUP_MODULE_LABELS[m as any] || m}
+                                    {FOLLOWUP_MODULE_LABELS[m] || m}
                                   </span>
                                 ))}
                                 {item.payload.form.modules.length > 4 && (

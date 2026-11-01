@@ -13,6 +13,7 @@ import {
   ListPlus,
   PencilLine,
   Plus,
+  Search,
   Sparkles,
   Trash2,
   AlertCircle,
@@ -222,6 +223,9 @@ export default function ReportEdit() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
+  const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
+
   // URL 参数触发 AI 生成：?aiGenerate=summary 或 ?aiGenerate=plan
   useEffect(() => {
     const aiGenerate = searchParams.get('aiGenerate');
@@ -231,9 +235,6 @@ export default function ReportEdit() {
       void runAi('plan');
     }
   }, [report?.summary_enabled, report?.plan_enabled, summaryItems.length, planItems.length, searchParams]);
-
-  const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
-  const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
 
   /** 当前要挑课的面板里已经加过、还连着目录 id 的课——弹窗里灰掉，不允许重复加 */
   const pickerAddedIds = useMemo(() => {
@@ -1288,6 +1289,7 @@ function CoursePicker({
   const [termFilter, setTermFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [picked, setPicked] = useState<Set<number>>(new Set());
+  const toast = useToast();
 
   useEffect(() => {
     if (open) {
@@ -1348,7 +1350,7 @@ function CoursePicker({
   if (!open) return null;
 
   return (
-    <Modal open onClose={onClose} title="从课程目录添加" subtitle={`已添加 ${picked.size} 门，确认后批量加入${kind === 'summary' ? '总结' : '规划'}`} size="lg">
+    <Modal open onClose={onClose} title="从课程目录添加" description={`已添加 ${picked.size} 门，确认后批量加入${kind === 'summary' ? '总结' : '规划'}`} size="lg">
       <div className="space-y-3">
         <div className="flex flex-wrap gap-2">
           <Input

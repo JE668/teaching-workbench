@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, ChevronRight, Keyboard, KeyX } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { Search, ChevronRight, Keyboard, X } from 'lucide-react';
+import { cn } from '../../lib/utils';
 
 interface CommandItem {
   id: string;
@@ -202,7 +202,7 @@ export function CommandPalette({ isOpen, onClose, items }: CommandPaletteProps) 
           <div className="flex items-center justify-between text-[11px] text-slate-400">
             <span>↑↓ 选择  ·  Enter 执行  ·  Esc 关闭</span>
             <span className="flex items-center gap-1">
-              <KeyX className="h-3 w-3" />
+              <X className="h-3 w-3" />
               <span>⌘K</span>
             </span>
           </div>

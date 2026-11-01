@@ -23,7 +23,7 @@ import {
   Loader2,
   X,
   Eye,
-  Settings,
+  SettingsIcon,
   FileSpreadsheet,
   FileImage,
   CalendarDays,
@@ -197,7 +197,7 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
     { id: 'nav-followups', label: '课后回访', description: '撰写/生成回访', shortcut: 'G F', group: '导航', icon: <ClipboardList className="h-4 w-4" />, onSelect: () => navigate('/followups'), keywords: ['回访', '反馈', '家长'] },
     { id: 'nav-observations', label: '听评课', description: '课堂观察与评课', shortcut: 'G O', group: '导航', icon: <Eye className="h-4 w-4" />, onSelect: () => navigate('/observations'), keywords: ['听课', '评课', '观察'] },
     { id: 'nav-catalog', label: '课程目录', description: '管理课程规划目录', shortcut: 'G C', group: '导航', icon: <BookOpen className="h-4 w-4" />, onSelect: () => navigate('/catalog'), keywords: ['目录', '课程', '规划'] },
-    { id: 'nav-settings', label: '设置', description: 'AI 模型、偏好、密码', shortcut: 'G P', group: '导航', icon: <Settings className="h-4 w-4" />, onSelect: () => navigate('/settings'), keywords: ['设置', '配置', 'AI', '模型'] },
+    { id: 'nav-settings', label: '设置', description: 'AI 模型、偏好、密码', shortcut: 'G P', group: '导航', icon: <SettingsIcon className="h-4 w-4" />, onSelect: () => navigate('/settings'), keywords: ['设置', '配置', 'AI', '模型'] },
 
     // 动作组
     { id: 'action-new-report', label: '新建月度报告', description: '创建新的月份总结/规划', group: '动作', icon: <Plus className="h-4 w-4" />, onSelect: () => {

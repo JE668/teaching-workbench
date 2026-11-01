@@ -12,7 +12,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useToast } from '../../hooks/useToast';
+import { useToast } from '../ui/Toast';
 import { api } from '../../api/client';
 
 export type AIInlineActionType = 'continue' | 'polish' | 'expand' | 'shorten';
@@ -66,7 +66,7 @@ export function AIInlineActions({
   const [result, setResult] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<Selection | null>(null);
-  const { toast } = useToast();
+  const toast = useToast();
 
   // 监听文本选择变化
   useEffect(() => {
@@ -129,8 +129,8 @@ export function AIInlineActions({
     try {
       const prompt = buildPrompt(action);
 
-      // 调用 AI 生成（使用 followup 生成接口复用，或新建一个通用接口）
-      const response = await api.generateFollowUp({
+      // 调用 AI 生成（使用通用 AI 接口）
+      const response = await api.post('/ai/generate', {
         studentName: context.studentName || '学生',
         grade: context.grade || '',
         subject: context.subject || '',

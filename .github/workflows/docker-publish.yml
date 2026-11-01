@@ -68,6 +68,9 @@ jobs:
   test-web:
     name: Frontend Tests
     runs-on: ubuntu-latest
+    env:
+      # 前端测试不需要 Tesseract，显式清除避免继承 test job 的 TESSDATA_PREFIX 导致 OCR 报错
+      TESSDATA_PREFIX: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v7

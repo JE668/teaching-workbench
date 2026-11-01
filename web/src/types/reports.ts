@@ -50,6 +50,10 @@ export interface CatalogCourseOption {
   difficulty: string;
   /** 目录里的学期 / 轮次（暑假 / 秋季 / 寒假…） */
   term: string;
+  /** 学科 */
+  subject: string;
+  /** 年级 */
+  grade: string;
   textbook: string;
   track: string;
 }
