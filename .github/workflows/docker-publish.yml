@@ -42,30 +42,44 @@ jobs:
         working-directory: server
         run: rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
 
-      - name: Install Tesseract OCR and language data
+      - name: Setup Tesseract OCR
         working-directory: server
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          echo "Installing Tesseract OCR and language packs via apt..."
+          echo "Checking Tesseract OCR availability..."
           
-          # Wait for apt lock to be released (in case another process is using apt)
-          for i in {1..30}; do
+          # Check if tesseract is already available with required languages
+          if command -v tesseract >/dev/null 2>&1; then
+            LANGS=$(tesseract --list-langs 2>/dev/null || true)
+            if echo "$LANGS" | grep -q 'chi_sim' && echo "$LANGS" | grep -q 'eng'; then
+              echo "✅ Tesseract already installed with required languages"
+              tesseract --list-langs
+              exit 0
+            fi
+          fi
+          
+          echo "Installing Tesseract OCR via apt (with retry)..."
+          
+          # Wait for apt lock with longer timeout
+          for i in {1..60}; do
             if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
               break
             fi
-            echo "Waiting for apt lock to be released... ($i/30)"
+            echo "Waiting for apt lock... ($i/60)"
             sleep 2
           done
           
-          DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
+          DEBIAN_FRONTEND=noninteractive apt-get update -qq && apt-get install -y -qq tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
           
           # Verify installation
           tesseract --list-langs | grep -E 'chi_sim|eng' || {
             echo "ERROR: Required languages not installed"
+            tesseract --list-langs || true
             exit 1
           }
           echo "✅ Tesseract OCR installed with chi_sim and eng languages"
+          tesseract --list-langs
 
       - name: Type check & build
         working-directory: server
