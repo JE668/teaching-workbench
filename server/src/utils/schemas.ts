@@ -7,7 +7,7 @@ import { z } from 'zod';
  *  - 只校验「字段存在 + 基本类型 + 非空」，不做过度强转（coerce）——
  *    sessionCount / courseType 这类字段的归一化仍交给 mappers 里的
  *    normalize* 函数，保持行为不变。
- *  - 一律 .passthrough()，保留 handler 可能用到的额外字段。
+ *  - 一律 .catchall(z.unknown())，保留 handler 可能用到的额外字段。
  *  - 错误信息用中文，与现有 400 提示一致。
  */
 
@@ -22,7 +22,7 @@ export const studentCreateSchema = z
     phone: z.string().trim().optional().nullable(),
     notes: z.string().trim().optional().nullable(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const studentUpdateSchema = z
   .object({
@@ -32,7 +32,7 @@ export const studentUpdateSchema = z
     phone: z.string().trim().optional().nullable(),
     notes: z.string().trim().optional().nullable(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 // ============ 小组课分组 ============
 export const groupCreateSchema = z
@@ -40,14 +40,14 @@ export const groupCreateSchema = z
     name: reqd('请填写分组名称'),
     studentIds: z.array(z.union([z.number(), z.coerce.number()])).optional(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const groupUpdateSchema = z
   .object({
     name: z.string().trim().optional(),
     studentIds: z.array(z.union([z.number(), z.coerce.number()])).optional(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 // ============ 回访（AI 生成 / 创建 / 更新） ============
 // 必填的 5 个课堂信息字段（年级/学科/主题/表现/掌握程度）
@@ -61,7 +61,7 @@ export const followUpGenerateSchema = z
     // 其余字段（studentName / courseType / sessionCount / nickname / images）
     // 由 handler 里的 validateGenerateInput 做条件校验，这里不重复约束。
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const followUpCreateSchema = z
   .object({
@@ -73,7 +73,7 @@ export const followUpCreateSchema = z
     content: reqd('年级、学科、课程主题、课堂表现、掌握程度、回访内容均为必填项'),
     images: z.array(z.string()).optional(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const followUpUpdateSchema = z
   .object({
@@ -87,7 +87,7 @@ export const followUpUpdateSchema = z
     /** 小组课：true 时把本次修改同步到整批 N 条，保持一致 */
     syncBatch: z.boolean().optional(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 // ============ 听评课（独立于回访） ============
 export const teacherCreateSchema = z
@@ -95,7 +95,7 @@ export const teacherCreateSchema = z
     name: reqd('请填写老师姓名'),
     subject: z.string().trim().optional().nullable(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const observationCreateSchema = z
   .object({
@@ -115,7 +115,7 @@ export const observationCreateSchema = z
     status: z.string().optional(),
     teacherReply: z.string().optional(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const observationUpdateSchema = z
   .object({
@@ -135,7 +135,7 @@ export const observationUpdateSchema = z
     status: z.string().optional(),
     teacherReply: z.string().optional(),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 // ============ 认证 ============
 export const registerSchema = z
@@ -143,18 +143,18 @@ export const registerSchema = z
     username: z.string().trim().min(2, '用户名长度需在 2-32 位之间').max(32, '用户名长度需在 2-32 位之间'),
     password: z.string().min(6, '密码长度至少6位'),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const loginSchema = z
   .object({
     username: z.string().min(1, '用户名和密码为必填项'),
     password: z.string().min(1, '用户名和密码为必填项'),
   })
-  .passthrough();
+  .catchall(z.unknown());
 
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, '请填写当前密码与新密码'),
     newPassword: z.string().min(6, '新密码长度至少 6 位'),
   })
-  .passthrough();
+  .catchall(z.unknown());

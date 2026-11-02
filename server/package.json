@@ -24,12 +24,12 @@
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
-    "openai": "^4.77.0",
+    "openai": "^6.49.0",
     "pino": "^9.14.0",
     "pizzip": "^3.3.0",
     "sharp": "^0.35.5",
     "tesseract.js": "^7.0.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

@@ -10,7 +10,7 @@ import { ZodType, ZodError } from 'zod';
  * 成功：用「校验 + 清洗后」的值替换 req.body，后续 handler 拿到的是安全值。
  * 失败：返回 400，error 字段取第一条 issue 的中文信息（保持现有 API 契约）。
  *
- * 注意：schema 一律用 .passthrough()，避免误删 handler 依赖的额外字段。
+ * 注意：schema 一律用 .catchall(z.unknown())，避免误删 handler 依赖的额外字段。
  */
 export function validateBody<T>(schema: ZodType<T>) {
   return (req: Request, res: Response, next: NextFunction) => {
