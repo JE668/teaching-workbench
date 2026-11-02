@@ -49,6 +49,11 @@ jobs:
         working-directory: server
         run: npm ci
 
+      # 生产依赖高危门禁：high/critical 直接挡红（exceljs 传递链 moderate 为上游无修复项，不拦）
+      - name: Dependency audit (prod, high gate)
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Clear TypeScript cache
         working-directory: server
         run: rm -rf node_modules/.cache .tsx.cache 2>/dev/null || true
@@ -85,6 +90,11 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: npm ci
+
+      # 生产依赖高危门禁（与后端同理，moderate 的 exceljs 传递链不拦）
+      - name: Dependency audit (prod, high gate)
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Clear TypeScript cache
         working-directory: web
