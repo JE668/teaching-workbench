@@ -19,11 +19,7 @@ export function renderWithProviders(ui: React.ReactElement, options: Options = {
 
   return render(
     <ToastProvider>
-      {/* 提前启用 v7 行为，消除控制台里的 future flag 警告 */}
-      <MemoryRouter
-        initialEntries={[route]}
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
+      <MemoryRouter initialEntries={[route]}>
         {path ? (
           <Routes>
             <Route path={path} element={ui} />
