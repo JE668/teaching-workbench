@@ -95,6 +95,7 @@ teaching-workbench/
 ├── docker-compose.yml             # Docker 编排
 ├── deploy.sh                      # NAS 一键部署脚本
 ├── backup.sh                      # 数据备份脚本
+├── scripts/check-deploy-assets.sh # 部署资产静态守护（CI 与本地共用）
 ├── .env.production.example        # 生产环境变量模板
 └── README.md
 ```
@@ -211,8 +212,11 @@ docker compose up -d
 # 部署前自动备份
 ./deploy.sh --backup
 
-# 回滚到上一个版本
+# 回滚到上一个版本（自动记录的上次运行版本，基于镜像 BUILD_SHA/git SHA 标签）
 ./deploy.sh --rollback
+
+# 回滚到指定版本（CI 给每个镜像同时打 git SHA 标签，后端 /health 的 build 字段可查当前版本）
+TAG=<git-sha> docker compose up -d
 ```
 
 #### 6. 数据备份
@@ -288,12 +292,14 @@ Internet → 域名 → Lucky (反代+SSL)
 
 | 层级 | 技术 | 用例数 | 命令 |
 |------|------|--------|------|
-| 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 131 | `cd server && npm test` |
-| 前端 | Vitest + Testing Library + jsdom | 143 | `cd web && npm test` |
-| 端到端 | Playwright（复用系统 Chrome） | 22 | `cd web && npm run e2e:full` |
+| 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 671 | `cd server && npm test` |
+| 前端 | Vitest + Testing Library + jsdom | 422 | `cd web && npm test` |
+| 端到端 | Playwright（复用系统 Chrome，串行执行） | 66 | `cd web && npm run e2e:full` |
 
 > CI 顺序：后端测试 + 前端测试 → E2E → 构建镜像。
 > **任一环节失败都不会发布镜像。**
+> push 前可本地跑齐 CI 的静态守护（模板入镜像 / 时区 / engines /
+> shared 副本一致性 / compose 与示例 .env 对齐）：`bash scripts/check-deploy-assets.sh`
 
 ### 后端测试覆盖
 

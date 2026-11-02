@@ -82,6 +82,14 @@ ensure_env_secrets
 if [ "$DO_ROLLBACK" = true ]; then
   if [ -f "$ROLLBACK_FILE" ]; then
     LAST_TAG=$(cat "$ROLLBACK_FILE")
+    # 老版本脚本记录的是完整镜像名（ghcr.io/...:latest），塞回 compose 的
+    # ${TAG} 会展开成嵌套的非法引用，且 latest 回滚等于没回滚。校验格式，
+    # 旧格式的存量记录直接拒绝并提示手动回滚，别让它悄悄拉起一个错误引用。
+    case "$LAST_TAG" in
+      latest | ghcr.io* | *[!A-Za-z0-9._-]*)
+        error "上次部署记录格式不对（$LAST_TAG）——latest/完整镜像名无法回滚。请手动执行: TAG=<git-sha> docker compose up -d（CI 给镜像同时打了 SHA 标签，可看后端 /health 的 build 字段或 gh run list 查历史提交号）"
+        ;;
+    esac
     log "回滚到版本: $LAST_TAG"
     TAG="$LAST_TAG" docker compose -f "$COMPOSE_FILE" pull
     TAG="$LAST_TAG" docker compose -f "$COMPOSE_FILE" up -d
@@ -92,13 +100,37 @@ if [ "$DO_ROLLBACK" = true ]; then
   exit 0
 fi
 
-if docker compose -f "$COMPOSE_FILE" ps -q backend > /dev/null 2>&1; then
-  CURRENT_IMAGE=$(docker compose -f "$COMPOSE_FILE" ps --format '${{.Image}}' backend 2>/dev/null || echo "")
-  if [ -n "$CURRENT_IMAGE" ]; then
-    echo "$CURRENT_IMAGE" > "$ROLLBACK_FILE"
-    log "已记录当前版本"
-  fi
-fi
+# ===== 记录当前运行版本，供 --rollback 使用 =====
+# 首选 BUILD_SHA：CI 给镜像同时打 latest + git SHA 双标签，后端镜像把提交号
+# 烤进了环境变量（/health 的 build 字段就是它）。记「可用的 SHA」才能真回滚。
+# 旧脚本这里有两个坑：--format 写成了 '${{.Image}}'（非法模板，命令报错被吞，
+# 回滚记录其实从未落盘）；就算成功，记的也是完整镜像名或 latest ——
+# 前者塞回 compose 的 ${TAG} 会变成嵌套的坏引用，后者等于没回滚。
+record_current_version() {
+  local sha
+  sha=$(docker compose -f "$COMPOSE_FILE" exec -T backend printenv BUILD_SHA 2>/dev/null | tr -d ' \r' || true)
+  case "$sha" in
+    '' | dev) ;; # 老镜像/本地构建没有 SHA，走下面的镜像标签兜底
+    *)
+      echo "$sha" > "$ROLLBACK_FILE"
+      log "已记录当前版本（BUILD_SHA）: $sha"
+      return 0
+      ;;
+  esac
+
+  local tag
+  tag=$(docker compose -f "$COMPOSE_FILE" ps --format '{{.Image}}' backend 2>/dev/null | head -1 | awk -F: '{print $NF}' || true)
+  case "$tag" in
+    '' | latest | *[!A-Za-z0-9._-]*)
+      warn "无法记录可回滚版本（容器未运行或跑的是 :latest 且镜像无 BUILD_SHA）；本次部署后 --rollback 可能不可用"
+      ;;
+    *)
+      echo "$tag" > "$ROLLBACK_FILE"
+      log "已记录当前版本（镜像标签）: $tag"
+      ;;
+  esac
+}
+record_current_version
 
 if [ "$DO_BACKUP" = true ]; then
   log "部署前备份数据..."
