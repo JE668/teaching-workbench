@@ -128,10 +128,13 @@ const server = http.createServer((req, res) => {
 
     // ===== 流式 =====
     if (payload.stream) {
+      // Connection: close —— 本地 Node 24 + macOS 的 undici 读「keep-alive + res.end()」
+      // 的 SSE 收尾会报 Premature close（CI 的 Linux/Node26 没这问题）。
+      // 服务端主动关连接对 SSE 客户端完全合法，也让桩服务跨环境行为一致。
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
+        Connection: 'close',
       });
 
       const SIZE = 12;
@@ -162,19 +165,25 @@ const server = http.createServer((req, res) => {
     }
 
     // ===== 非流式 =====
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        id: 'mock',
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: payload.model || 'mock',
-        choices: [
-          { index: 0, message: { role: 'assistant', content: REPLY }, finish_reason: 'stop' },
-        ],
-        usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
-      })
-    );
+    // 必须显式给 Content-Length：不设时 Node 走 chunked 编码，
+    // OpenAI SDK 4.x 的 fetch 栈对「keep-alive + chunked」的非流式响应会报
+    // "Invalid response body ...: Premature close"（流式那一路是 SSE，不受影响）。
+    // 真实的 OpenAI 兼容服务都会带 Content-Length，这里补齐才是等价行为。
+    const nonStreamBody = JSON.stringify({
+      id: 'mock',
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: payload.model || 'mock',
+      choices: [
+        { index: 0, message: { role: 'assistant', content: REPLY }, finish_reason: 'stop' },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+    });
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(nonStreamBody),
+    });
+    res.end(nonStreamBody);
   });
 });
 
