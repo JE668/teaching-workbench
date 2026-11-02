@@ -13,6 +13,13 @@ permissions:
   contents: read
   packages: write
 
+# 同一分支/PR 上排队的新 run 直接取消旧的：连续 push 时只跑最新一版，
+# 省 runner 分钟，也避免旧 run 的镜像构建晚于新 run 完成、把 latest 标签推回旧代码。
+# tag（发版）不取消，保证发布链路完整。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
 jobs:
   # ===== 先跑测试，通过后才构建镜像 =====
   test:
@@ -219,7 +226,9 @@ jobs:
       - name: Run E2E tests
         working-directory: web
         timeout-minutes: 15
-        run: npx playwright test --workers=2
+        # 不带 --workers：playwright.config 明确 workers:1（用例共享同一后端与 DB，
+        # 串行是设计约束）。之前这里用 --workers=2 覆盖，并发互相干扰导致用例轮换式 flaky。
+        run: npx playwright test
 
       - name: Upload Playwright report
         if: always()
