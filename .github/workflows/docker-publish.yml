@@ -36,24 +36,40 @@ jobs:
             if echo "$LANGS" | grep -q 'chi_sim' && echo "$LANGS" | grep -q 'eng'; then
               echo "✅ Tesseract already installed with required languages"
               tesseract --list-langs
+              echo "TESSERACT_AVAILABLE=true" >> $GITHUB_ENV
               exit 0
             fi
           fi
           
-          echo "Tesseract not fully available, attempting quick install..."
+          echo "Installing Tesseract OCR via apt (with retries)..."
           
-          # Quick attempt to install - if it fails, we'll skip OCR tests
-          if apt-get update -qq && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng 2>/dev/null; then
-            tesseract --list-langs | grep -E 'chi_sim|eng' && {
-              echo "✅ Tesseract OCR installed with chi_sim and eng languages"
-              echo "TESSERACT_AVAILABLE=true" >> $GITHUB_ENV
-              tesseract --list-langs
-              exit 0
-            }
+          # Retry apt-get install with exponential backoff - the lock is often held briefly by setup-node's cache
+          for attempt in 1 2 3 4 5; do
+            echo "Attempt $attempt/5 to install tesseract..."
+            if apt-get update -qq && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng 2>/dev/null; then
+              echo "✅ apt install succeeded on attempt $attempt"
+              break
+            fi
+            echo "Attempt $attempt failed, waiting $((attempt * 10))s before retry..."
+            sleep $((attempt * 10))
+          done
+          
+          # Verify installation
+          if ! command -v tesseract >/dev/null 2>&1; then
+            echo "ERROR: tesseract not found after installation attempts"
+            echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
+            exit 0
           fi
           
-          echo "⚠️ Tesseract install failed, OCR tests will be skipped"
-          echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
+          tesseract --list-langs | grep -E 'chi_sim|eng' || {
+            echo "ERROR: Required languages not installed"
+            tesseract --list-langs || true
+            echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
+            exit 0
+          }
+          echo "✅ Tesseract OCR installed with chi_sim and eng languages"
+          echo "TESSERACT_AVAILABLE=true" >> $GITHUB_ENV
+          tesseract --list-langs
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
