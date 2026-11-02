@@ -23,53 +23,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Tesseract OCR
+      - name: Remove system Tesseract to force pure JS implementation
         working-directory: server
-        timeout-minutes: 5
+        timeout-minutes: 2
         run: |
           set -euo pipefail
-          echo "Checking Tesseract OCR availability..."
+          echo "Removing system Tesseract to force tesseract.js pure JS implementation..."
           
-          # Check if tesseract is already available with required languages
+          # Remove system tesseract if present to force tesseract.js pure JS implementation
           if command -v tesseract >/dev/null 2>&1; then
-            LANGS=$(tesseract --list-langs 2>/dev/null || true)
-            if echo "$LANGS" | grep -q 'chi_sim' && echo "$LANGS" | grep -q 'eng'; then
-              echo "✅ Tesseract already installed with required languages"
-              tesseract --list-langs
-              echo "TESSERACT_AVAILABLE=true" >> $GITHUB_ENV
-              exit 0
-            fi
+            echo "Removing system tesseract to force pure JS implementation..."
+            apt-get remove -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng 2>/dev/null || true
+            apt-get autoremove -y 2>/dev/null || true
           fi
           
-          echo "Installing Tesseract OCR via apt (with retries)..."
-          
-          # Retry apt-get install with exponential backoff - the lock is often held briefly by setup-node's cache
-          for attempt in 1 2 3 4 5; do
-            echo "Attempt $attempt/5 to install tesseract..."
-            if apt-get update -qq && apt-get install -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng 2>/dev/null; then
-              echo "✅ apt install succeeded on attempt $attempt"
-              break
-            fi
-            echo "Attempt $attempt failed, waiting $((attempt * 10))s before retry..."
-            sleep $((attempt * 10))
-          done
-          
-          # Verify installation
-          if ! command -v tesseract >/dev/null 2>&1; then
-            echo "ERROR: tesseract not found after installation attempts"
-            echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
-            exit 0
+          # Ensure tesseract is not in PATH
+          if command -v tesseract >/dev/null 2>&1; then
+            echo "⚠️ Tesseract still in PATH, removing from PATH"
+            # Remove from PATH by filtering
+            export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v tesseract | tr '\n' ':' | sed 's/:$//')
           fi
           
-          tesseract --list-langs | grep -E 'chi_sim|eng' || {
-            echo "ERROR: Required languages not installed"
-            tesseract --list-langs || true
-            echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
-            exit 0
-          }
-          echo "✅ Tesseract OCR installed with chi_sim and eng languages"
-          echo "TESSERACT_AVAILABLE=true" >> $GITHUB_ENV
-          tesseract --list-langs
+          echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
+          echo "✅ System tesseract removed, tesseract.js will use pure JS implementation"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
