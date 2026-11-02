@@ -1091,111 +1091,101 @@ function ItemTable({
     <div>
       {/* 批量操作栏（仅当有出勤/作业等列时显示） */}
       {items.length > 1 && cols.some((c) => ['attendance', 'notes_done', 'mistakes_done', 'homework_done'].includes(c.key)) && (
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-500">批量设置：</span>
-          {cols.map((c) => {
-            if (!['attendance', 'notes_done', 'mistakes_done', 'homework_done'].includes(c.key)) return null;
-            return (
-              <Select
-                key={c.key}
-                value=""
-                onChange={(e) => void batchUpdate(c.key as any, e.target.value)}
-                options={c.list?.map((v) => ({ value: v, label: v })) ?? []}
-                placeholder={c.label}
-                className="h-8 w-24 text-xs"
+        <div className="flex items-center justify-between mb-2 px-1">
+          <span className="text-xs text-slate-400">
+            {items.length} 条课程
+          </span>
+          <div className="flex items-center gap-1.5">
+            {cols.some((c) => c.key === 'attendance') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('attendance', '✅️')}
                 disabled={batchUpdating !== null}
-                aria-label={`批量设置 ${c.label}`}
-              />
-            );
-          })}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为已出勤"
+              >
+                {batchUpdating === 'attendance' ? '处理中…' : '✓ 全部出勤'}
+              </button>
+            )}
+            {cols.some((c) => c.key === 'notes_done') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('notes_done', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为笔记已完成"
+              >
+                {batchUpdating === 'notes_done' ? '处理中…' : '📝 全部笔记'}
+              </button>
+            )}
+            {cols.some((c) => c.key === 'homework_done') && (
+              <button
+                type="button"
+                onClick={() => void batchUpdate('homework_done', '✅️')}
+                disabled={batchUpdating !== null}
+                className="rounded-lg bg-brand-50 px-2 py-1 text-xs text-brand-600 hover:bg-brand-100 disabled:opacity-50"
+                title="全部标记为作业已完成"
+              >
+                {batchUpdating === 'homework_done' ? '处理中…' : '📚 全部作业'}
+              </button>
+            )}
+          </div>
         </div>
       )}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-              {cols.map((c) => (
-                <th key={c.key} className={`pb-2 pr-2 ${c.width}`}>
-                  {c.label}
-                </th>
-              ))}
-              <th className="w-20 pb-2">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, idx) => (
-              <tr
-                key={item.id}
-                className={cn(
-                  'border-b border-slate-50 last:border-0 transition-colors',
-                  item.id < 0 && 'bg-brand-50/40'
-                )}
-              >
-                {cols.map((c) => (
-                  <td key={c.key} className={`py-1.5 pr-2 ${c.width}`}>
-                    {c.key === 'seq' ? (
-                      <span className="text-slate-400">{idx + 1}</span>
-                    ) : c.list ? (
-                      <Select
-                        value={String(item[c.key] ?? '')}
-                        onChange={(e) => void onPatch(item.id, c.key, e.target.value)}
-                        options={c.list.map((v) => ({ value: v, label: v }))}
-                        className="h-8 w-full text-xs"
-                        placeholder="—"
-                      />
-                    ) : c.key === 'content' ? (
-                      <Input
-                        value={String(item[c.key] ?? '')}
-                        onChange={(e) => void onPatch(item.id, c.key, e.target.value)}
-                        placeholder="课程内容"
-                        className="h-8 text-xs"
-                        autoFocus={item.id < 0 && idx === 0}
-                      />
-                    ) : (
-                      <Input
-                        value={String(item[c.key] ?? '')}
-                        onChange={(e) => void onPatch(item.id, c.key, e.target.value)}
-                        placeholder="—"
-                        className="h-8 text-xs"
-                      />
-                    )}
-                  </td>
-                ))}
-                <td className="w-20 py-1.5">
-                  <div className="flex items-center justify-end gap-1">
-                    <button
-                      type="button"
-                      onClick={() => void onMove(item.id, 'up')}
-                      disabled={idx === 0}
-                      className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
-                      aria-label="上移"
-                    >
-                      <ChevronUp className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void onMove(item.id, 'down')}
-                      disabled={idx === items.length - 1}
-                      className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent"
-                      aria-label="下移"
-                    >
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void onRemove(item.id)}
-                      className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50"
-                      aria-label="删除"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
+      {cols.map((c) =>
+        c.list ? (
+          <datalist key={'dl-' + c.key} id={`list-${c.list.join()}`}>
+            {c.list.map((o) => (
+              <option key={o} value={o} />
             ))}
-          </tbody>
-        </table>
-      </div>
+          </datalist>
+        ) : null
+      )}
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-slate-100 bg-slate-50/70 text-left text-slate-500">
+            {cols.map((c) => (
+              <th key={c.key} className="whitespace-nowrap px-2 py-2 font-medium">
+                {c.label}
+              </th>
+            ))}
+            <th className="w-20 px-2 py-2 font-medium" />
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item, idx) => (
+            <tr key={item.id} className="border-b border-slate-50 last:border-0 hover:bg-brand-50/20">
+              {cols.map((c) => (
+                <td key={c.key} className={cn('p-0.5', c.width)}>
+                  <CellInput
+                    value={item[c.key]}
+                    type={c.key === 'scheduled_at' ? 'date' : 'text'}
+                    list={c.list}
+                    ariaLabel={`${item.content || '行'} ${c.label}`}
+                    onCommit={(v) => void onPatch(item.id, c.key, v)}
+                  />
+                </td>
+              ))}
+              <td className="p-0.5">
+                <div className="flex items-center justify-end gap-0.5">
+                  <button className="rounded p-1 text-slate-300 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-30" disabled={idx === 0} onClick={() => void onMove(item.id, 'up')} aria-label="上移" title="上移">
+                    <ChevronUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button className="rounded p-1 text-slate-300 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-30" disabled={idx === items.length - 1} onClick={() => void onMove(item.id, 'down')} aria-label="下移" title="下移">
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                  <button className="rounded p-1 text-slate-300 hover:bg-red-50 hover:text-red-500" onClick={() => void onRemove(item.id)} aria-label="删除" title="删除">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
     </div>
   );
 }
@@ -1212,52 +1202,57 @@ function ExamRows({
   onMove: (id: number, dir: 'up' | 'down') => Promise<void>;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       {items.map((item, idx) => (
-        <div key={item.id} className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 ring-1 ring-slate-100">
-          <span className="w-12 text-center text-xs text-slate-400">{idx + 1}</span>
-          <Input
-            value={String(item.content ?? '')}
-            onChange={(e) => void onPatch(item.id, 'content', e.target.value)}
-            placeholder="阶测内容"
-            className="flex-1 h-8 text-sm"
-          />
-          <Input
-            value={String(item.scheduled_at ?? '')}
-            onChange={(e) => void onPatch(item.id, 'scheduled_at', e.target.value)}
-            placeholder="YYYY-MM-DD"
-            className="w-28 h-8 text-sm"
-            type="date"
-          />
-          <button
-            type="button"
-            onClick={() => void onMove(item.id, 'up')}
-            disabled={idx === 0}
-            className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-30"
-            aria-label="上移"
-          >
-            <ChevronUp className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void onMove(item.id, 'down')}
-            disabled={idx === items.length - 1}
-            className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-30"
-            aria-label="下移"
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void onRemove(item.id)}
-            className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 ml-auto"
-            aria-label="删除"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+        <div key={item.id} className="flex items-center gap-2 rounded-xl border border-violet-100 bg-violet-50/40 px-2 py-1">
+          <Badge tone="violet" className="shrink-0">
+            阶测
+          </Badge>
+          <div className="min-w-0 flex-1">
+            <CellInput value={item.content} ariaLabel="阶测内容" onCommit={(v) => void onPatch(item.id, 'content', v)} />
+          </div>
+          <div className="w-36 shrink-0">
+            <CellInput value={item.scheduled_at} type="date" ariaLabel="阶测时间" onCommit={(v) => void onPatch(item.id, 'scheduled_at', v)} />
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button className="rounded p-1 text-slate-300 hover:bg-white hover:text-slate-600 disabled:opacity-30" disabled={idx === 0} onClick={() => void onMove(item.id, 'up')} aria-label="上移" title="上移">
+              <ChevronUp className="h-3.5 w-3.5" />
+            </button>
+            <button className="rounded p-1 text-slate-300 hover:bg-white hover:text-slate-600 disabled:opacity-30" disabled={idx === items.length - 1} onClick={() => void onMove(item.id, 'down')} aria-label="下移" title="下移">
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            <button className="rounded p-1 text-slate-300 hover:bg-white hover:text-red-500" onClick={() => void onRemove(item.id)} aria-label="删除" title="删除">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * 从课程目录挑课。
+ *
+ * 默认只列这块报告学科的课，学期默认锁在报告自己的学期上——报告是秋季的就不该
+ * 往里塞寒假的课，目录那边「引用」也跟着对不上。年级 / 学期 / 类型可以再收窄，
+ * 「查看全部」一键放开所有条件。已经加进当前面板的课标灰、不能再选，
+ * 免得同一门课在总结里写两遍。
+ *
+ * 新增：常用课程缓存 - 记录最近使用的课程，下次打开时优先展示
+ */
+
+/**
+ * localStorage 常用课程条目校验：必须是完整课程对象（id + content 都是合法类型）。
+ * 缓存里历史上存过纯 id 数字数组，渲染端一旦当对象用会直接白屏，
+ * 所以读取端统一先过这道校验，不合法的条目一律丢弃。
+ */
+function isRecentCourseEntry(v: unknown): v is CatalogCourseOption {
+  return (
+    !!v &&
+    typeof v === 'object' &&
+    typeof (v as CatalogCourseOption).id === 'number' &&
+    typeof (v as CatalogCourseOption).content === 'string'
   );
 }
 
@@ -1269,124 +1264,326 @@ function CoursePicker({
   reportTerm,
   addedIds,
   onClose,
-  onCoursesUsed,
   onPick,
+  onCoursesUsed,
 }: {
   open: boolean;
   kind: 'summary' | 'plan';
-  subject?: string;
-  reportGrade?: string;
-  reportTerm?: string;
+  subject: string;
+  reportGrade: string;
+  reportTerm: string;
   addedIds: Set<number>;
   onClose: () => void;
-  onCoursesUsed: (courseIds: number[]) => void;
   onPick: (courses: CatalogCourseOption[]) => Promise<void>;
+  onCoursesUsed?: (courseIds: number[]) => void;
 }) {
   const [courses, setCourses] = useState<CatalogCourseOption[]>([]);
+  const [total, setTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [gradeFilter, setGradeFilter] = useState('');
-  const [termFilter, setTermFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [type, setType] = useState('');
+  const [grade, setGrade] = useState('');
+  const [term, setTerm] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
-  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [grades, setGrades] = useState<string[]>([]);
+  const [terms, setTerms] = useState<string[]>([]);
+  const [recentCourses, setRecentCourses] = useState<CatalogCourseOption[]>([]);
+  const [showRecent, setShowRecent] = useState(false);
+  /** 自动展开标记：「同步」类型无结果时自动放开，避免用户看到空列表 */
+  const autoClearedType = useRef(false);
+
+  // 加载常用课程（localStorage 缓存）。存的是完整课程对象，脏数据（含旧版的纯 id 数组）一律过滤
+  useEffect(() => {
+    if (!open) return;
+    const key = `recent-courses-${subject}`;
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || '[]');
+      const saved = Array.isArray(raw) ? raw.filter(isRecentCourseEntry) : [];
+      if (saved.length > 0) {
+        setRecentCourses(saved);
+        setShowRecent(true);
+      }
+    } catch {
+      // 解析失败忽略
+    }
+  }, [open, subject]);
 
   useEffect(() => {
-    if (open) {
-      setLoading(true);
-      setPicked(new Set());
-      api
-        .request<{ courses: CatalogCourseOption[] }>('/catalog/courses', { method: 'GET' })
-        .then((res) => {
-          let filtered = res.courses;
-          if (subject) filtered = filtered.filter((c) => c.subject === subject);
-          if (reportGrade) filtered = filtered.filter((c) => c.grade === reportGrade);
-          if (reportTerm) filtered = filtered.filter((c) => c.term === reportTerm);
-          setCourses(filtered);
-        })
-        .catch(() => toast.error('加载课程目录失败'))
-        .finally(() => setLoading(false));
+    if (!open) {
+      autoClearedType.current = false;
+      return;
     }
-  }, [open, subject, reportGrade, reportTerm]);
+    setKeyword('');
+    setType('同步');
+    setGrade(reportGrade);
+    setTerm(reportTerm);
+    setShowAll(false);
+    setPicked(new Set());
+    void api
+      .request<{ grades: string[]; terms: string[] }>('/catalog/facets')
+      .then((r) => {
+        setGrades(r.grades || []);
+        setTerms(r.terms || []);
+      })
+      .catch(() => undefined);
+  }, [open, reportGrade, reportTerm]);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    const params = new URLSearchParams({ limit: '5000' });
+    // subject 始终带：「查看全部」只放开年级/学期/类型，学科范围不变
+    if (subject) params.set('subject', subject);
+    if (grade) params.set('grade', grade);
+    if (term) params.set('term', term);
+    if (type) params.set('type', type);
+    if (keyword.trim()) params.set('q', keyword.trim());
+    api
+      .request<{ courses: CatalogCourseOption[]; total: number; rows: number }>(`/catalog/courses?${params}`)
+      .then((r) => {
+        setCourses(r.courses || []);
+        setTotal(r.total || 0);
+        setTruncated((r.rows || 0) < (r.total || 0));
+      })
+      .catch(() => {
+        setCourses([]);
+        setTotal(0);
+      })
+      .finally(() => setLoading(false));
+  }, [open, subject, grade, term, type, keyword, showAll]);
+
+  // 「同步」类型无结果时自动放开类型筛选，避免用户看到空列表
+  useEffect(() => {
+    if (!open || showAll || loading || autoClearedType.current) return;
+    if (type === '同步' && total === 0 && courses.length === 0) {
+      autoClearedType.current = true;
+      setType('');
+    }
+  }, [open, showAll, loading, type, total, courses]);
+
+  const typeOptions = useMemo(() => Array.from(new Set(courses.map((c) => c.type).filter(Boolean))), [courses]);
+
+  const hasFilter = showAll || !!(subject || grade || term || type || keyword.trim());
 
   const resetAll = () => {
-    setSearch('');
-    setGradeFilter('');
-    setTermFilter('');
-    setTypeFilter('');
+    setKeyword('');
+    setType('');
+    setGrade('');
+    setTerm('');
+    setShowAll(true);
   };
 
-  const hasFilter = search || gradeFilter || termFilter || typeFilter;
+  // 「查看全部」是开关：有收窄就展开到全部课程，已经展开了就收回来。
+  // 收回时必须把报告学期重新套回去——不然展开过一次再点回来会变成「全部学期」，
+  // 寒假的课又悄悄混进秋季的报告里了。
+  const toggleShowAll = () => {
+    setKeyword('');
+    if (showAll) {
+      // 收回：恢复默认筛选（年级 + 学期 + 同步）
+      setShowAll(false);
+      setType('同步');
+      setGrade(reportGrade);
+      setTerm(reportTerm);
+    } else {
+      // 展开：放开所有条件
+      setShowAll(true);
+      setType('');
+      setGrade('');
+      setTerm('');
+    }
+  };
 
-  const filtered = useMemo(() => {
-    return courses
-      .filter((c) => !addedIds.has(c.id))
-      .filter((c) => {
-        if (search && !c.content.toLowerCase().includes(search.toLowerCase())) return false;
-        if (gradeFilter && c.grade !== gradeFilter) return false;
-        if (termFilter && c.term !== termFilter) return false;
-        if (typeFilter && c.type !== typeFilter) return false;
-        return true;
-      });
-  }, [courses, search, gradeFilter, termFilter, typeFilter, addedIds]);
+  const scopeText = [
+    showAll ? '全部课程' : subject ? subject : '',
+    grade,
+    type || (showAll ? '' : '全部类型'),
+    term || (showAll ? '' : '全部学期'),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
-  const toggle = (course: CatalogCourseOption) => {
+  const toggle = (c: CatalogCourseOption) => {
+    if (addedIds.has(c.id)) return;
     setPicked((prev) => {
       const next = new Set(prev);
-      if (next.has(course.id)) next.delete(course.id);
-      else next.add(course.id);
+      if (next.has(c.id)) next.delete(c.id);
+      else next.add(c.id);
       return next;
     });
   };
 
-  const handleConfirm = async () => {
+  // 选中课程的候选池：当前筛选结果 + 不在其中的常用课程。
+  // 常用课程可能被学期 / 类型筛选挡在列表外，但点它的快捷按钮就是要加它。
+  const pickedPool = useMemo(
+    () => [...courses, ...recentCourses.filter((rc) => !courses.some((c) => c.id === rc.id))],
+    [courses, recentCourses]
+  );
+
+  /** 点「添加 N 门」：把选中的课交给回调，并把它们记进常用课程缓存（存完整课程对象） */
+  const commitPick = async () => {
     if (picked.size === 0) return;
-    const selected = courses.filter((c) => picked.has(c.id));
-    await onPick(selected);
-    onCoursesUsed(Array.from(picked));
-    onClose();
+    setBusy(true);
+    try {
+      const pickedCourses = pickedPool.filter((c) => picked.has(c.id));
+      if (pickedCourses.length > 0) {
+        const key = `recent-courses-${subject}`;
+        let prev: CatalogCourseOption[] = [];
+        try {
+          const raw = JSON.parse(localStorage.getItem(key) || '[]');
+          if (Array.isArray(raw)) prev = raw.filter(isRecentCourseEntry);
+        } catch {
+          // 解析失败忽略
+        }
+        // 新选的排前面 + 去重 + 去已添加的，最多保留 20 个
+        const merged = [
+          ...pickedCourses,
+          ...prev.filter((p) => !pickedCourses.some((c) => c.id === p.id) && !addedIds.has(p.id)),
+        ].slice(0, 20);
+        localStorage.setItem(key, JSON.stringify(merged));
+        onCoursesUsed?.(pickedCourses.map((c) => c.id));
+      }
+      await onPick(pickedCourses);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  if (!open) return null;
-
   return (
-    <Modal open onClose={onClose} title="从课程目录添加" description={`已添加 ${picked.size} 门，确认后批量加入${kind === 'summary' ? '总结' : '规划'}`} size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={'从课程目录添加 · ' + (kind === 'plan' ? '规划' : '总结')}
+      size="lg"
+      footer={
+        picked.size > 0 ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium text-slate-700">已选 {picked.size} 门课</span>
+              {picked.size > 1 && (
+                <span className="text-xs text-slate-400">
+                  {pickedPool.filter((c) => picked.has(c.id)).slice(0, 3).map((c) => c.content).join('、')}
+                  {picked.size > 3 && '…'}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                取消
+              </Button>
+              <Button
+                icon={<FilePlus2 className="h-4 w-4" />}
+                disabled={picked.size === 0}
+                loading={busy}
+                onClick={() => void commitPick()}
+              >
+                添加 {picked.size} 门
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">已选 {picked.size} 门课</span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>
+                取消
+              </Button>
+              <Button
+                icon={<FilePlus2 className="h-4 w-4" />}
+                disabled={picked.size === 0}
+                loading={busy}
+                onClick={() => void commitPick()}
+              >
+                添加 {picked.size} 门
+              </Button>
+            </div>
+          </div>
+        )
+      }
+    >
       <div className="space-y-3">
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 gap-3">
           <Input
-            placeholder="搜索课程内容…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-[200px] h-8"
-            icon={<Search className="h-4 w-4" />}
-            aria-label="搜索课程"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="搜索课程内容 / 教材 / 难度"
+            aria-label="搜索"
           />
           <Select
-            value={gradeFilter}
-            onChange={(e) => setGradeFilter(e.target.value)}
-            options={['', '一年级', '二年级', '三年级', '四年级', '五年级', '六年级', '初一', '初二', '初三', '高一', '高二', '高三'].map((g) => ({ value: g, label: g || '全部年级' }))}
-            className="h-8 w-28"
-            placeholder="全部年级"
-          />
-          <Select
-            value={termFilter}
-            onChange={(e) => setTermFilter(e.target.value)}
-            options={['', '上学期', '下学期', '寒假', '暑假'].map((t) => ({ value: t, label: t || '全部学期' }))}
-            className="h-8 w-28"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
             placeholder="全部学期"
+            options={terms.map((t) => ({ value: t, label: t }))}
+            aria-label="学期"
           />
           <Select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            options={['', '新授课', '复习课', '专题课', '错题课', '测试课', '其他'].map((t) => ({ value: t, label: t || '全部类型' }))}
-            className="h-8 w-28"
-            placeholder="全部类型"
+            value={grade}
+            onChange={(e) => setGrade(e.target.value)}
+            placeholder="全部年级"
+            options={grades.map((g) => ({ value: g, label: g }))}
+            aria-label="年级"
           />
-          {hasFilter && (
-            <button onClick={resetAll} className="ml-auto h-8 px-3 text-xs text-brand-600 hover:underline">
-              重置筛选
-            </button>
-          )}
+          <Select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            placeholder="全部类型"
+            options={typeOptions.map((t) => ({ value: t, label: t }))}
+            aria-label="课程类型"
+          />
+        </div>
+
+        {/* 常用课程快捷栏 */}
+        {showRecent && recentCourses.length > 0 && !showAll && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-slate-500">
+                <span className="mr-1">📌</span>常用课程（点击快速选择）
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowRecent(false)}
+                className="text-xs text-slate-400 hover:text-slate-600"
+              >
+                收起
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {recentCourses.map((c) => {
+                const isAdded = addedIds.has(c.id);
+                const isPicked = picked.has(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    disabled={isAdded}
+                    onClick={() => toggle(c)}
+                    className={cn(
+                      'rounded-lg px-2 py-1 text-xs transition',
+                      isAdded
+                        ? 'bg-slate-100 text-slate-300 cursor-not-allowed'
+                        : isPicked
+                        ? 'bg-brand-100 text-brand-700 ring-1 ring-brand-300'
+                        : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-brand-50'
+                    )}
+                  >
+                    {c.content.length > 20 ? c.content.slice(0, 20) + '…' : c.content}
+                    {isAdded && <span className="ml-1 text-[10px]">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="truncate text-slate-400">
+            {scopeText} · 共 {total} 门{truncated ? '，仅显示前 ' + courses.length + ' 门' : ''}
+          </span>
+          <Button variant="ghost" size="sm" onClick={() => void toggleShowAll()} aria-label="查看全部课程">
+            查看全部
+          </Button>
         </div>
 
         <div className="max-h-80 overflow-y-auto rounded-xl border border-slate-100">
@@ -1409,7 +1606,7 @@ function CoursePicker({
           ) : (
             <table className="w-full text-xs">
               <tbody>
-                {filtered.map((c) => {
+                {courses.map((c) => {
                   const added = addedIds.has(c.id);
                   return (
                     <tr
@@ -1447,15 +1644,6 @@ function CoursePicker({
               </tbody>
             </table>
           )}
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-          <Button variant="outline" onClick={onClose} disabled={loading}>
-            取消
-          </Button>
-          <Button onClick={handleConfirm} disabled={picked.size === 0 || loading} icon={<Plus className="h-4 w-4" />}>
-            确认添加 {picked.size} 门
-          </Button>
         </div>
       </div>
     </Modal>
