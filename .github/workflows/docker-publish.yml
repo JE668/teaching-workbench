@@ -44,6 +44,13 @@ jobs:
             export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v tesseract | tr '\n' ':' | sed 's/:$//')
           fi
           
+          # Verify tesseract is not in PATH
+          if command -v tesseract >/dev/null 2>&1; then
+            echo "WARNING: tesseract still found in PATH: $(which tesseract)"
+          else
+            echo "✅ System tesseract removed from PATH"
+          fi
+          
           echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
           echo "✅ System tesseract removed, tesseract.js will use pure JS implementation"
 
