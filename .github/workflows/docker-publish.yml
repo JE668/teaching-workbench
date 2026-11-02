@@ -30,23 +30,24 @@ jobs:
           set -euo pipefail
           echo "Removing system Tesseract to force tesseract.js pure JS implementation..."
           
-          # Remove system tesseract if present to force tesseract.js pure JS implementation
+          # Remove system tesseract binary directly (bypasses apt lock)
           if command -v tesseract >/dev/null 2>&1; then
-            echo "Removing system tesseract to force pure JS implementation..."
-            apt-get remove -y tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng 2>/dev/null || true
-            apt-get autoremove -y 2>/dev/null || true
+            TESS_PATH=$(which tesseract)
+            echo "Found tesseract at: $TESS_PATH"
+            rm -f "$TESS_PATH" 2>/dev/null || true
           fi
           
-          # Ensure tesseract is not in PATH
-          if command -v tesseract >/dev/null 2>&1; then
-            echo "⚠️ Tesseract still in PATH, removing from PATH"
-            # Remove from PATH by filtering
-            export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v tesseract | tr '\n' ':' | sed 's/:$//')
-          fi
+          # Also remove any tesseract binaries in common locations
+          rm -f /usr/bin/tesseract /usr/local/bin/tesseract /opt/tesseract/bin/tesseract 2>/dev/null || true
+          
+          # Remove language data files if they exist
+          rm -rf /usr/share/tesseract-ocr /usr/share/tesseract-ocr-5 /usr/local/share/tessdata 2>/dev/null || true
           
           # Verify tesseract is not in PATH
           if command -v tesseract >/dev/null 2>&1; then
-            echo "WARNING: tesseract still found in PATH: $(which tesseract)"
+            echo "⚠️ Tesseract still found in PATH: $(which tesseract)"
+            # Force remove from PATH
+            export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v tesseract | tr '\n' ':' | sed 's/:$//')
           else
             echo "✅ System tesseract removed from PATH"
           fi
