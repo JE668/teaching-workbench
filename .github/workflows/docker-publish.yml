@@ -19,44 +19,13 @@ jobs:
     name: Backend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      # 防止 tesseract.js 找到系统语言数据文件（导致文件路径损坏报错）
-      TESSDATA_PREFIX: ""
+    # 历史：这里曾围绕 tesseract 装/删系统包、TESSDATA_PREFIX 做过大量变通，
+    # 但 OCR worker 在测试里初始化仍会卡死（语言数据下载/加载无人等待）。
+    # 现在根因已修：NODE_ENV=test 时 services/ocr.ts 直接跳过真实 OCR，
+    # CI 不再需要任何 Tesseract 环境准备。
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Remove system Tesseract to force pure JS implementation
-        working-directory: server
-        timeout-minutes: 2
-        run: |
-          set -euo pipefail
-          echo "Removing system Tesseract to force tesseract.js pure JS implementation..."
-          
-          # Remove system tesseract binary directly (bypasses apt lock)
-          if command -v tesseract >/dev/null 2>&1; then
-            TESS_PATH=$(which tesseract)
-            echo "Found tesseract at: $TESS_PATH"
-            rm -f "$TESS_PATH" 2>/dev/null || true
-          fi
-          
-          # Also remove any tesseract binaries in common locations
-          rm -f /usr/bin/tesseract /usr/local/bin/tesseract /opt/tesseract/bin/tesseract 2>/dev/null || true
-          
-          # Remove language data files if they exist
-          rm -rf /usr/share/tesseract-ocr /usr/share/tesseract-ocr-5 /usr/local/share/tessdata 2>/dev/null || true
-          
-          # Verify tesseract is not in PATH
-          if command -v tesseract >/dev/null 2>&1; then
-            echo "⚠️ Tesseract still found in PATH: $(which tesseract)"
-            # Force remove from PATH
-            export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v tesseract | tr '\n' ':' | sed 's/:$//')
-          else
-            echo "✅ System tesseract removed from PATH"
-          fi
-          
-          echo "TESSERACT_AVAILABLE=false" >> $GITHUB_ENV
-          echo "✅ System tesseract removed, tesseract.js will use pure JS implementation"
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -91,9 +60,6 @@ jobs:
     name: Frontend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      # 前端测试不需要 Tesseract，显式清除避免继承 test job 的 TESSDATA_PREFIX 导致 OCR 报错
-      TESSDATA_PREFIX: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -191,6 +157,20 @@ jobs:
             grep -q '"node":' "$f" || { echo "::error::$f 的 engines 缺 node"; exit 1; }
           done
           echo "✅ engines 声明齐全"
+
+      # 事故复盘：shared/ 的模板曾被单独改坏（union 加了 17 个键、MODULE_GUIDANCE 缺对应块、
+      # 措辞整体跑偏），CI 里 cp -r shared 又把副本盖回去，测试红了一大片才发现。
+      # 根目录 shared/ 是唯一事实源，两处运行副本必须逐字节一致。
+      - name: shared 三处副本必须一致
+        run: |
+          set -euo pipefail
+          for f in promptTemplates.ts reportTemplate.ts; do
+            diff -q "shared/$f" "server/src/shared/$f" || {
+              echo "::error::server/src/shared/$f 与根目录 shared/$f 不一致（根目录才是事实源，请同步后提交）"; exit 1; }
+            diff -q "shared/$f" "web/src/shared/$f" || {
+              echo "::error::web/src/shared/$f 与根目录 shared/$f 不一致（根目录才是事实源，请同步后提交）"; exit 1; }
+          done
+          echo "✅ shared 副本一致"
 
   e2e:
     name: E2E Tests

@@ -15,6 +15,11 @@ import { env } from '../config/env.js';
 // 全局 worker 单例（懒加载）
 let workerPromise: Promise<any> | null = null;
 
+// 测试环境一律跳过真实 OCR：worker 初始化要拉取 ~10MB+ 的 chi_sim 语言数据，
+// CI 里这条链路（下载/解压/加载）曾整批卡死测试直到 15 分钟超时。
+// 测试只关心图片生命周期与 OCR 结果的入库/读取路径，不校验识别文本本身。
+const OCR_DISABLED_IN_TEST = process.env.NODE_ENV === 'test';
+
 async function getWorker() {
   if (!workerPromise) {
     workerPromise = (async () => {
@@ -36,6 +41,7 @@ async function getWorker() {
  * @returns 识别出的纯文本（去首尾空白），失败返回空串
  */
 export async function ocrImage(imagePath: string): Promise<string> {
+  if (OCR_DISABLED_IN_TEST) return '';
   try {
     const worker = await getWorker();
     const { data } = await worker.recognize(imagePath);
