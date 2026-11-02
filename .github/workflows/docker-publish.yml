@@ -19,6 +19,9 @@ jobs:
     name: Backend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # 防止 tesseract.js 找到系统语言数据文件（导致文件路径损坏报错）
+      TESSDATA_PREFIX: ""
     steps:
       - name: Checkout
         uses: actions/checkout@v7
