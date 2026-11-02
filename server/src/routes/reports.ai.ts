@@ -138,7 +138,9 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
         const retryContent = await generateReportAiOnce(
           req.userId!,
           params,
-          correctionText(wordCount, wordRange)
+          // 带上上一轮原文：纠偏注释里承诺了「在原素材基础上补/删，而不是重写」，
+          // 只给区间数字模型无从修改，只会整篇重写。
+          correctionText(wordCount, wordRange) + '\n\n上一轮输出的原文：\n' + content
         );
         const retryWords = countWords(retryContent);
         if (

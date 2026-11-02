@@ -201,6 +201,11 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
       body: { kind: 'plan', content: '分数混合运算' },
     });
     await createFollowUp(token, { studentId, topic: '分数加减法运算' });
+    // 回访必须落在报告月份（2026-10）内：路由按 created_at LIKE '报告月-%' 取素材，
+    // 用例若恰好在报告月之外运行（例如 11 月跑 CI），刚创建的记例会因月份不匹配被过滤掉。
+    // 把 created_at 钉进报告月，用例与运行日期解耦。
+    const { db } = await import('../config/database.js');
+    db.prepare("UPDATE followups SET created_at = '2026-10-15 10:00:00' WHERE student_name = '李小明'").run();
   });
 
   after(async () => {

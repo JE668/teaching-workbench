@@ -148,6 +148,17 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
     '掌握程度（老师原文）：' + (params.mastery || '（未提供）'),
     '课次数：' + (params.sessionCount || 1) + ' 节',
     '课程类型：' + (isGroup ? '小组课' : '1 对 1'),
+    // 课次数自适应：多次课要按「一个阶段」整体反馈，而不是逐次罗列流水账。
+    // 单次课不加这句——「作为一个阶段」对单次课是噪音。
+    multi
+      ? '- 本次回访**涵盖' + scope + '**，请把这几次课作为一个阶段来整体反馈，体现内容的递进关系与学生的阶段性变化，而不是逐次罗列流水账。'
+      : '',
+    '- 涵盖课次：' + (multi ? scope : '本次课'),
+    // 打卡类型定位：先让模型知道「这次要覆盖哪块」，再决定怎么写
+    multiBlock
+      ? '- 覆盖板块（' + selectedMods.length + ' 个，都要写进内容）：' +
+        selectedMods.map((m) => MODULE_GUIDANCE[m].label).join('、')
+      : '- 打卡类型：' + mod.group + ' · ' + mod.label,
     '',
     // 1对1 时给出亲切称呼；小组课不给任何姓名信息
     !isGroup && nickname
@@ -211,6 +222,18 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
   if (styleHint) {
     lines.push('# 风格偏好（老师自定义，优先遵循)', styleHint, '');
   }
+
+  // 打卡类型定位场景块：让模型先明白「这次要覆盖哪几块、家长关心什么」，再决定怎么写
+  lines.push(
+    multiBlock
+      ? '# 本次回访覆盖的板块（' + selectedMods.length + ' 个）'
+      : '# 本次打卡类型：' + mod.group + ' · ' + mod.label,
+    multiBlock
+      ? selectedMods.map((m) => MODULE_GUIDANCE[m].label).join('、') +
+        '（每个板块都要单独成一段，具体写法见下文「输出格式」）'
+      : mod.label + '：' + mod.scene,
+    ''
+  );
 
   // 内容结构由覆盖的板块决定：多选时每个板块单独成段，末尾再接两段收尾
   if (multiBlock) {
@@ -276,11 +299,12 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
       : '11. 行文使用亲切称呼，不要反复使用学生全名'
   );
 
-  // 板块专属要求：追加在通用硬性要求之外，不动通用条目的序号
+  // 板块专属要求：追加在通用硬性要求之外，不动通用条目的序号。
+  // 单板块沿用老标题（调用方与测试锁的就是这个形状），多板块用汇总标题。
   const allRules = selectedMods.flatMap((m) => MODULE_GUIDANCE[m].rules);
   if (allRules.length > 0) {
-    lines.push('# 板块专属要求（追加在通用硬性要求之外）');
-    allRules.forEach((r, i) => lines.push((multiBlock ? 11 + i : 12 + i) + '. ' + r));
+    lines.push('', multiBlock ? '# 各板块专属要求' : '# 本模块专属要求（' + mod.label + '）');
+    allRules.forEach((r, i) => lines.push(String(i + 1) + '. ' + r));
   }
 
   // 字数纠偏：追加为一条指令
