@@ -48,7 +48,7 @@ export default defineConfig({
     {
       command: 'node e2e/mock-sensenova.cjs',
       url: AI_URL + '/health',
-      reuseExistingServer: !isCI,
+      reuseExistingServer: false,
       stdout: 'ignore',
       stderr: 'pipe',
       env: {
@@ -60,11 +60,13 @@ export default defineConfig({
     {
       command: 'npm --prefix ../server run start',
       url: API_URL + '/health',
-      reuseExistingServer: !isCI,
+      reuseExistingServer: false,
       stdout: 'ignore',
       stderr: 'pipe',
       env: {
         NODE_ENV: 'test',
+        // 后端启动时自清 .e2e-data，全新库起步（见 server/src/index.ts）
+        E2E_FRESH_DB: '1',
         PORT: String(API_PORT),
         HOST: '127.0.0.1',
         // 数据落在独立目录，不碰开发数据
@@ -81,7 +83,7 @@ export default defineConfig({
     {
       command: 'npm run preview -- --port ' + WEB_PORT + ' --strictPort',
       url: WEB_URL,
-      reuseExistingServer: !isCI,
+      reuseExistingServer: false,
       stdout: 'ignore',
       stderr: 'pipe',
       env: { E2E_API_TARGET: API_URL },

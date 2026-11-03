@@ -1,3 +1,4 @@
+import './bootstrap/e2eFreshDb.js'; // 必须第一个：在 SQLite 打开前清库
 import http from 'http';
 import { env } from './config/env.js';
 import { db } from './config/database.js';
