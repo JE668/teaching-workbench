@@ -22,6 +22,7 @@ import {
   RotateCcw,
   Loader2,
   Clock,
+  Users,
 } from 'lucide-react';
 import { api } from '../api/client';
 import Button from '../components/ui/Button';
@@ -37,6 +38,7 @@ import { getSummaryPlaceholder, getPlanPlaceholder } from '../shared/reportTempl
 import {
   ATTENDANCE_OPTIONS,
   CatalogCourseOption,
+  Classmate,
   DIFFICULTY_OPTIONS,
   MonthlyReport,
   NextCourseSuggestion,
@@ -200,6 +202,13 @@ export default function ReportEdit() {
   const [nextCourses, setNextCourses] = useState<NextCourseSuggestion[] | null>(null);
   const [loadingNextCourses, setLoadingNextCourses] = useState(false);
   const [addingNext, setAddingNext] = useState<number | null>(null);
+  // 方向 F：把这份报告的班级行套用到同班同学
+  const [showApplyClass, setShowApplyClass] = useState(false);
+  const [classmates, setClassmates] = useState<Classmate[]>([]);
+  const [loadingClassmates, setLoadingClassmates] = useState(false);
+  const [copySummary, setCopySummary] = useState(true);
+  const [copyPlan, setCopyPlan] = useState(false);
+  const [applyingClass, setApplyingClass] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -504,6 +513,51 @@ export default function ReportEdit() {
     }
   }
 
+  /**
+   * 方向 F：打开「套用到同班」对话框，先列出同班同学。
+   * 同班 = 同年级 + 学科 + 学期 + 月份。写好一份班级行后批量套用，再逐个微调。
+   */
+  async function openApplyClass() {
+    if (!report) return;
+    setShowApplyClass(true);
+    setLoadingClassmates(true);
+    try {
+      const data = await api.request<{ classmates: Classmate[] }>(`/reports/${report.id}/classmates`);
+      setClassmates(data.classmates || []);
+      // 默认勾选：本报告哪个 intro 非空就默认套哪个
+      setCopySummary(!!(report.summary_intro && report.summary_intro.trim()));
+      setCopyPlan(!!(report.plan_intro && report.plan_intro.trim()));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '查询同班同学失败');
+      setClassmates([]);
+    } finally {
+      setLoadingClassmates(false);
+    }
+  }
+
+  /** 把勾选的班级行套用到同班同学 */
+  async function applyToClass() {
+    if (!report) return;
+    if (!copySummary && !copyPlan) {
+      toast.error('请至少勾选「总结」或「规划」之一');
+      return;
+    }
+    setApplyingClass(true);
+    try {
+      const data = await api.request<{ updated: number }>(`/reports/${report.id}/apply-to-class`, {
+        method: 'POST',
+        body: JSON.stringify({ summary: copySummary, plan: copyPlan }),
+      });
+      const what = [copySummary && '总结', copyPlan && '规划'].filter(Boolean).join('和');
+      toast.success('已把' + what + '套用到 ' + data.updated + ' 位同班同学，可再逐个微调');
+      setShowApplyClass(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '套用失败');
+    } finally {
+      setApplyingClass(false);
+    }
+  }
+
   async function patchItem(itemId: number, field: CellKey, value: string) {
     if (!report) return;
     try {
@@ -726,6 +780,15 @@ export default function ReportEdit() {
             onClick={downloadCard}
           >
             导出图片
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<Users className="h-4 w-4" />}
+            onClick={() => void openApplyClass()}
+            title="把这份报告的班级行套用到同班同学，再逐个微调"
+          >
+            套用到同班
           </Button>
           <Button variant="outline" size="sm" icon={<Trash2 className="h-4 w-4 text-red-500" />} onClick={() => setConfirmDelete(true)}>
             删除报告
@@ -1059,6 +1122,96 @@ export default function ReportEdit() {
         description="上月规划里的课程会导入到本月总结，并保持课程目录关联。导入后你可以手动调整课程内容。"
         confirmText="导入"
       />
+
+      {/* 方向 F：把这份报告的班级行套用到同班同学 */}
+      <Modal
+        open={showApplyClass}
+        onClose={() => setShowApplyClass(false)}
+        title="套用到同班同学"
+        description="同一个班（同年级·学科·学期·月份）的学生，总结和规划的公共部分高度相似。写好一份后批量套用，再逐个微调个性部分，省去重复写。"
+        size="md"
+        footer={
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">
+              {classmates.length > 0 ? `将套用到 ${classmates.length} 位同班同学` : '没有同班同学'}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setShowApplyClass(false)}>取消</Button>
+              <Button
+                icon={<Users className="h-4 w-4" />}
+                disabled={classmates.length === 0 || (!copySummary && !copyPlan)}
+                loading={applyingClass}
+                onClick={() => void applyToClass()}
+              >
+                套用
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {/* 选要套用哪部分 */}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-slate-500">选择要套用的部分</p>
+            <label className="flex items-start gap-2.5 rounded-xl p-2.5 ring-1 ring-slate-100 bg-white cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-500"
+                checked={copySummary}
+                onChange={(e) => setCopySummary(e.target.checked)}
+                disabled={!report?.summary_intro?.trim()}
+              />
+              <span className="flex-1">
+                <span className="block text-sm text-slate-700">本月总结</span>
+                <span className="block text-xs text-slate-400">
+                  {report?.summary_intro?.trim() ? '把这份总结的公共描述套用过去' : '本报告总结为空，无可套用'}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-xl p-2.5 ring-1 ring-slate-100 bg-white cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-500"
+                checked={copyPlan}
+                onChange={(e) => setCopyPlan(e.target.checked)}
+                disabled={!report?.plan_intro?.trim()}
+              />
+              <span className="flex-1">
+                <span className="block text-sm text-slate-700">本月规划</span>
+                <span className="block text-xs text-slate-400">
+                  {report?.plan_intro?.trim() ? '把这份规划的公共描述套用过去' : '本报告规划为空，无可套用'}
+                </span>
+              </span>
+            </label>
+            <p className="text-xs text-slate-400">
+              课程明细不套用 —— 每个学生的出勤和完成度各自不同，套用后可再逐个微调。
+            </p>
+          </div>
+
+          {/* 同班同学列表 */}
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-slate-500">同班同学</p>
+            {loadingClassmates ? (
+              <p className="text-xs text-slate-400">查询中…</p>
+            ) : classmates.length === 0 ? (
+              <p className="text-xs text-slate-400">
+                没有同班同学。只有同年级·学科·学期·月份的报告才会出现在这里。
+              </p>
+            ) : (
+              <ul className="max-h-40 space-y-1 overflow-auto">
+                {classmates.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                    <span className="text-slate-700">{c.studentName}</span>
+                    <span className="text-slate-400">
+                      {c.hasSummary ? '有总结' : '无总结'} · {c.hasPlan ? '有规划' : '无规划'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Modal>
 
       {/* 草稿历史侧边栏（桌面端） */}
       {showHistoryPanel && (

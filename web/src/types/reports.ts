@@ -103,6 +103,16 @@ export interface NextCourseSuggestion {
   finished: boolean;
 }
 
+/** 同班同学（同 grade+subject+term+year_month），可把班级行套用到他们 */
+export interface Classmate {
+  id: number;
+  studentId: number;
+  studentName: string;
+  yearMonth: string;
+  hasSummary: boolean;
+  hasPlan: boolean;
+}
+
 /** 学期选项（对齐课程体系目录里的取值） */
 export const TERM_OPTIONS = ['暑假', '秋季', '寒假', '春季', '一轮复习', '二轮复习', '三轮复习'];
 
