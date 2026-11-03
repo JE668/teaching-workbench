@@ -368,3 +368,89 @@ describe('POST /api/reports/:id/ai/stream · SSE', () => {
     assert.ok(!prompt.includes('李小明'));
   });
 });
+
+describe('事实预聚合（课次 / 出勤由代码算好，模型不用自己数）', () => {
+  const base: ReportAiParams = {
+    field: 'summary',
+    studentName: '李小明',
+    grade: '初二',
+    subject: '物理',
+    term: '秋季',
+    yearMonth: '2026-10',
+    summaryCourses: [],
+    planCourses: [],
+    followUps: [],
+  };
+  function userOf(p: ReportAiParams): string {
+    return buildReportAiMessages(p).map((m) => m.content)[1];
+  }
+
+  test('课次数和出勤分解被聚合成已核实事实，写进 prompt', () => {
+    const u = userOf({
+      ...base,
+      summaryCourses: [
+        { content: '凸透镜成像', attendance: '✅️' },
+        { content: '眼睛与眼镜', attendance: '请假' },
+        { content: '光的折射', attendance: '补' },
+      ],
+    });
+    // 课次由代码数好，模型不用自己数（以前「本月计划 x 次课」经常写错）
+    assert.ok(u.includes('本月实际上课 3 次'));
+    assert.ok(u.includes('正常出勤 1 次'));
+    assert.ok(u.includes('请假 1 次'));
+    assert.ok(u.includes('补课 1 次'));
+  });
+
+  test('满勤时只写课次数，不写「请假 0」这类凑数信息', () => {
+    const u = userOf({
+      ...base,
+      summaryCourses: [
+        { content: 'a', attendance: '✅️' },
+        { content: 'b', attendance: '✅️' },
+      ],
+    });
+    assert.ok(u.includes('本月实际上课 2 次'));
+    assert.ok(u.includes('正常出勤 2 次'));
+    assert.ok(!u.includes('请假 0'));
+    assert.ok(!u.includes('补课 0'));
+  });
+
+  test('没有课程内容时不写事实段（避免出现「上课 0 次」）', () => {
+    const u = userOf({ ...base, summaryCourses: [] });
+    assert.ok(!u.includes('本月实际上课'));
+  });
+
+  test('有请假的规划会把进度衔接点出来，满勤规划不写缺口段', () => {
+    const withLeave = userOf({
+      ...base,
+      field: 'plan',
+      summaryCourses: [{ content: 'a', attendance: '请假' }],
+      planCourses: [{ content: '下月新课' }],
+    });
+    assert.ok(withLeave.includes('本月请假 1 次'));
+    assert.ok(withLeave.includes('进度衔接'));
+
+    const fullAttendance = userOf({
+      ...base,
+      field: 'plan',
+      summaryCourses: [{ content: 'a', attendance: '✅️' }],
+      planCourses: [{ content: '下月新课' }],
+    });
+    assert.ok(!fullAttendance.includes('进度衔接'));
+  });
+
+  test('笔记/错题/作业不做完成率统计（前端只有 ✅️ 和 / 两种取值，区分不了没做和不适用）', () => {
+    const u = userOf({
+      ...base,
+      summaryCourses: [
+        { content: 'a', notes_done: '✅️', mistakes_done: '/', homework_done: '' },
+        { content: 'b', notes_done: '/', mistakes_done: '', homework_done: '/' },
+      ],
+    });
+    // 这些字段不应被渲染成完成率事实（否则是伪信号让模型照抄）
+    assert.ok(!u.includes('笔记整理'));
+    assert.ok(!u.includes('错题整理'));
+    assert.ok(!u.includes('作业完成'));
+    assert.ok(!u.includes('完成 1/'));
+  });
+});

@@ -54,11 +54,21 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
   const items = db
     .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ?')
     .all(id, userId) as any[];
+  // 事实预聚合需要出勤 + 三项完成度，所以 pick() 把这些字段一并带上
+  // （以前只带 content/type/difficulty，出勤和完成度根本进不了 prompt）。
   const pick = (kind: 'summary' | 'plan') =>
     items
       .filter((i) => i.kind === kind && String(i.content || '').trim())
       .sort((a, b) => Number(a.seq || 0) - Number(b.seq || 0))
-      .map((i) => ({ content: String(i.content || ''), type: String(i.type || ''), difficulty: String(i.difficulty || '') }));
+      .map((i) => ({
+        content: String(i.content || ''),
+        type: String(i.type || ''),
+        difficulty: String(i.difficulty || ''),
+        attendance: String(i.attendance || ''),
+        notes_done: String(i.notes_done || ''),
+        mistakes_done: String(i.mistakes_done || ''),
+        homework_done: String(i.homework_done || ''),
+      }));
 
   // 回访是「收获 / 进步 / 不足」的主要素材。之前只取 2 条，而一个学生一个月
   // 通常 8-12 次课——只给 2 条等于丢掉大部分素材，总结只能泛泛而谈。

@@ -19,6 +19,17 @@ export interface ReportAiCourse {
   content: string;
   type?: string;
   difficulty?: string;
+  /**
+   * 出勤（仅总结行的课有）：'✅️' 正常 / '请假' 请假 / '补' 补课 / '/' 其它。
+   * 供事实预聚合统计出勤，喂给模型的事实而非让它猜。
+   */
+  attendance?: string;
+  /** 笔记整理完成度（仅总结行）：'✅️' 视为完成 */
+  notes_done?: string;
+  /** 错题整理完成度（仅总结行） */
+  mistakes_done?: string;
+  /** 作业完成度（仅总结行） */
+  homework_done?: string;
 }
 
 export interface ReportAiFollowUp {
@@ -67,6 +78,79 @@ function courseLines(courses: ReportAiCourse[]): string {
     .join('\n');
 }
 
+// ============ 事实预聚合（方向 A + D） ============
+// 以前「本月上了几次课」「请假几次」全靠模型自己从课程清单里数，
+// 模型经常数错或含糊（「本月计划 x 次课」写错就是家长一眼能看出的硬伤）。
+// 这里在代码里把这些确定的事实算好，作为「已核实事实」喂给模型，
+// 模型只负责把它们组织成温暖的话，不再承担计数的活。
+//
+// 注意：笔记/错题/作业不做"完成率"统计。前端这三项只有 ✅️(完成) 和 /(不适用)
+// 两种取值，✅️ 还是新加课的默认值 —— 数据里区分不了「没做」和「本来就不适用」，
+// 硬算完成率会造出错误事实让模型照抄。所以这里只聚合课次数和出勤分解这类硬事实。
+
+export interface ReportFacts {
+  /** 实际上过的课次数（总结用）；或计划上的课次数（规划用） */
+  courseCount: number;
+  /** 出勤统计：正常上课次数 */
+  present: number;
+  /** 请假次数 */
+  leave: number;
+  /** 补课次数 */
+  makeup: number;
+}
+
+/** 出勤取值 → 归类。'✅️' 正常，'请假' 请假，'补' 补课，其它不计 */
+function classifyAttendance(v: string | undefined): 'present' | 'leave' | 'makeup' | null {
+  const s = (v || '').trim();
+  if (s.includes('✅')) return 'present';
+  if (s.includes('请假')) return 'leave';
+  if (s === '补' || s.includes('补')) return 'makeup';
+  return null;
+}
+
+/**
+ * 从课程明细聚合出确定的事实。只统计有 content 的行（跟 courseLines 口径一致）。
+ * 出勤只有总结行的课才有；规划行的课这个字段为空，聚合出来是 0，
+ * 调用方按 field 决定要不要把这些事实写进 prompt。
+ */
+export function aggregateReportFacts(courses: ReportAiCourse[]): ReportFacts {
+  const rows = courses.filter((c) => (c.content || '').trim());
+  const facts: ReportFacts = {
+    courseCount: rows.length,
+    present: 0,
+    leave: 0,
+    makeup: 0,
+  };
+  for (const c of rows) {
+    const att = classifyAttendance(c.attendance);
+    if (att === 'present') facts.present++;
+    else if (att === 'leave') facts.leave++;
+    else if (att === 'makeup') facts.makeup++;
+  }
+  return facts;
+}
+
+/**
+ * 把事实渲染成一段「已核实事实」文本，作为给模型的硬依据。
+ * 出勤不完整（如全月满勤）就只写有意义的部分，避免凑字。
+ *
+ * 注意：笔记/错题/作业不做"完成率"统计。前端这三项只有 ✅️(完成) 和 /(不适用)
+ * 两种取值，✅️ 还是新加课的默认值 —— 数据里区分不了「没做」和「本来就不适用」，
+ * 硬算完成率会造出错误事实让模型照抄。这里只保留课次数和出勤分解这类硬事实。
+ */
+export function renderReportFacts(f: ReportFacts): string[] {
+  if (f.courseCount === 0) return [];
+  const lines: string[] = [];
+  lines.push(`本月实际上课 ${f.courseCount} 次`);
+  const att: string[] = [];
+  if (f.present) att.push(`正常出勤 ${f.present} 次`);
+  if (f.leave) att.push(`请假 ${f.leave} 次`);
+  if (f.makeup) att.push(`补课 ${f.makeup} 次`);
+  if (att.length) lines.push('出勤情况：' + att.join('，'));
+
+  return lines;
+}
+
 function followUpLines(items: ReportAiFollowUp[]): string {
   if (!items.length) return '（没有回访记录）';
   return items
@@ -98,6 +182,10 @@ function prevSummarySection(prevSummary?: string): string[] {
 export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
   const w = who(p);
   const month = monthLabel(p.yearMonth);
+  // 事实预聚合：出勤 / 完成度 / 课次由代码算好，作为已核实事实喂给模型，
+  // 模型只负责组织成温暖的话，不再自己数课次、算比率（以前经常数错或含糊）。
+  const facts = aggregateReportFacts(p.summaryCourses);
+  const factLines = renderReportFacts(facts);
   const user = [
     '请写这一块报告的本月总结。',
     '',
@@ -107,6 +195,13 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
     '',
     '# ' + (month || '本月') + '上过的内容',
     courseLines(p.summaryCourses),
+    ...(factLines.length
+      ? [
+          '',
+          '# 已核实的课堂事实（代码从课程明细统计而来，务必照用，不要改动数字，也不要自己重新数）',
+          ...factLines,
+        ]
+      : []),
     '',
     '# 这个学生最近的课后回访（收获 / 进步 / 不足的素材）',
     followUpLines(p.followUps),
@@ -132,12 +227,20 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
   const month = monthLabel(nextYearMonth(p.yearMonth));
   const planCount = p.planCourses.filter((c) => (c.content || '').trim()).length;
   const wordRange = planWordRange(planCount);
-  
+
   // 收集回访中的图片路径（用于 OCR/图片理解素材）
   const followUpImages = p.followUps
     .flatMap(f => f.images || [])
     .filter((img): img is string => Boolean(img && img.trim()));
-  
+
+  // 规划侧的事实预聚合：规划最该针对的是「上月有请假、进度可能落下」。
+  // 由代码算成确定事实喂进来，规划就能点名补进度，而不是泛泛而谈。
+  // （笔记/错题/作业不做"未完成"检测 —— 前端这三项只有 ✅️ 和 / 两种取值，
+  //   区分不了「没做」和「不适用」，硬算会是伪信号。）
+  const summaryFacts = aggregateReportFacts(p.summaryCourses);
+  const gaps: string[] = [];
+  if (summaryFacts.leave > 0) gaps.push(`本月请假 ${summaryFacts.leave} 次${summaryFacts.makeup > 0 ? `（已补 ${summaryFacts.makeup} 次）` : ''}，下月需留意进度衔接`);
+
   const user = [
     '请写这一块报告的课程规划说明。',
     '',
@@ -155,6 +258,13 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
         ? '本月上过：\n' + courseLines(p.summaryCourses)
         : '（本月还没有内容）',
     '',
+    ...(gaps.length
+      ? [
+          '# 已核实的本月完成度缺口（代码统计而来，下月规划务必针对性安排，不要改动数字）',
+          ...gaps,
+          '',
+        ]
+      : []),
     followUpImages.length > 0 ? [
       '# 本月回访中的图片素材（作业、试卷、练习本等，供针对性规划参考）',
       followUpImages.map((img, i) => `${i + 1}. ${img}`).join('\n'),
