@@ -512,4 +512,34 @@ describe('纵向趋势（近几个月总结识别反复出现的问题）', () =
     assert.ok(u.includes('【2026-09】'));
     assert.ok(!u.includes('【2026-08】'));
   });
+
+  test('规划侧也吃纵向趋势：趋势区块 + 针对反复不足给安排的硬性要求', () => {
+    const u = userOf({
+      ...base,
+      field: 'plan',
+      planCourses: [{ content: '下月新课' }],
+      recentSummaries: [
+        { yearMonth: '2026-09', text: '上月独立性不足' },
+        { yearMonth: '2026-08', text: '独立性还是不足' },
+      ],
+    });
+    // 趋势区块进规划 prompt
+    assert.ok(u.includes('近几个月的报告总结'));
+    assert.ok(u.includes('【2026-09】'));
+    assert.ok(u.includes('独立性不足'));
+    // 硬性要求：反复出现的不足要给针对性改进安排
+    assert.ok(u.includes('反复出现的不足'));
+    assert.ok(u.includes('具体的改进安排'));
+  });
+
+  test('规划侧没有近月总结时不加趋势硬性要求（避免空要求）', () => {
+    const u = userOf({
+      ...base,
+      field: 'plan',
+      planCourses: [{ content: '下月新课' }],
+      recentSummaries: [],
+    });
+    assert.ok(!u.includes('近几个月的报告总结'));
+    assert.ok(!u.includes('反复出现的不足'));
+  });
 });

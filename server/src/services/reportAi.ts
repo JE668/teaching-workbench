@@ -294,6 +294,9 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
           '',
         ]
       : []),
+    // 趋势用进规划：规划不只针对本月不足，还针对「近几个月反复出现的不足」
+    // 给更有针对性的安排（比如独立性连续三个月不足，下月就该安排独立性训练）
+    ...recentSummariesSection(p.recentSummaries),
     followUpImages.length > 0 ? [
       '# 本月回访中的图片素材（作业、试卷、练习本等，供针对性规划参考）',
       followUpImages.map((img, i) => `${i + 1}. ${img}`).join('\n'),
@@ -303,8 +306,11 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格，也**不要用 emoji**。',
     '2. 必须针对上月「不足/建议」给出本月的具体教学安排，不能只罗列课程名称。',
     '3. 每条内容要写清「要让孩子会什么、练到什么程度」，拒绝空泛表述。',
+    ...(p.recentSummaries && p.recentSummaries.some((r) => (r.text || '').trim())
+      ? ['4. 上面「近几个月的报告总结」里若有反复出现的不足，下月规划要针对它给具体的改进安排（如安排专项练习、调整教学节奏），不要只重复本月内容。']
+      : []),
     followUpImages.length > 0
-      ? '4. 若图片素材中可见具体题型/错题/薄弱点，请在规划中针对性安排对应练习或讲解。'
+      ? '5. 若图片素材中可见具体题型/错题/薄弱点，请在规划中针对性安排对应练习或讲解。'
       : '',
     ...COMMON_RULES,
     '',

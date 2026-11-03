@@ -84,6 +84,14 @@ const SUMMARY_DEFAULTS: Record<string, string> = {
   exam: '/',
 };
 
+/**
+ * 方向 B 智能提示：顺延漏上的课到本月总结时，在内容前加这个标记。
+ * 随 content 持久化，明细表 / Excel / 图片 / AI 编写里都能看到，
+ * 提醒老师「这门是上月规划了却没上、顺延来的，要留意补上」。
+ * 老师确认补完后可以直接删掉标记。
+ */
+const CARRY_OVER_MARKER = '〔上月漏上〕';
+
 const PLAN_COLS: { key: CellKey; label: string; width: string; list?: string[] }[] = [
   { key: 'seq', label: '序号', width: 'w-12' },
   { key: 'content', label: '课程内容', width: 'min-w-56' },
@@ -462,14 +470,16 @@ export default function ReportEdit() {
       let added = 0;
       for (const course of undelivered) {
         await addItem('summary', {
-          content: course.content,
+          // 智能提示：内容前标「〔上月漏上〕」，随 content 持久化，
+          // 明细表/Excel/图片/AI 编写里都能看到，提醒老师这门是顺延来的、要留意补上
+          content: CARRY_OVER_MARKER + course.content,
           course_id: course.course_id ?? undefined, // 保持目录关联
           type: course.type ?? undefined, // 顺延保留上月规划课的类型，老师不用手动补
           difficulty: course.difficulty ?? undefined, // 同上，难度
         });
         added++;
       }
-      toast.success('已把 ' + added + ' 门漏上的课顺延到本月总结');
+      toast.success('已把 ' + added + ' 门漏上的课顺延到本月总结（已标「上月漏上」）');
       setUndelivered([]); // 顺延完就不再提示
       await reload();
     } catch (e) {
