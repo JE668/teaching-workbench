@@ -219,16 +219,23 @@ docker compose up -d
 TAG=<git-sha> docker compose up -d
 ```
 
-#### 6. 数据备份
+#### 6. 数据备份与恢复
 
 ```bash
-# 手动备份
+# 手动备份（deploy.sh 部署前默认自动执行一次）
 ./backup.sh
 
-# 建议添加定时任务（每天凌晨3点）
-crontab -e
-# 添加: 0 3 * * * /path/to/teaching-workbench/backup.sh
+# 安装每日自动备份 cron（默认 03:30，幂等可重复执行）
+bash scripts/install-backup-cron.sh            # 或指定时间: ... 04:00
+bash scripts/install-backup-cron.sh --remove   # 卸载
+
+# 恢复：先看有哪些备份，再选时间戳（不带参数则用最新一份）
+bash scripts/restore.sh --list
+bash scripts/restore.sh 20261101-033000
 ```
+
+恢复流程自带保险：先把现状另存为 `pre-restore-*` 备份，停服写库后跑
+`integrity_check` 校验通过才重启；旧 uploads 留在 `uploads.bak` 里可回退。
 
 ### GitHub Actions 自动构建
 

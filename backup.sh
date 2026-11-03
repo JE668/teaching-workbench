@@ -8,6 +8,8 @@
 set -euo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-${HOME}/backups/teaching-workbench}"
+# restore.sh 会带 BACKUP_PREFIX=pre-restore- 给现状另存一份，与常规备份区分
+BACKUP_PREFIX="${BACKUP_PREFIX:-teaching-workbench-}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 PROJECT="teaching-workbench"
 CONTAINER="${PROJECT}-backend"
@@ -25,7 +27,7 @@ mkdir -p "$BACKUP_DIR"
 # 服务开着时库是 WAL 模式，只拷 teaching.db 会丢掉 -wal 里尚未合并的写入。
 # 首选 better-sqlite3 的在线备份（会正确读完 WAL）；失败才退化成三件套一起拷。
 log "备份数据库..."
-DB_FILE="$BACKUP_DIR/teaching-workbench-$TIMESTAMP.db"
+DB_FILE="$BACKUP_DIR/${BACKUP_PREFIX}$TIMESTAMP.db"
 # 注意 --input-type=module：容器里 /app 的 package.json 是 type:module，
 # 静态 import 写法最稳，不用猜 CJS/ESM 的导出形状。
 BACKUP_NODE="import Database from 'better-sqlite3';const db=new Database('/app/data/teaching.db');db.backup('/tmp/tw-backup.db').then(()=>{console.log('backup-ok');db.close()}).catch(e=>{console.error(e&&e.message||e);process.exit(1)})"
@@ -39,14 +41,30 @@ docker exec "$CONTAINER" rm -f /tmp/tw-backup.db 2>/dev/null || true
 
 if [ "$ONLINE_OK" = true ]; then
   log "数据库备份完成（WAL 安全）"
-elif docker exec "$CONTAINER" test -f /app/data/teaching.db 2>/dev/null; then
-  docker cp "$CONTAINER:/app/data/teaching.db" "$DB_FILE"
+elif docker exec "$CONTAINER" test -f /app/data/teaching.db 2>/dev/null; then  docker cp "$CONTAINER:/app/data/teaching.db" "$DB_FILE"
   # 连 -wal / -shm 一起存，恢复时放在同一目录即可无损重建
   docker cp "$CONTAINER:/app/data/teaching.db-wal" "$DB_FILE-wal" 2>/dev/null || true
   docker cp "$CONTAINER:/app/data/teaching.db-shm" "$DB_FILE-shm" 2>/dev/null || true
   warn "在线备份失败，已改为直接拷贝数据库文件"
 else
   warn "数据库不存在或后端容器未运行，跳过"
+fi
+
+# ===== 备份件完整性校验 =====
+# 备份最怕"文件在、库坏了"，这里用备份出来的文件本身跑 integrity_check。
+# 宿主 node 可能没有 sqlite3 模块，故拷回容器内用它的 better-sqlite3 校验。
+if [ -f "$DB_FILE" ]; then
+  if docker cp "$DB_FILE" "$CONTAINER:/tmp/verify.db" 2>/dev/null; then
+    INTEG=$(docker exec "$CONTAINER" node --input-type=module -e \
+      "import Database from 'better-sqlite3';const db=new Database('/tmp/verify.db',{readonly:true});console.log(db.pragma('integrity_check',{simple:true}));db.close()" \
+      < /dev/null 2>&1 | tail -1)
+    docker exec "$CONTAINER" rm -f /tmp/verify.db 2>/dev/null || true
+    if [ "$INTEG" = "ok" ]; then
+      log "备份件完整性校验通过"
+    else
+      warn "备份件完整性校验异常（返回: ${INTEG}），请人工检查 $DB_FILE"
+    fi
+  fi
 fi
 
 # ===== 上传文件（课堂照片 / 作业截图）=====
@@ -73,7 +91,9 @@ fi
 # ===== 清理：只留最近 7 天 =====
 log "清理旧备份（保留最近7天）..."
 cd "$BACKUP_DIR"
-find . -maxdepth 1 -name 'teaching-workbench-*.db*' -mtime +7 -delete 2>/dev/null || true
+# 同时覆盖常规备份（teaching-workbench-*）与恢复前快照（pre-restore-*）
+find . -maxdepth 1 \( -name 'teaching-workbench-*.db*' -o -name 'pre-restore-*.db*' \) -mtime +7 -delete 2>/dev/null || true
+# pre-restore 的 uploads/密钥与常规备份共用同一条时间戳命名，一并被下面匹配
 find . -maxdepth 1 -name 'uploads-*.tar.gz' -mtime +7 -delete 2>/dev/null || true
 find . -maxdepth 1 -name '.jwt_secret-*' -mtime +7 -delete 2>/dev/null || true
 
