@@ -109,6 +109,11 @@ export const env = {
   SENSENOVA_REASONING_EFFORT: resolveReasoningEffort(),
   // 单次请求超时（毫秒）。SDK 默认 10 分钟，对交互式生成过长，这里收紧到 60s。
   SENSENOVA_TIMEOUT_MS: parseInt(process.env.SENSENOVA_TIMEOUT_MS || '60000', 10),
+  // 流式生成空闲超时（毫秒）。SDK 的 timeout 只管连接/首响应；若上游在流中途挂住
+  // （不发 chunk 也不关连接），for await 循环会永久挂起、把并发闸门的槽永久占死，
+  // 后续所有 AI 请求排队到熔断 —— 单实例下拖垮全部 AI 能力。这里按「相邻 chunk
+  // 最大间隔」设空闲中断，正在正常产出的慢生成不受影响（只要还在吐字就复位）。
+  AI_STREAM_IDLE_TIMEOUT_MS: parseInt(process.env.AI_STREAM_IDLE_TIMEOUT_MS || '60000', 10),
   DEFAULT_ADMIN_USER: process.env.DEFAULT_ADMIN_USER || 'admin',
   DEFAULT_ADMIN_PASS,
   CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000',

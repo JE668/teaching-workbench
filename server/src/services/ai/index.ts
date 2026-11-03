@@ -5,6 +5,7 @@ import { getOcrText } from '../ocr.js';
 import { imageToBase64DataUrl, countWords } from './utils.js';
 import { recordAiMetrics } from '../aiMetrics.js';
 import { log } from '../../utils/logger.js';
+import { env } from '../../config/env.js';
 
 // Re-export getAiConfig for use by other services (e.g., reportAi.ts)
 export { getAiConfig };
@@ -71,6 +72,46 @@ export function resetAiGate(): void {
   aiInFlight = 0;
   for (const w of aiWaiters) clearTimeout(w.timer);
   aiWaiters.length = 0;
+}
+
+// ============ 流式空闲中断 ============
+// SDK 的 timeout 只覆盖连接/首响应；流式生成中途上游挂住（不发 chunk 也不关连接）
+// 时，for await 循环会永久挂起，把并发闸门的槽永久占死（finally 只在循环退出时
+// 执行，而循环永不退出）—— 后续所有 AI 请求排队到熔断，单实例下拖垮全部 AI 能力。
+// 这里用 AbortController + 「相邻 chunk 最大间隔」定时器：每收到一个 chunk 就复位，
+// 空闲超过阈值就 abort，循环随即抛错、finally 释放槽。正在正常产出的慢生成不受影响。
+export class AiStreamIdleError extends Error {
+  constructor() {
+    super('AI 流式生成中断：超过 ' + Math.round(env.AI_STREAM_IDLE_TIMEOUT_MS / 1000) + ' 秒没有收到新内容，已中止本次生成。请重试。');
+    this.name = 'AiStreamIdleError';
+  }
+}
+
+interface StreamWatchdog {
+  signal: AbortSignal;
+  /** 每收到一个 chunk 调用，复位空闲定时器 */
+  kick(): void;
+  /** 流结束/出错后调用，清理定时器 */
+  done(): void;
+}
+
+export function startStreamWatchdog(): StreamWatchdog {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | null = null;
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new AiStreamIdleError()), env.AI_STREAM_IDLE_TIMEOUT_MS);
+    timer.unref?.();
+  };
+  arm();
+  return {
+    signal: controller.signal,
+    kick: arm,
+    done: () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
 }
 
 // ============ 请求构建 ============
@@ -216,11 +257,14 @@ export async function* streamOnce(
   const start = Date.now();
   let fullContent = '';
   let recorded = false;
+  const watchdog = startStreamWatchdog();
   try {
     const stream = (await ai.chat.completions.create(
-      await buildRequest(config, userId, params, correction, true)
+      await buildRequest(config, userId, params, correction, true),
+      { signal: watchdog.signal }
     )) as any;
     for await (const chunk of stream) {
+      watchdog.kick();
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
         ? chunk.choices[0].delta.content
         : null;
@@ -253,6 +297,7 @@ export async function* streamOnce(
     }
     throw error;
   } finally {
+    watchdog.done();
     releaseAiSlot();
   }
 }
@@ -310,18 +355,22 @@ export async function* streamChat(
   opts: ChatOptions = {}
 ): AsyncGenerator<string> {
   await acquireAiSlot();
+  const watchdog = startStreamWatchdog();
   try {
     const ai = getSharedClient(userId);
     const stream = (await ai.chat.completions.create(
-      buildChatRequest(userId, messages, opts, true)
+      buildChatRequest(userId, messages, opts, true),
+      { signal: watchdog.signal }
     )) as any;
     for await (const chunk of stream) {
+      watchdog.kick();
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
         ? chunk.choices[0].delta.content
         : null;
       if (delta) yield delta as string;
     }
   } finally {
+    watchdog.done();
     releaseAiSlot();
   }
 }
@@ -444,6 +493,11 @@ export function describeAiError(
   // 排队超时：前序生成把闸门占死了，快速失败并提示（区别于单次调用超时）
   if (name === 'AiQueueTimeoutError') {
     return { httpStatus: 503, message: raw };
+  }
+
+  // 流式空闲中断：上游中途挂住不发 chunk，watchdog abort 释放并发槽
+  if (name === 'AiStreamIdleError') {
+    return { httpStatus: 504, message: raw };
   }
 
   if (name === 'APIConnectionTimeoutError' || /timed?\s*out/i.test(raw)) {

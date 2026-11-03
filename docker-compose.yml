@@ -35,6 +35,8 @@ services:
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       # AI 指标保留天数：超期运营遥测行定期删除，防表无限增长。默认 90
       - AI_METRICS_RETAIN_DAYS=${AI_METRICS_RETAIN_DAYS:-90}
+      # AI 流式空闲超时（毫秒）：上游中途不发内容就中断释放并发槽。默认 60000
+      - AI_STREAM_IDLE_TIMEOUT_MS=${AI_STREAM_IDLE_TIMEOUT_MS:-60000}
     # 【持久化】数据直接落在 compose 同级目录，方便查看与备份。
     # 想放别处就改 .env 里的 DATA_PATH。
     # 注意：容器默认以 UID 1001 运行，而 NAS 上的目录通常属于 1000，
