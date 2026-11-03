@@ -79,4 +79,20 @@ for f in promptTemplates.ts reportTemplate.ts; do
 done
 echo "✅ shared 副本一致"
 
+# ===== 6. nginx 配置粗校验（CI 无 docker，跑不了 nginx -t）=====
+# 只挡括号不配对与安全头意外丢失这两类低级回归。
+BRACE_STATE=$(grep -vE '^\s*#' web/nginx.conf | awk '
+  { for (i = 1; i <= length($0); i++) {
+      c = substr($0, i, 1)
+      if (c == "{") n++
+      else if (c == "}") n--
+      if (n < 0) { print "unbalanced"; exit }
+    } }
+  END { if (!done && n != 0) print "unbalanced"; else if (n == 0) print "balanced" }' | sort -u | tr '\n' ' ')
+[ "$BRACE_STATE" = "balanced " ] || fail "web/nginx.conf 大括号不配对"
+for h in X-Frame-Options X-Content-Type-Options Referrer-Policy Permissions-Policy Content-Security-Policy-Report-Only; do
+  grep -q "add_header $h" web/nginx.conf || fail "web/nginx.conf 丢了安全头 $h"
+done
+echo "✅ nginx 配置粗校验通过"
+
 echo "✅ 部署资产守护全部通过"
