@@ -2,7 +2,7 @@ import './setup.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, req, url } from './helpers.js';
-import { resetMetricsForTest, normalizeRoutePath } from '../utils/metrics.js';
+import { resetMetricsForTest, normalizeRoutePath, observeHttpRequest, renderPrometheus } from '../utils/metrics.js';
 
 // /metrics 端点行为：
 // - 未设 METRICS_TOKEN 时开放（内网默认）
@@ -94,4 +94,27 @@ test('normalizeRoutePath 基数控制', () => {
   assert.equal(normalizeRoutePath('/api/reports/7/exports/12'), '/api/reports/:id/exports/:id');
   assert.equal(normalizeRoutePath('/api/students/abc'), '/api/students/abc');
   assert.equal(normalizeRoutePath('/health'), '/health');
+});
+
+test('路由基数封顶：超限后折叠进 __other__，计数不丢、Map 不再增长', () => {
+  resetMetricsForTest();
+  // 伪造远超上限的不同路由（模拟 filename/uuid 类无法归一化的参数被遍历）
+  for (let i = 0; i < 500; i++) {
+    observeHttpRequest('GET', `/api/images/7/photo-${i}.png`, 200, 3);
+  }
+  const rendered = renderPrometheus('test');
+  // 直方图键数封顶：MAX_HTTP_ROUTE_KEYS(200) + __other__(1) = 201
+  const pathLabels = new Set(
+    [...rendered.matchAll(/path="([^"]+)"/g)].map((m) => m[1])
+  );
+  assert.ok(!pathLabels.has('/api/images/7/photo-199.png'), '超限路由不应各自成键');
+  assert.ok(pathLabels.has('__other__'), '超限路由应折叠进 __other__ 桶');
+  assert.ok(pathLabels.size <= 202, `键数应封顶，实际 ${pathLabels.size}`);
+  // 计数不丢：折叠后 __other__ 仍记录到这些请求（溢出桶 method 为 ALL）
+  const countLine = rendered
+    .split('\n')
+    .find((l) => l.startsWith('http_request_duration_ms_count{method="ALL",path="__other__"}'));
+  assert.ok(countLine, '应存在 __other__ 的 count 行');
+  const counted = Number(countLine!.split(' ').pop());
+  assert.equal(counted, 300, '上限外的 300 个请求应全部计入 __other__');
 });

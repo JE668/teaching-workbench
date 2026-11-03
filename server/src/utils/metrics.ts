@@ -24,6 +24,19 @@ interface RouteStats {
 
 const httpRoutes = new Map<string, RouteStats>();
 
+/**
+ * 路由基数上限。normalizeRoutePath 只折叠纯数字段（/123 → /:id），
+ * 但像 /images/:userId/:filename 这类参数是任意字符串（真实文件名），
+ * 折叠不掉 —— 若不设上限，已登录用户遍历不同路径就能无限撑大这个 Map
+ * （内存）与 /metrics 输出（Prometheus 基数爆炸）。
+ *
+ * 超限后不再新增键，而是把后续未知的 method+path 折进 `ALL __other__` 聚合桶
+ * （带 method 段是为了和正常键 `method path` 格式一致，渲染时统一 split）：
+ * 总量、时延、状态分布仍可见（只是不再按细粒度路由区分），拒绝服务而不丢数据。
+ */
+const MAX_HTTP_ROUTE_KEYS = 200;
+const OVERFLOW_ROUTE_KEY = 'ALL __other__';
+
 function statusClass(status: number): string {
   if (status >= 500) return '5xx';
   if (status >= 400) return '4xx';
@@ -36,7 +49,16 @@ export function normalizeRoutePath(rawPath: string): string {
 }
 
 export function observeHttpRequest(method: string, rawPath: string, status: number, durationMs: number): void {
-  const key = method + ' ' + normalizeRoutePath(rawPath);
+  let route = normalizeRoutePath(rawPath);
+  let key = method + ' ' + route;
+  // 已有的路由键继续原地累加；只有「新路由且基数已达上限」才折叠进溢出桶，
+  // 避免超限后仍不断新增键，同时也保住前 MAX 条正常路由的细粒度可观测性。
+  // 溢出桶一旦创建会占一个 size，所以封顶后 size 始终是 MAX+1（含溢出桶），
+  // 后续新路由因 size 已 >= MAX 会一直落到 OVERFLOW_ROUTE_KEY，不再新增键。
+  if (!httpRoutes.has(key) && httpRoutes.size >= MAX_HTTP_ROUTE_KEYS) {
+    route = OVERFLOW_ROUTE_KEY.split(' ')[1];
+    key = OVERFLOW_ROUTE_KEY;
+  }
   let s = httpRoutes.get(key);
   if (!s) {
     s = { count: 0, sumMs: 0, buckets: new Array(HTTP_BUCKETS_MS.length).fill(0), byClass: {} };
