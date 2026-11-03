@@ -454,3 +454,62 @@ describe('事实预聚合（课次 / 出勤由代码算好，模型不用自己�
     assert.ok(!u.includes('完成 1/'));
   });
 });
+
+describe('纵向趋势（近几个月总结识别反复出现的问题）', () => {
+  const base: ReportAiParams = {
+    field: 'summary',
+    studentName: '李小明',
+    grade: '初二',
+    subject: '物理',
+    term: '秋季',
+    yearMonth: '2026-10',
+    summaryCourses: [{ content: '凸透镜成像' }],
+    planCourses: [],
+    followUps: [],
+  };
+  function userOf(p: ReportAiParams): string {
+    return buildReportAiMessages(p).map((m) => m.content)[1];
+  }
+
+  test('近几个月总结被写进 prompt，带月份标注', () => {
+    const u = userOf({
+      ...base,
+      recentSummaries: [
+        { yearMonth: '2026-09', text: '上月独立性不足，需要家长配合' },
+        { yearMonth: '2026-08', text: '独立性有进步但还会忘带作业' },
+      ],
+    });
+    assert.ok(u.includes('近几个月的报告总结'));
+    assert.ok(u.includes('【2026-09】'));
+    assert.ok(u.includes('【2026-08】'));
+    assert.ok(u.includes('独立性不足'));
+    assert.ok(u.includes('反复出现'));
+  });
+
+  test('趋势区块明确禁止臆造和照抄', () => {
+    const u = userOf({
+      ...base,
+      recentSummaries: [{ yearMonth: '2026-09', text: '上月内容' }],
+    });
+    // 这些规则文案在实现里带了【不要】前缀，断言匹配实际渲染的片段
+    assert.ok(u.includes('臆造材料里没出现的趋势'));
+    assert.ok(u.includes('不要照抄'));
+  });
+
+  test('没有近月总结时不写趋势区块', () => {
+    const u = userOf({ ...base, recentSummaries: [] });
+    assert.ok(!u.includes('近几个月的报告总结'));
+  });
+
+  test('空文本的月份被过滤，不进 prompt', () => {
+    const u = userOf({
+      ...base,
+      recentSummaries: [
+        { yearMonth: '2026-09', text: '有内容' },
+        { yearMonth: '2026-08', text: '   ' },
+      ],
+    });
+    assert.ok(u.includes('【2026-09】'));
+    assert.ok(!u.includes('【2026-08】'));
+  });
+});

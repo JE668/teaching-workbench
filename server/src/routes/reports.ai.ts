@@ -93,6 +93,18 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     )
     .get(userId, report.student_id, ym) as any;
 
+  // 方向 C：近几个月的总结，用于识别「反复出现的问题」——
+  // 家长最想看到「这个不足连续三个月了」，单月素材给不出来，得纵向聚合。
+  // 只取月份更早的、非空的总结，按月份倒序，最多 6 个月。
+  const recentRows = db
+    .prepare(
+      `SELECT year_month, summary_intro FROM monthly_reports
+       WHERE user_id = ? AND student_id = ? AND year_month < ? AND summary_intro != ''
+       ORDER BY year_month DESC, id DESC
+       LIMIT 6`
+    )
+    .all(userId, report.student_id, ym) as { year_month: string; summary_intro: string }[];
+
   const params: ReportAiParams = {
     field: field as ReportAiField,
     studentName: String(report.student_name || ''),
@@ -105,6 +117,7 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     planCourses: pick('plan'),
     followUps: followUps.map(f => ({ topic: f.topic, content: f.content, images: f.images ? JSON.parse(f.images) : [] })),
     prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
+    recentSummaries: recentRows.map((r) => ({ yearMonth: String(r.year_month || ''), text: String(r.summary_intro || '') })),
   };
 
   const sse = openSse(req, res);

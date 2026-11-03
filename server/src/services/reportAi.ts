@@ -55,6 +55,12 @@ export interface ReportAiParams {
    * 家长最想看的"上个月的问题这个月解决了吗"就写不出来。
    */
   prevSummary?: string;
+  /**
+   * 近几个月（最多 6 个月）的总结，用于识别「反复出现的问题」——
+   * 家长最想看到「这个不足连续三个月了」，单月/双月对比给不出来，
+   * 得纵向聚合。按月份倒序，text 是该月 summary_intro 全文。
+   */
+  recentSummaries?: { yearMonth: string; text: string }[];
 }
 
 function who(p: ReportAiParams): string {
@@ -178,6 +184,28 @@ function prevSummarySection(prevSummary?: string): string[] {
   ];
 }
 
+/**
+ * 近几个月总结区块（方向 C 纵向趋势）。核心价值是识别「反复出现的问题」——
+ * 家长最想看到「这个不足连续三个月了」，单月甚至双月对比都给不出来，得纵向聚合。
+ * 只喂最近几个月的原文让模型自己归纳趋势，不做关键词匹配（那会是伪信号）。
+ * 明确要求：只从给定材料归纳，不臆造没出现过的趋势；没发现反复项就别硬凑。
+ */
+function recentSummariesSection(recent?: { yearMonth: string; text: string }[]): string[] {
+  const rows = (recent || []).filter((r) => (r.text || '').trim() && (r.yearMonth || '').trim());
+  if (!rows.length) return [];
+  return [
+    '# 近几个月的报告总结（只用于识别跨月趋势，不要照抄）',
+    '下面是这个学生最近几个月的总结，按月份从近到远排列。家长手上可能有这些历史总结，因此：',
+    '- 【要】横向对比，找出「反复出现的不足」或「持续在进步的点」，在总结的不足/进步段落里点出来',
+    '  （例如"独立性这个月又被提到了，已经是连续第三个月"或"专注力连续两个月在改善"）',
+    '- 【不要】臆造材料里没出现的趋势，也不要把单月的事说成反复',
+    '- 【不要】照抄这些月份的句子或数据，本段只写本月发生的事，趋势只用来定位反复项',
+    '',
+    ...rows.map((r) => '【' + r.yearMonth + '】\n' + r.text.trim()),
+    '',
+  ];
+}
+
 /** 写给家长的月度总结：7 个 emoji 段落，跟输入框占位符一一对应 */
 export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
   const w = who(p);
@@ -207,6 +235,7 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
     followUpLines(p.followUps),
     '',
     ...prevSummarySection(p.prevSummary),
+    ...recentSummariesSection(p.recentSummaries),
     '# 硬性要求',
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格。emoji 只用在段落开头的小标题上。',
     ...COMMON_RULES,
