@@ -325,6 +325,9 @@ export function initDatabase() {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_ai_metrics_user_time ON ai_metrics(user_id, created_at DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_ai_metrics_endpoint ON ai_metrics(endpoint, status)');
+  // 单列 created_at：/metrics 的 24h 聚合只按 created_at 过滤（无 user_id 前缀），
+  // 走不了上面的复合索引，没有它就是全表扫描；按时间清理旧数据也需要它。
+  db.exec('CREATE INDEX IF NOT EXISTS idx_ai_metrics_created_at ON ai_metrics(created_at)');
 
   // 小组课分组预设（如"周六上午三年级班"）
   db.exec(`

@@ -107,3 +107,28 @@ export function getRecentAiErrors(userId: number, limit = 20): any {
     return [];
   }
 }
+
+/**
+ * 清理超过保留期的 AI 指标。
+ *
+ * 为什么需要：ai_metrics 只写不删，随使用无限增长。/metrics 每次抓取都对它
+ * 做 24h 聚合（现走 idx_ai_metrics_created_at），getAiMetricsSummary 也按
+ * created_at 区间聚合 —— 表越长越大，这些查询与磁盘占用都会持续恶化。
+ * 指标是运营遥测而非业务数据，按保留期丢弃旧数据是合理取舍。
+ *
+ * 默认保留 90 天，可用 AI_METRICS_RETAIN_DAYS 覆盖（最小 7 天防误配）。
+ * 返回删除行数，便于启动日志与测试断言。
+ */
+export function cleanupAiMetrics(retainDays = 90): number {
+  const days = Math.max(7, Math.floor(retainDays));
+  try {
+    const info = db.prepare(
+      `DELETE FROM ai_metrics
+       WHERE created_at < datetime('now', '-' || ? || ' days', '+8 hours')`
+    ).run(days);
+    return info.changes;
+  } catch (error: any) {
+    log.warn({ err: error.message }, '清理 AI 指标失败');
+    return 0;
+  }
+}

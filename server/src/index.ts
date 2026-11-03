@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { seedBuiltInCatalog } from './seed/builtinCatalog.js';
 import { dedupeCourseCatalog } from './migrations/catalogDedupe.js';
 import { repairAllUsers } from './services/linkOrphans.js';
+import { cleanupAiMetrics } from './services/aiMetrics.js';
 import {
   migrateLegacyFolders,
   gcStagedImages,
@@ -86,6 +87,32 @@ try {
 } catch (err: any) {
   log.warn({ err: err.message }, '清理失败（不影响启动）');
 }
+
+// ========== AI 指标保留期清理 ==========
+// ai_metrics 只写不删会无限增长：/metrics 每次抓取都对它做 24h 聚合，
+// 表越长越大查询越慢、磁盘持续膨胀。启动时清一次，之后每天定时清。
+// 保留期默认 90 天（AI_METRICS_RETAIN_DAYS 可调）。
+try {
+  const removed = cleanupAiMetrics(env.AI_METRICS_RETAIN_DAYS);
+  if (removed > 0) {
+    log.info({ removed, retainDays: env.AI_METRICS_RETAIN_DAYS }, '已清理超保留期的 AI 指标');
+  }
+} catch (err: any) {
+  log.warn({ err: err.message }, 'AI 指标清理失败（不影响启动）');
+}
+// 每日定时再清一次（长驻进程跨天累积）。unref 让它不阻止进程退出。
+const aiMetricsCleanupTimer = setInterval(
+  () => {
+    try {
+      const removed = cleanupAiMetrics(env.AI_METRICS_RETAIN_DAYS);
+      if (removed > 0) log.info({ removed }, '定时清理超保留期的 AI 指标');
+    } catch (err: any) {
+      log.warn({ err: err.message }, '定时清理 AI 指标失败');
+    }
+  },
+  24 * 60 * 60 * 1000
+);
+aiMetricsCleanupTimer.unref?.();
 
 // 每日跑一次清理，让长期运行的服务也能持续回收空间
 const gcTimer = setInterval(() => {

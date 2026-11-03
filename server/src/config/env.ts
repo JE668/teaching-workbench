@@ -118,4 +118,7 @@ export const env = {
   TESSDATA_PREFIX: process.env.TESSDATA_PREFIX || path.resolve(DATA_DIR, 'tessdata'),
   // /metrics 访问口令。留空 = 开放（内网默认）；公网暴露必须设置。
   METRICS_TOKEN: (process.env.METRICS_TOKEN || '').trim(),
+  // AI 指标保留天数。ai_metrics 只写不删会无限增长（拖慢 /metrics 抓取与占盘），
+  // 超过保留期的运营遥测行定期删除。默认 90 天。
+  AI_METRICS_RETAIN_DAYS: parseInt(process.env.AI_METRICS_RETAIN_DAYS || '90', 10),
 };
