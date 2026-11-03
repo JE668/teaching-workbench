@@ -768,3 +768,107 @@ describe('目录智能排课 · 按轨道推荐下月该上什么', () => {
     assert.equal(heat.course.id, h2);
   });
 });
+
+describe('班级批量复用 · 一份班级行套用到同班同学', () => {
+  // 同班 = 同 grade+subject+term+year_month。用独立学生，避免串到别的用例的报告
+  let s1: any = null, s2: any = null, s3: any = null;
+
+  before(async () => {
+    s1 = await createStudent(token, { name: '班长', grade: '初三', subject: '化学' });
+    s2 = await createStudent(token, { name: '同学乙', grade: '初三', subject: '化学' });
+    s3 = await createStudent(token, { name: '同学丙', grade: '初三', subject: '化学' });
+  });
+
+  async function clsReport(studentId: number, ym = '2026-10') {
+    const res = await req('POST', '/api/reports', {
+      token, body: { studentId, yearMonth: ym, term: '秋季' },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body.report;
+  }
+  async function setIntro(reportId: number, field: 'summaryIntro' | 'planIntro', value: string) {
+    const res = await req('PATCH', `/api/reports/${reportId}`, { token, body: { [field]: value } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+  }
+
+  test('未登录不能查询同班同学', async () => {
+    const r = await clsReport(s1.id);
+    assert.equal((await req('GET', `/api/reports/${r.id}/classmates`)).status, 401);
+  });
+
+  test('同班同学被列出，自己不在列表里', async () => {
+    const r1 = await clsReport(s1.id);
+    const r2 = await clsReport(s2.id);
+    const r3 = await clsReport(s3.id);
+    const res = await req('GET', `/api/reports/${r1.id}/classmates`, { token });
+    assert.equal(res.status, 200);
+    const ids = res.body.classmates.map((c: any) => c.id).sort();
+    assert.deepEqual(ids, [r2.id, r3.id].sort());
+    assert.ok(!ids.includes(r1.id), '自己不该在同学列表里');
+  });
+
+  test('不同年级/学科/学期的报告不算同班，不列出', async () => {
+    const r1 = await clsReport(s1.id, '2026-11');
+    // 同学生但不同年级的报告
+    const otherGrade = await req('POST', '/api/reports', {
+      token, body: { studentId: s2.id, yearMonth: '2026-11', term: '秋季', grade: '高二', subject: '化学' },
+    });
+    assert.equal(otherGrade.status, 200);
+    const res = await req('GET', `/api/reports/${r1.id}/classmates`, { token });
+    const ids = res.body.classmates.map((c: any) => c.id);
+    assert.ok(!ids.includes(otherGrade.body.report.id), '不同年级不该算同班');
+  });
+
+  test('套用总结：同班同学的 summary_intro 被覆盖，规划保留各自', async () => {
+    const r1 = await clsReport(s1.id, '2026-12');
+    const r2 = await clsReport(s2.id, '2026-12');
+    await setIntro(r1.id, 'summaryIntro', '【班级行】本月全班学了摩尔质量');
+    await setIntro(r1.id, 'planIntro', '【班长规划】下月复习物质的量');
+    await setIntro(r2.id, 'summaryIntro', '乙自己的总结');
+    await setIntro(r2.id, 'planIntro', '乙自己的规划');
+
+    const res = await req('POST', `/api/reports/${r1.id}/apply-to-class`, {
+      token, body: { summary: true },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.updated >= 1, true);
+
+    const after = await req('GET', `/api/reports/${r2.id}`, { token });
+    assert.equal(after.body.report.summary_intro, '【班级行】本月全班学了摩尔质量');
+    // 规划没被选套用，保留乙自己的
+    assert.equal(after.body.report.plan_intro, '乙自己的规划');
+  });
+
+  test('套用规划：plan=true 只覆盖规划，总结保留各自', async () => {
+    const r1 = await clsReport(s1.id, '2027-01');
+    const r3 = await clsReport(s3.id, '2027-01');
+    await setIntro(r1.id, 'summaryIntro', '班级行总结');
+    await setIntro(r1.id, 'planIntro', '班级行规划');
+    await setIntro(r3.id, 'summaryIntro', '丙自己的总结');
+    await setIntro(r3.id, 'planIntro', '丙自己的规划');
+
+    await req('POST', `/api/reports/${r1.id}/apply-to-class`, { token, body: { plan: true } });
+    const after = await req('GET', `/api/reports/${r3.id}`, { token });
+    assert.equal(after.body.report.plan_intro, '班级行规划');
+    assert.equal(after.body.report.summary_intro, '丙自己的总结');
+  });
+
+  test('本报告 intro 为空时不套用（避免清空别人的内容）', async () => {
+    const r1 = await clsReport(s1.id, '2027-02'); // 不写 intro
+    const r2 = await clsReport(s2.id, '2027-02');
+    await setIntro(r2.id, 'summaryIntro', '乙已有内容');
+
+    const res = await req('POST', `/api/reports/${r1.id}/apply-to-class`, {
+      token, body: { summary: true },
+    });
+    assert.equal(res.status, 400, '空总结不该套用');
+    const after = await req('GET', `/api/reports/${r2.id}`, { token });
+    assert.equal(after.body.report.summary_intro, '乙已有内容', '别人的内容不该被清空');
+  });
+
+  test('summary 和 plan 都不传 → 400', async () => {
+    const r1 = await clsReport(s1.id, '2027-03');
+    const res = await req('POST', `/api/reports/${r1.id}/apply-to-class`, { token, body: {} });
+    assert.equal(res.status, 400);
+  });
+});

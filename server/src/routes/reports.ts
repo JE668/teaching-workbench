@@ -333,6 +333,127 @@ router.get('/:id/next-courses', (req: AuthenticatedRequest, res) => {
   }
 });
 
+/**
+ * 班级批量复用（方向 F）：列出同班同学（同 grade+subject+term+year_month）的报告。
+ *
+ * 同一个班的学生，总结的「课堂情况」、规划的「重点内容」高度相似。老师写好一份
+ * 班级行后，可以把相同部分批量套用到同班其他学生，再逐个微调，省去重复写。
+ * 这里先列出可套用的对象（同班但不是自己），套用走 POST /:id/apply-to-class。
+ */
+router.get('/:id/classmates', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
+
+    const report = loadReport(id, userId);
+    if (!report) return res.status(404).json({ error: '月度报告不存在' });
+
+    const rows = db
+      .prepare(
+        `SELECT r.id, r.student_id, r.year_month, r.term, r.grade, r.subject,
+                r.summary_intro, r.plan_intro, s.name AS student_name
+         FROM monthly_reports r
+         JOIN students s ON s.id = r.student_id AND s.user_id = r.user_id
+         WHERE r.user_id = ? AND r.id != ?
+           AND COALESCE(r.grade, '') = ? AND COALESCE(r.subject, '') = ?
+           AND COALESCE(r.term, '') = ? AND r.year_month = ?
+         ORDER BY s.name`
+      )
+      .all(
+        userId, id,
+        String(report.grade || ''), String(report.subject || ''),
+        String(report.term || ''), String(report.year_month || '')
+      ) as any[];
+
+    const classmates = rows.map((r) => ({
+      id: Number(r.id),
+      studentId: Number(r.student_id),
+      studentName: String(r.student_name || ''),
+      yearMonth: String(r.year_month || ''),
+      hasSummary: !!(r.summary_intro && String(r.summary_intro).trim()),
+      hasPlan: !!(r.plan_intro && String(r.plan_intro).trim()),
+    }));
+    res.json({ classmates });
+  } catch (error: any) {
+    res.status(500).json({ error: '查询同班同学失败', message: error.message });
+  }
+});
+
+/**
+ * 班级批量复用（方向 F）：把这份报告的班级行套用到同班同学。
+ *
+ * body: { summary?: boolean, plan?: boolean }
+ *   - summary=true  → 把本报告的 summary_intro 覆盖到同班同学的 summary_intro
+ *   - plan=true     → 把本报告的 plan_intro 覆盖到同班同学的 plan_intro
+ *   - 两个都不传     → 400
+ *
+ * 只覆盖 intro 文本（班级行的公共描述），不碰课程明细 —— 课程是按学生各自的
+ * 出勤/完成度走的，不能一刀切复制。套用后同班同学可以再逐个微调个性部分。
+ * 拒绝空文本覆盖：本报告对应 intro 为空时不覆盖，避免把别人的内容清空。
+ */
+router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
+
+    const copySummary = !!req.body?.summary;
+    const copyPlan = !!req.body?.plan;
+    if (!copySummary && !copyPlan) {
+      return res.status(400).json({ error: '至少选择套用总结或规划之一' });
+    }
+
+    const report = loadReport(id, userId);
+    if (!report) return res.status(404).json({ error: '月度报告不存在' });
+
+    const summaryText = String(report.summary_intro || '');
+    const planText = String(report.plan_intro || '');
+    // 空文本不套用，避免把同班同学已写的内容清空
+    if (copySummary && !summaryText.trim()) return res.status(400).json({ error: '本报告的总结为空，无法套用' });
+    if (copyPlan && !planText.trim()) return res.status(400).json({ error: '本报告的规划为空，无法套用' });
+
+    // 同班同学：同 grade+subject+term+year_month，排除自己
+    const where = [
+      'user_id = ?', 'id != ?',
+      "COALESCE(grade, '') = ?", "COALESCE(subject, '') = ?",
+      "COALESCE(term, '') = ?", 'year_month = ?',
+    ];
+    const params: unknown[] = [
+      userId, id,
+      String(report.grade || ''), String(report.subject || ''),
+      String(report.term || ''), String(report.year_month || ''),
+    ];
+    if (copySummary) { where.push("summary_intro != ''"); }
+    if (copyPlan) { where.push("plan_intro != ''"); }
+
+    const targets = db
+      .prepare(`SELECT id FROM monthly_reports WHERE ${where.join(' AND ')}`)
+      .all(...params) as { id: number }[];
+
+    let updated = 0;
+    const applyOne = db.prepare(
+      `UPDATE monthly_reports SET
+         summary_intro = ?, plan_intro = ?, updated_at = datetime('now', '+8 hours')
+       WHERE id = ? AND user_id = ?`
+    );
+    for (const t of targets) {
+      // 只更新被选中的字段，另一个字段保留对方自己的（用 COALESCE 语义在 SQL 外处理）
+      const cur = db
+        .prepare('SELECT summary_intro, plan_intro FROM monthly_reports WHERE id = ? AND user_id = ?')
+        .get(t.id, userId) as any;
+      const newSummary = copySummary ? summaryText : String(cur?.summary_intro ?? '');
+      const newPlan = copyPlan ? planText : String(cur?.plan_intro ?? '');
+      applyOne.run(newSummary, newPlan, t.id, userId);
+      updated++;
+    }
+
+    res.json({ updated, studentIds: targets.map((t) => t.id) });
+  } catch (error: any) {
+    res.status(500).json({ error: '套用到同班失败', message: error.message });
+  }
+});
+
 /** 导出 Excel：一个学生一份文件，版式对齐老师手维护的模板 */
 router.get('/:id/xlsx', async (req: AuthenticatedRequest, res) => {
   try {
