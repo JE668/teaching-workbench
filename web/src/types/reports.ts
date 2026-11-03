@@ -72,6 +72,16 @@ export interface ExamSuggestion {
   coverage: string;
 }
 
+/** 上月规划了、本月却没上的课（后端比对上月规划 vs 本月已上得出），可一键顺延到本月总结 */
+export interface UndeliveredCourse {
+  /** 课程目录 ID，手动加的课可能为空 */
+  course_id: number | null;
+  /** 课程内容 */
+  content: string;
+  /** 在上月规划里的序号 */
+  seq: number;
+}
+
 /** 学期选项（对齐课程体系目录里的取值） */
 export const TERM_OPTIONS = ['暑假', '秋季', '寒假', '春季', '一轮复习', '二轮复习', '三轮复习'];
 

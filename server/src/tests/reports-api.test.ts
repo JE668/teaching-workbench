@@ -594,3 +594,65 @@ describe('导出 Excel', () => {
     );
   });
 });
+
+describe('规划→总结衔接 · 找出上月计划了却没上的课', () => {
+  // 用独立学生，避免和别的用例共享报告历史导致「上一个月份」失真
+  let contStudent: any = null;
+
+  async function contReport(yearMonth: string) {
+    const res = await req('POST', '/api/reports', {
+      token,
+      body: { studentId: contStudent.id, yearMonth, term: '秋季' },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body.report;
+  }
+  async function addItem(reportId: number, kind: 'plan' | 'summary', content: string) {
+    const res = await req('POST', `/api/reports/${reportId}/items`, { token, body: { kind, content } });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+  }
+
+  test('未登录不能访问', async () => {
+    contStudent = await createStudent(token, { name: '衔接', grade: '初二', subject: '物理' });
+    const r = await contReport('2026-10');
+    assert.equal((await req('GET', `/api/reports/${r.id}/undelivered`)).status, 401);
+  });
+
+  test('没有上月报告时返回 prevReportId null', async () => {
+    // contStudent 现在只有 2026-10 一块报告，它的上一个月份不存在
+    const reports = await req('GET', '/api/reports?studentId=' + contStudent.id, { token });
+    const oct = reports.body.reports.find((r: any) => r.year_month === '2026-10');
+    const res = await req('GET', `/api/reports/${oct.id}/undelivered`, { token });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.prevReportId, null);
+    assert.deepEqual(res.body.undelivered, []);
+  });
+
+  test('上月规划 A、B、C，本月只上了 A、B → 返回 C 是漏上的', async () => {
+    const prev = await contReport('2026-11');
+    await addItem(prev.id, 'plan', '凸透镜成像');
+    await addItem(prev.id, 'plan', '眼睛与眼镜');
+    await addItem(prev.id, 'plan', '光的折射');
+
+    const cur = await contReport('2026-12');
+    await addItem(cur.id, 'summary', '凸透镜成像');
+    await addItem(cur.id, 'summary', '眼睛与眼镜');
+
+    const res = await req('GET', `/api/reports/${cur.id}/undelivered`, { token });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.prevReportId, prev.id);
+    assert.equal(res.body.undelivered.length, 1);
+    assert.equal(res.body.undelivered[0].content, '光的折射');
+  });
+
+  test('本月全上了 → undelivered 为空', async () => {
+    const prev = await contReport('2027-01');
+    await addItem(prev.id, 'plan', '力学复习');
+    const cur = await contReport('2027-02');
+    await addItem(cur.id, 'summary', '力学复习');
+
+    const res = await req('GET', `/api/reports/${cur.id}/undelivered`, { token });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.undelivered, []);
+  });
+});

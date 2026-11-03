@@ -9,6 +9,7 @@ import {
   type ReportExcelInput,
 } from '../utils/reportExcel.js';
 import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
+import { diffPlannedVsTaught, type ContinuityCourse } from '../utils/planContinuity.js';
 
 /**
  * 月度总结与课程规划。
@@ -216,6 +217,57 @@ router.get('/:id', (req: AuthenticatedRequest, res) => {
     res.json({ report: mapReport(row), items: items.map(mapItem) });
   } catch (error: any) {
     res.status(500).json({ error: '获取月度报告失败', message: error.message });
+  }
+});
+
+/**
+ * 找出「上月规划了、本月却没上」的课。
+ *
+ * 老师月底做总结最头疼的就是对着两张表核对哪些课漏了。以前靠脑子记，
+ * 现在由代码比对：拿上月同学生的规划课，跟本月的已上课（总结行）做差集。
+ * 前端据此一键把漏掉的课顺延到本月总结，不用再人工核对。
+ */
+router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
+
+    const cur = db
+      .prepare('SELECT id, student_id, year_month FROM monthly_reports WHERE id = ? AND user_id = ?')
+      .get(id, userId) as any;
+    if (!cur) return res.status(404).json({ error: '月度报告不存在' });
+    if (!cur.student_id) return res.json({ prevReportId: null, undelivered: [] });
+
+    // 找同一个学生、上一个月份的报告
+    const prev = db
+      .prepare(
+        `SELECT id FROM monthly_reports
+         WHERE user_id = ? AND student_id = ? AND year_month < ?
+         ORDER BY year_month DESC LIMIT 1`
+      )
+      .get(userId, cur.student_id, String(cur.year_month || '')) as any;
+    if (!prev) return res.json({ prevReportId: null, undelivered: [] });
+
+    // 上月规划课 = 上月报告里 kind=plan 的行
+    const prevItems = db
+      .prepare('SELECT content, course_id FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
+      .all(prev.id, userId, 'plan') as any[];
+    // 本月已上课 = 本报告里 kind=summary 的行
+    const curItems = db
+      .prepare('SELECT content, course_id FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
+      .all(id, userId, 'summary') as any[];
+
+    const toContinuity = (rows: any[]): ContinuityCourse[] =>
+      rows.map((r) => ({
+        courseId: r.course_id != null ? Number(r.course_id) : null,
+        content: String(r.content || ''),
+      }));
+
+    const undelivered = diffPlannedVsTaught(toContinuity(prevItems), toContinuity(curItems));
+    res.json({ prevReportId: prev.id, undelivered });
+  } catch (error: any) {
+    res.status(500).json({ error: '核对上月规划失败', message: error.message });
   }
 });
 

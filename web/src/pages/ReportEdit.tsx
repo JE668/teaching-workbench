@@ -41,6 +41,7 @@ import {
   MonthlyReport,
   ReportItem,
   TERM_OPTIONS,
+  UndeliveredCourse,
   formatYearMonth,
 } from '../types/reports';
 
@@ -191,6 +192,9 @@ export default function ReportEdit() {
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
   const [showImportLastMonth, setShowImportLastMonth] = useState(false);
   const [importingLastMonth, setImportingLastMonth] = useState(false);
+  // 方向 B：上月规划了、本月却没上的课（由后端比对得出），提示老师一键顺延
+  const [undelivered, setUndelivered] = useState<UndeliveredCourse[]>([]);
+  const [importingUndelivered, setImportingUndelivered] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -222,6 +226,24 @@ export default function ReportEdit() {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // 方向 B：加载「上月规划了、本月却没上」的课，供顶部提示 + 一键顺延
+  const loadUndelivered = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await api.request<{ prevReportId: number | null; undelivered: UndeliveredCourse[] }>(
+        `/reports/${id}/undelivered`
+      );
+      setUndelivered(data.undelivered || []);
+    } catch {
+      // 这个提示是锦上添花，加载失败不阻塞报告编辑
+      setUndelivered([]);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void loadUndelivered();
+  }, [loadUndelivered]);
 
   const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
@@ -411,6 +433,33 @@ export default function ReportEdit() {
       toast.error(e instanceof Error ? e.message : '导入失败');
     } finally {
       setImportingLastMonth(false);
+    }
+  }
+
+  /**
+   * 方向 B：把「上月规划了、本月却没上」的课一键顺延到本月总结。
+   * 只顺延后端比对出的漏上课（不是无脑导入全部规划），并保持课程目录关联，
+   * 让老师不用再对着两张表人工核对哪些课漏了。
+   */
+  async function carryOverUndelivered() {
+    if (!report || undelivered.length === 0) return;
+    setImportingUndelivered(true);
+    try {
+      let added = 0;
+      for (const course of undelivered) {
+        await addItem('summary', {
+          content: course.content,
+          course_id: course.course_id ?? undefined, // 保持目录关联
+        });
+        added++;
+      }
+      toast.success('已把 ' + added + ' 门漏上的课顺延到本月总结');
+      setUndelivered([]); // 顺延完就不再提示
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '顺延失败');
+    } finally {
+      setImportingUndelivered(false);
     }
   }
 
@@ -660,6 +709,30 @@ export default function ReportEdit() {
           </button>
         </div>
       </header>
+
+      {/* 方向 B：上月规划了、本月却没上的课，提示老师一键顺延，省去人工核对两张表 */}
+      {undelivered.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-amber-800">
+              上月规划了 {undelivered.length} 门课本月没上
+            </p>
+            <p className="mt-0.5 truncate text-xs text-amber-700">
+              {undelivered.map((c) => c.content).join('、')}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            icon={<ListPlus className="h-4 w-4" />}
+            loading={importingUndelivered}
+            onClick={() => void carryOverUndelivered()}
+            title="把这批漏上的课顺延到本月总结，保持课程目录关联"
+          >
+            顺延到本月
+          </Button>
+        </div>
+      )}
 
       {savingText && <div className="text-xs text-slate-400">正在保存…</div>}
 
