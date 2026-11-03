@@ -2,6 +2,7 @@ import './setup.js';
 import { test, before, after, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
+import { db } from '../config/database.js';
 import { startServer, stopServer, req, url, createUser, createStudent } from './helpers.js';
 
 let token = '';
@@ -654,5 +655,116 @@ describe('规划→总结衔接 · 找出上月计划了却没上的课', () => 
     const res = await req('GET', `/api/reports/${cur.id}/undelivered`, { token });
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.undelivered, []);
+  });
+});
+
+describe('目录智能排课 · 按轨道推荐下月该上什么', () => {
+  // 用独立学生 + 直接插目录（比走 import xlsx 简单），验证 (grade,subject,term) 匹配
+  // + 已上课通过 course_id 关联 + 按轨道 seq 推荐下一门
+  let ncStudent: any = null;
+  let ncUserId = 0;
+
+  before(async () => {
+    ncStudent = await createStudent(token, { name: '排课', grade: '初二', subject: '物理' });
+    const row = db.prepare('SELECT id FROM users WHERE username = ?').get('report-teacher') as { id: number };
+    ncUserId = row.id;
+  });
+
+  /** 插一条目录课，返回 id */
+  function seedCourse(over: Partial<Record<string, unknown>>): number {
+    const c = {
+      user_id: ncUserId, import_id: null, band: '初中', term: '秋季', grade: '初二',
+      subject: '物理', track: '', seq: 0, content: '', type: '同步', score: '',
+      difficulty: '', impact: '', textbook: '', section: '', sheet: '', source_row: 0,
+      ...over,
+    };
+    return db
+      .prepare(
+        `INSERT INTO course_catalog
+           (user_id, import_id, band, term, grade, subject, track, seq, content,
+            type, score, difficulty, impact, textbook, section, sheet, source_row)
+         VALUES
+           (@user_id, @import_id, @band, @term, @grade, @subject, @track, @seq, @content,
+            @type, @score, @difficulty, @impact, @textbook, @section, @sheet, @source_row)`
+      )
+      .run(c).lastInsertRowid as number;
+  }
+
+  async function ncReport(yearMonth: string) {
+    const res = await req('POST', '/api/reports', {
+      token, body: { studentId: ncStudent.id, yearMonth, term: '秋季' },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body.report;
+  }
+
+  test('未登录不能访问', async () => {
+    const r = await ncReport('2026-10');
+    assert.equal((await req('GET', `/api/reports/${r.id}/next-courses`)).status, 401);
+  });
+
+  test('力学轨道上了第 1 门 → 推荐第 2 门；光学轨道没上 → 推荐第 1 门', async () => {
+    const m1 = seedCourse({ track: '力学', seq: 1, content: '力的基本概念' });
+    const m2 = seedCourse({ track: '力学', seq: 2, content: '牛顿第一定律' });
+    const m3 = seedCourse({ track: '力学', seq: 3, content: '牛顿第二定律' });
+    const o1 = seedCourse({ track: '光学', seq: 1, content: '光的反射' });
+    const o2 = seedCourse({ track: '光学', seq: 2, content: '凸透镜成像' });
+
+    const r = await ncReport('2026-11');
+    // 本月总结上了力学第 1 门（course_id 关联目录）
+    await req('POST', `/api/reports/${r.id}/items`, {
+      token, body: { kind: 'summary', content: '力的基本概念', courseId: m1 },
+    });
+
+    const res = await req('GET', `/api/reports/${r.id}/next-courses`, { token });
+    assert.equal(res.status, 200);
+    const byTrack = new Map(res.body.suggestions.map((s: any) => [s.track, s]));
+
+    const mech = byTrack.get('力学');
+    assert.equal(mech.takenCount, 1);
+    assert.equal(mech.totalCount, 3);
+    assert.equal(mech.course.id, m2);
+    assert.equal(mech.course.content, '牛顿第一定律');
+
+    const opt = byTrack.get('光学');
+    assert.equal(opt.takenCount, 0);
+    assert.equal(opt.course.id, o1);
+    assert.equal(opt.course.content, '光的反射');
+  });
+
+  test('某轨道全上完 → finished=true，不再推荐', async () => {
+    const a1 = seedCourse({ track: '声学', seq: 1, content: '声音的产生' });
+    const a2 = seedCourse({ track: '声学', seq: 2, content: '声音的传播' });
+    const r = await ncReport('2026-12');
+    await req('POST', `/api/reports/${r.id}/items`, { token, body: { kind: 'summary', content: '声音的产生', courseId: a1 } });
+    await req('POST', `/api/reports/${r.id}/items`, { token, body: { kind: 'summary', content: '声音的传播', courseId: a2 } });
+
+    const res = await req('GET', `/api/reports/${r.id}/next-courses`, { token });
+    const acoustic = res.body.suggestions.find((s: any) => s.track === '声学');
+    assert.equal(acoustic.finished, true);
+    assert.equal(acoustic.course, null);
+    assert.equal(acoustic.takenCount, 2);
+  });
+
+  test('不匹配的年级/学科/学期目录不参与推荐', async () => {
+    seedCourse({ grade: '初三', track: '错年级', seq: 1, content: '初三的课' });
+    seedCourse({ term: '寒假', track: '错学期', seq: 1, content: '寒假的课' });
+    const r = await ncReport('2027-01');
+    const res = await req('GET', `/api/reports/${r.id}/next-courses`, { token });
+    const tracks = res.body.suggestions.map((s: any) => s.track);
+    assert.ok(!tracks.includes('错年级'));
+    assert.ok(!tracks.includes('错学期'));
+  });
+
+  test('已上课跨月累积：上个月报告上过的课，这个月不再推荐', async () => {
+    const h1 = seedCourse({ track: '热学', seq: 1, content: '温度' });
+    const h2 = seedCourse({ track: '热学', seq: 2, content: '内能' });
+    const lastMonth = await ncReport('2026-09');
+    await req('POST', `/api/reports/${lastMonth.id}/items`, { token, body: { kind: 'summary', content: '温度', courseId: h1 } });
+    const thisMonth = await ncReport('2026-10');
+    const res = await req('GET', `/api/reports/${thisMonth.id}/next-courses`, { token });
+    const heat = res.body.suggestions.find((s: any) => s.track === '热学');
+    assert.equal(heat.takenCount, 1);
+    assert.equal(heat.course.id, h2);
   });
 });

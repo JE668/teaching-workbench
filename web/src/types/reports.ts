@@ -82,6 +82,27 @@ export interface UndeliveredCourse {
   seq: number;
 }
 
+/** 目录智能排课：某条轨道的「下一步」推荐（后端按 track+seq 推算） */
+export interface NextCourseSuggestion {
+  /** 轨道名，空串表示没分轨道 */
+  track: string;
+  /** 这条轨道里已上过几门 */
+  takenCount: number;
+  /** 这条轨道总共有几门 */
+  totalCount: number;
+  /** 推荐的下一门课；这条轨道全上完时为 null */
+  course: {
+    id: number;
+    track: string;
+    seq: number;
+    content: string;
+    type: string;
+    difficulty: string;
+  } | null;
+  /** 这条轨道是否已经全部上完 */
+  finished: boolean;
+}
+
 /** 学期选项（对齐课程体系目录里的取值） */
 export const TERM_OPTIONS = ['暑假', '秋季', '寒假', '春季', '一轮复习', '二轮复习', '三轮复习'];
 

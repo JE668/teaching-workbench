@@ -39,6 +39,7 @@ import {
   CatalogCourseOption,
   DIFFICULTY_OPTIONS,
   MonthlyReport,
+  NextCourseSuggestion,
   ReportItem,
   TERM_OPTIONS,
   UndeliveredCourse,
@@ -195,6 +196,10 @@ export default function ReportEdit() {
   // 方向 B：上月规划了、本月却没上的课（由后端比对得出），提示老师一键顺延
   const [undelivered, setUndelivered] = useState<UndeliveredCourse[]>([]);
   const [importingUndelivered, setImportingUndelivered] = useState(false);
+  // 方向 E：按轨道推荐「下月该上什么」，老师从手动翻目录变点选确认
+  const [nextCourses, setNextCourses] = useState<NextCourseSuggestion[] | null>(null);
+  const [loadingNextCourses, setLoadingNextCourses] = useState(false);
+  const [addingNext, setAddingNext] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -460,6 +465,42 @@ export default function ReportEdit() {
       toast.error(e instanceof Error ? e.message : '顺延失败');
     } finally {
       setImportingUndelivered(false);
+    }
+  }
+
+  /**
+   * 方向 E：加载按轨道推荐的「下月该上什么」。
+   * 后端按 (grade,subject,term) 匹配目录，顺学生已上课的 track+seq 往后推。
+   */
+  async function loadNextCourses() {
+    if (!report) return;
+    setLoadingNextCourses(true);
+    try {
+      const data = await api.request<{ suggestions: NextCourseSuggestion[] }>(`/reports/${report.id}/next-courses`);
+      setNextCourses(data.suggestions || []);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '推荐加载失败');
+      setNextCourses([]);
+    } finally {
+      setLoadingNextCourses(false);
+    }
+  }
+
+  /** 把推荐的一门课加到本月规划，保持课程目录关联 */
+  async function addNextToPlan(course: NextCourseSuggestion['course']) {
+    if (!course) return;
+    setAddingNext(course.id);
+    const item = await addItem('plan', {
+      content: course.content,
+      type: course.type,
+      difficulty: course.difficulty,
+      course_id: course.id, // 保持目录关联，下次推荐就不会再推它
+    });
+    setAddingNext(null);
+    if (item) {
+      toast.success('已把「' + course.content + '」加到本月规划');
+      // 这门课加上后，该轨道的推荐要刷新（takenCount +1，下一门往后推）
+      void loadNextCourses();
     }
   }
 
@@ -830,6 +871,16 @@ export default function ReportEdit() {
               <Button size="sm" icon={<Plus className="h-4 w-4" />} onClick={() => setShowPicker('plan')}>
                 从课程目录添加
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Sparkles className="h-4 w-4" />}
+                loading={loadingNextCourses}
+                onClick={() => void loadNextCourses()}
+                title="按课程体系的轨道顺序，推荐每条轨道下一门该上的课"
+              >
+                推荐下一门
+              </Button>
               <Button variant="ghost" size="sm" icon={<CalendarDays className="h-4 w-4" />} onClick={() => void addItem('exam', { content: '阶测安排' })}>
                 手动加阶测
               </Button>
@@ -883,6 +934,53 @@ export default function ReportEdit() {
             </div>
           )}
           <ItemTable cols={PLAN_COLS} items={planItems} onPatch={patchItem} onRemove={removeItem} onMove={moveItem} />
+
+          {/* 方向 E：按轨道推荐「下月该上什么」，老师点选确认而非手动翻目录 */}
+          {nextCourses !== null && (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-500">
+                <Sparkles className="h-3.5 w-3.5" /> 按轨道推荐 · 下月该上什么
+              </div>
+              {nextCourses.length === 0 ? (
+                <p className="text-xs text-slate-400">
+                  课程目录里没有匹配本报告（年级/学科/学期）的课，先确认目录或报告的年级学科学期。
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {nextCourses.map((s) => (
+                    <li key={s.track || '(未分轨)'} className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="w-16 shrink-0 font-medium text-slate-600">
+                        {s.track || '未分轨'}
+                      </span>
+                      {s.finished ? (
+                        <span className="text-slate-400">本轨道已上完（{s.totalCount}门）</span>
+                      ) : s.course ? (
+                        <>
+                          <span className="text-slate-400">
+                            {s.takenCount}/{s.totalCount}
+                          </span>
+                          <span className="flex-1 min-w-0 truncate text-slate-700">
+                            {s.course.content}
+                            {s.course.difficulty ? `（${s.course.difficulty}）` : ''}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Plus className="h-3.5 w-3.5" />}
+                            loading={addingNext === s.course.id}
+                            onClick={() => void addNextToPlan(s.course)}
+                            title="加到本月规划，保持课程目录关联"
+                          >
+                            加入规划
+                          </Button>
+                        </>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           {examItems.length > 0 && (
             <div>
               <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-500">

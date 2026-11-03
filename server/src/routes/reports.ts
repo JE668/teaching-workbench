@@ -10,6 +10,7 @@ import {
 } from '../utils/reportExcel.js';
 import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
 import { diffPlannedVsTaught, type ContinuityCourse } from '../utils/planContinuity.js';
+import { suggestNextCourses } from '../utils/nextCourse.js';
 
 /**
  * 月度总结与课程规划。
@@ -268,6 +269,67 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
     res.json({ prevReportId: prev.id, undelivered });
   } catch (error: any) {
     res.status(500).json({ error: '核对上月规划失败', message: error.message });
+  }
+});
+
+/**
+ * 目录智能排课（方向 E）：按轨道推荐「下月该上什么」。
+ *
+ * 课程体系目录按 (term, track, seq) 有序组织，学生已上的课通过 report_items.course_id
+ * 关联到目录。顺着同一 track 的 seq 往后推就是「下一步该上什么」。以前规划全靠老师
+ * 手动翻目录挑，现在按 track 给出每条轨道的下一门待上课，老师从「手动挑」变「点选确认」。
+ *
+ * 口径：只推 (grade, subject, term) 都匹配本报告的目录；已上过的课取这个学生本学期
+ * 所有报告里 kind=summary 且有 course_id 的行（跨月累积，不只看当前这块报告）。
+ */
+router.get('/:id/next-courses', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
+
+    const report = loadReport(id, userId);
+    if (!report) return res.status(404).json({ error: '月度报告不存在' });
+
+    const grade = String(report.grade || '').trim();
+    const subject = String(report.subject || '').trim();
+    const term = String(report.term || '').trim();
+    if (!grade || !subject || !term) {
+      return res.json({ suggestions: [], reason: '报告缺少年级/学科/学期，无法匹配课程目录' });
+    }
+
+    // 学生本学期已上过的课（跨月累积：这个学生所有报告里 kind=summary 且连了目录的行）
+    const takenRows = db
+      .prepare(
+        `SELECT DISTINCT ri.course_id FROM report_items ri
+         JOIN monthly_reports r ON r.id = ri.report_id AND r.user_id = ri.user_id
+         WHERE ri.user_id = ? AND r.student_id = ? AND ri.kind = 'summary'
+           AND ri.course_id IS NOT NULL AND r.term = ?`
+      )
+      .all(userId, report.student_id, term) as { course_id: number }[];
+    const takenCourseIds = takenRows.map((r) => Number(r.course_id));
+
+    // 匹配年级/学科/学期的目录，取排课推算需要的字段
+    const catalogRows = db
+      .prepare(
+        `SELECT id, track, seq, content, type, difficulty FROM course_catalog
+         WHERE user_id = ? AND grade = ? AND subject = ? AND term = ?`
+      )
+      .all(userId, grade, subject, term) as any[];
+
+    const catalog = catalogRows.map((r) => ({
+      id: Number(r.id),
+      track: String(r.track || ''),
+      seq: Number(r.seq || 0),
+      content: String(r.content || ''),
+      type: String(r.type || ''),
+      difficulty: String(r.difficulty || ''),
+    }));
+
+    const suggestions = suggestNextCourses(catalog, takenCourseIds);
+    res.json({ suggestions, takenCount: takenCourseIds.length });
+  } catch (error: any) {
+    res.status(500).json({ error: '推荐下月课程失败', message: error.message });
   }
 });
 
