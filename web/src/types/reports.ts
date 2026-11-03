@@ -78,6 +78,10 @@ export interface UndeliveredCourse {
   course_id: number | null;
   /** 课程内容 */
   content: string;
+  /** 课程类型，顺延到本月总结时带上（上月规划课原本有） */
+  type?: string;
+  /** 课程难度，顺延到本月总结时带上 */
+  difficulty?: string;
   /** 在上月规划里的序号 */
   seq: number;
 }

@@ -464,6 +464,8 @@ export default function ReportEdit() {
         await addItem('summary', {
           content: course.content,
           course_id: course.course_id ?? undefined, // 保持目录关联
+          type: course.type ?? undefined, // 顺延保留上月规划课的类型，老师不用手动补
+          difficulty: course.difficulty ?? undefined, // 同上，难度
         });
         added++;
       }

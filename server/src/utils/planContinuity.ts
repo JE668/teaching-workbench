@@ -16,6 +16,10 @@ export interface ContinuityCourse {
   courseId?: number | null;
   /** 课程内容文本 */
   content: string;
+  /** 课程类型，透传给前端顺延时带上（不影响匹配） */
+  type?: string;
+  /** 课程难度，透传给前端顺延时带上（不影响匹配） */
+  difficulty?: string;
 }
 
 export interface UndeliveredCourse extends ContinuityCourse {
@@ -64,7 +68,13 @@ export function diffPlannedVsTaught(
     if (norm && taughtTexts.has(norm)) return;
     // 规划里空内容的行没意义，跳过
     if (!String(c.content || '').trim()) return;
-    undelivered.push({ courseId: c.courseId ?? null, content: c.content, seq: idx });
+    undelivered.push({
+      courseId: c.courseId ?? null,
+      content: c.content,
+      type: c.type,
+      difficulty: c.difficulty,
+      seq: idx,
+    });
   });
   return undelivered;
 }

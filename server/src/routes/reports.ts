@@ -250,11 +250,13 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
       .get(userId, cur.student_id, String(cur.year_month || '')) as any;
     if (!prev) return res.json({ prevReportId: null, undelivered: [] });
 
-    // 上月规划课 = 上月报告里 kind=plan 的行
+    // 上月规划课 = 上月报告里 kind=plan 的行。
+    // 带上 type/difficulty：顺延漏上的课到本月总结时，保留原类型/难度，
+    // 老师不用再手动补（以前只取 content+course_id，顺延后类型难度全丢）。
     const prevItems = db
-      .prepare('SELECT content, course_id FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
+      .prepare('SELECT content, course_id, type, difficulty FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
       .all(prev.id, userId, 'plan') as any[];
-    // 本月已上课 = 本报告里 kind=summary 的行
+    // 本月已上课 = 本报告里 kind=summary 的行（比对用，只需 content+course_id）
     const curItems = db
       .prepare('SELECT content, course_id FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
       .all(id, userId, 'summary') as any[];
@@ -263,6 +265,8 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
       rows.map((r) => ({
         courseId: r.course_id != null ? Number(r.course_id) : null,
         content: String(r.content || ''),
+        type: String(r.type || ''),
+        difficulty: String(r.difficulty || ''),
       }));
 
     const undelivered = diffPlannedVsTaught(toContinuity(prevItems), toContinuity(curItems));

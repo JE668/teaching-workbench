@@ -74,4 +74,25 @@ describe('规划→总结衔接 · 计划了却没上的课', () => {
     const undelivered = diffPlannedVsTaught(plan, []);
     assert.equal(undelivered.length, 0);
   });
+
+  test('漏上的课保留上月规划课的类型和难度（顺延到本月总结不丢属性）', () => {
+    const plan = [
+      { courseId: 1, content: '已上的课', type: '同步', difficulty: '★★' },
+      { courseId: 2, content: '漏上的课', type: '专题', difficulty: '★★★★' },
+    ];
+    const taught = [{ courseId: 1, content: '已上的课' }];
+    const undelivered = diffPlannedVsTaught(plan, taught);
+    assert.equal(undelivered.length, 1);
+    assert.equal(undelivered[0].content, '漏上的课');
+    assert.equal(undelivered[0].type, '专题');
+    assert.equal(undelivered[0].difficulty, '★★★★');
+  });
+
+  test('没填类型难度的课原样透传（纯函数不假设输入带这两列）', () => {
+    const plan = [{ courseId: 1, content: '手工加的课' }];
+    const undelivered = diffPlannedVsTaught(plan, []);
+    // 纯函数只透传，不归一化；归一成空串是后端 toContinuity 的职责
+    assert.equal(undelivered[0].type, undefined);
+    assert.equal(undelivered[0].difficulty, undefined);
+  });
 });
