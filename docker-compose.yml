@@ -31,6 +31,8 @@ services:
       - DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-admin}
       - DEFAULT_ADMIN_PASS=${DEFAULT_ADMIN_PASS:-123456}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      # /metrics 监控口令：留空=开放（内网默认）；端口暴露公网必须设置
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
     # 【持久化】数据直接落在 compose 同级目录，方便查看与备份。
     # 想放别处就改 .env 里的 DATA_PATH。
     # 注意：容器默认以 UID 1001 运行，而 NAS 上的目录通常属于 1000，

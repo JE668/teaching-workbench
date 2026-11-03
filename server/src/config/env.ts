@@ -116,4 +116,6 @@ export const env = {
   DATA_DIR,
   // Tesseract OCR 语言数据目录（CI 中需下载 chi_sim.traineddata、eng.traineddata）
   TESSDATA_PREFIX: process.env.TESSDATA_PREFIX || path.resolve(DATA_DIR, 'tessdata'),
+  // /metrics 访问口令。留空 = 开放（内网默认）；公网暴露必须设置。
+  METRICS_TOKEN: (process.env.METRICS_TOKEN || '').trim(),
 };

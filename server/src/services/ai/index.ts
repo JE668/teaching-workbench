@@ -16,11 +16,28 @@ export { getAiConfig };
 // 闸门加在真正调用 SDK 的地方，所有上层入口自动被覆盖。
 export const MAX_CONCURRENT_AI = 2;
 let aiInFlight = 0;
-const aiWaiters: Array<() => void> = [];
+const aiWaiters: Array<{ resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout }> = [];
 
-export async function acquireAiSlot(): Promise<void> {
+/** 排队上限：超过就快速失败，而不是无限挂在某个卡死的生成上 */
+export const AI_QUEUE_TIMEOUT_MS = 120_000;
+
+export class AiQueueTimeoutError extends Error {
+  constructor() {
+    super('AI 排队等待超过 2 分钟，前序生成可能已卡住，请稍后重试。');
+    this.name = 'AiQueueTimeoutError';
+  }
+}
+
+export async function acquireAiSlot(timeoutMs: number = AI_QUEUE_TIMEOUT_MS): Promise<void> {
   while (aiInFlight >= MAX_CONCURRENT_AI) {
-    await new Promise<void>((resolve) => aiWaiters.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const i = aiWaiters.findIndex((w) => w.timer === timer);
+        if (i >= 0) aiWaiters.splice(i, 1);
+        reject(new AiQueueTimeoutError());
+      }, timeoutMs);
+      aiWaiters.push({ resolve, reject, timer });
+    });
   }
   aiInFlight++;
 }
@@ -28,7 +45,10 @@ export async function acquireAiSlot(): Promise<void> {
 export function releaseAiSlot(): void {
   aiInFlight = Math.max(0, aiInFlight - 1);
   const next = aiWaiters.shift();
-  if (next) next();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve();
+  }
 }
 
 /** 把一次 AI 调用放进并发闸门 */
@@ -49,6 +69,7 @@ export function getAiInFlightCount(): number {
 /** 重置闸门计数（仅供测试） */
 export function resetAiGate(): void {
   aiInFlight = 0;
+  for (const w of aiWaiters) clearTimeout(w.timer);
   aiWaiters.length = 0;
 }
 
@@ -419,6 +440,11 @@ export function describeAiError(
   const name = error?.name || '';
   const raw = error?.message || '';
   const status = error?.status;
+
+  // 排队超时：前序生成把闸门占死了，快速失败并提示（区别于单次调用超时）
+  if (name === 'AiQueueTimeoutError') {
+    return { httpStatus: 503, message: raw };
+  }
 
   if (name === 'APIConnectionTimeoutError' || /timed?\s*out/i.test(raw)) {
     return {

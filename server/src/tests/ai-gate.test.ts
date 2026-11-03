@@ -98,4 +98,32 @@ describe('AI 并发闸门', () => {
     );
     assert.ok(wrapped >= 5, '所有 AI 入口都该进闸门，实际 ' + wrapped);
   });
+
+  test('排队超过上限时间快速失败，超时者被移出队列', async () => {
+    // 占满闸门且不释放
+    await acquireAiSlot();
+    await acquireAiSlot();
+    assert.equal(getAiInFlightCount(), MAX_CONCURRENT_AI);
+
+    await assert.rejects(acquireAiSlot(30), (e: Error) => e.name === 'AiQueueTimeoutError');
+    // 超时者已出队：再释放槽位不会把它唤醒
+    releaseAiSlot();
+    releaseAiSlot();
+    await new Promise((r) => setTimeout(r, 60));
+    // 闸门可继续正常借用（超时定时器已清，进程不因句柄滞留）
+    await withAiSlot(async () => 1);
+    assert.equal(getAiInFlightCount(), 0);
+  });
+
+  test('正常放行会清掉排队超时定时器，不误伤', async () => {
+    await acquireAiSlot();
+    await acquireAiSlot();
+    const waiter = acquireAiSlot(10_000); // 远大于用例时长
+    releaseAiSlot();
+    await waiter; // 定时器没清的话 10s 后会二次 reject（unhandled）
+    // 此刻自己 + 被唤醒的 waiter 各占一槽，两次释放才归零
+    releaseAiSlot();
+    releaseAiSlot();
+    assert.equal(getAiInFlightCount(), 0);
+  });
 });

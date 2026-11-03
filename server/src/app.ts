@@ -8,6 +8,7 @@ import { authMiddleware } from './middleware/auth.js';
 import { requireMediaAuth } from './middleware/mediaAuth.js';
 import { errorHandler, notFound } from './middleware/error.js';
 import { log } from './utils/logger.js';
+import { observeHttpRequest, renderPrometheus } from './utils/metrics.js';
 import authRoutes from './routes/auth.js';
 import studentRoutes from './routes/students.js';
 import followupRoutes from './routes/followups.js';
@@ -57,6 +58,22 @@ export function createApp() {
       },
     })
   );
+
+  // ========== 指标采集（/metrics 数据源）==========
+  // 与请求日志不同：所有环境都采集（测试要断言 /metrics），只是不打印。
+  app.use((req, res, next) => {
+    const start = Date.now();
+    // 必须此刻捕获：进入挂载 router 后 Express 会改写 req.url/path，
+    // finish 回调里再读拿到的是最深层 router 的相对路径。
+    const rawPath = req.baseUrl ? req.baseUrl + req.url : req.path;
+    res.on('finish', () => {
+      // /metrics 自身不记录，避免抓取端高频轮询污染直方图
+      if (!rawPath.startsWith('/metrics')) {
+        observeHttpRequest(req.method, rawPath, res.statusCode, Date.now() - start);
+      }
+    });
+    next();
+  });
 
   // ========== 请求日志 ==========
   // 测试环境静音，避免刷屏
@@ -131,10 +148,31 @@ export function createApp() {
         // 构建时的 git 提交号，烤进镜像（Dockerfile 的 ARG BUILD_SHA）。
         // 确认线上是不是最新代码就看这个，别靠「我记得我部署过」。
         build: process.env.BUILD_SHA || 'dev',
+        // e2e 守护：测试实例带 testEnv 标记。playwright globalSetup 断言它，
+        // 挡住「复用到一台非 test 模式的残留后端 → 内置目录 seed 灌进库、
+        // 全量行数断言崩掉」这类事故（本地真实踩过：残留 dev 后端被
+        // reuseExistingServer 静默复用，5 个用例离奇失败）。
+        ...(process.env.NODE_ENV === 'test' ? { testEnv: true } : {}),
       });
     } catch {
       res.status(503).json({ status: 'error', message: '数据库不可用' });
     }
+  });
+
+  // ========== Prometheus 指标 ==========
+  // 设了 METRICS_TOKEN 就必须带 ?token=xxx 或 Authorization: Bearer，
+  // 不对一律 404（不暴露端点存在性）。未设则开放——NAS 内网默认够用，
+  // 公网/反代暴露时务必在 .env 里设置该变量。
+  // 读 process.env 而非启动期定格的 env 对象：测试要能两种模式都覆盖。
+  app.get('/metrics', (req, res) => {
+    const token = (process.env.METRICS_TOKEN || '').trim();
+    if (token) {
+      const given = String(req.query.token || '') ||
+        (/^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1] ?? '');
+      if (given !== token) return res.status(404).end();
+    }
+    res.type('text/plain; version=0.0.4; charset=utf-8');
+    res.send(renderPrometheus(process.env.BUILD_SHA || 'dev'));
   });
 
   // ========== 路由 ==========

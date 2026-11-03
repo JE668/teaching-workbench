@@ -22,6 +22,14 @@ export default defineConfig({
   retries: isCI ? 1 : 0,
   forbidOnly: isCI,
 
+  // 第一个 project 先跑环境哨兵：断言 3111 上是 test 模式后端。
+  // 挡住「残留后端被 reuseExistingServer 静默复用 → 内置目录被灌进库 →
+  // 一批行数断言离奇崩掉」的本地环境事故（真实发生过）。
+  projects: [
+    { name: 'env-guard', testMatch: /00-env-guard\.spec\.ts/ },
+    { name: 'e2e', testMatch: /specs\/.*\.spec\.ts/, dependencies: ['env-guard'] },
+  ],
+
   reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
 
   use: {
