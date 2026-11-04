@@ -44,6 +44,18 @@ export interface FollowUp {
   updatedAt: string;
 }
 
+/** 同班同学（同 grade+subject+term），可把回访的主题/表现/内容批量套用 */
+export interface FollowUpClassmate {
+  id: number;
+  studentId: number;
+  studentName: string;
+  hasTopic: boolean;
+  hasPerformance: boolean;
+  hasContent: boolean;
+  hasMastery: boolean;
+  createdAt: string;
+}
+
 // 学生年级列表
 export const GRADES = [
   '幼儿园',

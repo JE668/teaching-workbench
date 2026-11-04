@@ -22,6 +22,8 @@ import {
   WifiOff,
   TrendingUp,
   Zap,
+  Users,
+  RotateCcw,
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
@@ -41,6 +43,7 @@ import {
   sortFollowUpModules,
   CourseType,
   FollowUpModule,
+  FollowUpClassmate,
 } from '../types/index';
 import { deriveNickname } from '../lib/nickname';
 import {
@@ -60,8 +63,10 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
+import Modal from '../components/ui/Modal';
+import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { countWords, copyText, cn, relativeTime } from '../lib/utils';
-import { Loader2, RotateCcw, Trash2, Clock, ArrowLeft, Archive } from 'lucide-react';
+import { Loader2, Trash2, Clock, ArrowLeft, Archive } from 'lucide-react';
 import { extractDroppedImages } from '../lib/dropFiles';
 import { VoiceButton } from '../components/ui/VoiceButton';
 
@@ -94,6 +99,24 @@ export function followUpWordRange(blockCount: number): { min: number; max: numbe
     min: WORD_MIN + (n - 1) * WORDS_PER_EXTRA_BLOCK_MIN,
     max: WORD_MAX + (n - 1) * WORDS_PER_EXTRA_BLOCK_MAX,
   };
+}
+
+/** ① 打开「套用到同班」对话框，先列出同班同学 */
+async function loadFollowUpClassmates(followupId: number): Promise<FollowUpClassmate[]> {
+  const res = await api.request<{ classmates: FollowUpClassmate[] }>(`/followups/${followupId}/classmates`);
+  return res.classmates || [];
+}
+
+/** ① 把勾选的字段套用到同班同学 */
+async function applyFollowUpToClass(
+  followupId: number,
+  fields: { topic: boolean; performance: boolean; content: boolean; mastery: boolean }
+): Promise<{ updated: number; studentIds: number[] }> {
+  const res = await api.request<{ updated: number; studentIds: number[] }>(`/followups/${followupId}/apply-to-class`, {
+    method: 'POST',
+    body: JSON.stringify(fields),
+  });
+  return res;
 }
 
 /** 表单默认值。单独抽出来是为了让状态有明确类型（否则草稿的 `any` 会污染整个 form） */
@@ -169,6 +192,7 @@ export default function FollowUp() {
   const [generationError, setGenerationError] = useState<{ status?: number; detail?: any; message: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [content, setContent] = useState(() => restored?.content || '');
+  const [savedFollowupId, setSavedFollowupId] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => restored?.draft || '');
   const [saving, setSaving] = useState(false);
@@ -176,6 +200,15 @@ export default function FollowUp() {
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [draftHistory, setDraftHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  // ① 回访文案班级批量复用
+  const [showApplyClass, setShowApplyClass] = useState(false);
+  const [classmates, setClassmates] = useState<FollowUpClassmate[]>([]);
+  const [loadingClassmates, setLoadingClassmates] = useState(false);
+  const [copyTopic, setCopyTopic] = useState(true);
+  const [copyPerformance, setCopyPerformance] = useState(true);
+  const [copyContent, setCopyContent] = useState(true);
+  const [copyMastery, setCopyMastery] = useState(true);
+  const [applyingClass, setApplyingClass] = useState(false);
 
   useEffect(() => {
     api.get('/students').then((r) => setStudents(r.students || [])).catch(() => {});
@@ -537,6 +570,8 @@ export default function FollowUp() {
         toast.success('已为 ' + selectedIds.length + ' 位学生各归档一条回访');
       } else {
         toast.success('已保存并归档到学生档案');
+        // 记录已保存的回访 id，用于「套用到同班」
+        if (res?.followup?.id) setSavedFollowupId(res.followup.id);
       }
 
       // 自动建档 / 历史归位的告知
@@ -552,6 +587,7 @@ export default function FollowUp() {
       setDraft('');
       setEditing(false);
       setImages([]);
+      setSavedFollowupId(null);
 
       if (keepGoing) {
         // 留在本页继续写：保留年级/学科/课程类型/课次，清掉学生与内容
@@ -601,6 +637,48 @@ export default function FollowUp() {
       }
     }
   };
+
+  /** ① 打开「套用到同班」对话框，先列出同班同学 */
+  const openApplyClass = useCallback(async () => {
+    if (!savedFollowupId) {
+      toast.error('请先保存回访，再使用「套用到同班」功能');
+      return;
+    }
+    try {
+      const classmates = await loadFollowUpClassmates(savedFollowupId);
+      setClassmates(classmates);
+      setCopyTopic(!!form.topic.trim());
+      setCopyPerformance(!!form.performance.trim());
+      setCopyContent(!!content.trim());
+      setCopyMastery(!!form.mastery.trim());
+      setShowApplyClass(true);
+    } catch (e: any) {
+      toast.error(e.message || '查询同班同学失败');
+    }
+  }, [savedFollowupId, form.topic, form.performance, content, form.mastery]);
+
+  /** ① 把勾选的字段套用到同班同学 */
+  const applyToClass = useCallback(async () => {
+    if (!savedFollowupId) {
+      toast.error('请先保存回访，再使用「套用到同班」功能');
+      return;
+    }
+    if (!copyTopic && !copyPerformance && !copyContent && !copyMastery) {
+      toast.error('请至少勾选一项要复制的字段');
+      return;
+    }
+    setApplyingClass(true);
+    try {
+      await applyFollowUpToClass(savedFollowupId, { topic: copyTopic, performance: copyPerformance, content: copyContent, mastery: copyMastery });
+      const what = [copyTopic && '主题', copyPerformance && '表现', copyContent && '内容', copyMastery && '掌握'].filter(Boolean).join('、');
+      toast.success('已把' + what + '套用到同班同学，可再逐个微调');
+      setShowApplyClass(false);
+    } catch (e: any) {
+      toast.error(e.message || '套用失败');
+    } finally {
+      setApplyingClass(false);
+    }
+  }, [savedFollowupId, copyTopic, copyPerformance, copyContent, copyMastery]);
 
   /**
    * 快捷短语：历史学到的用词优先，内置通用词按用户偏好决定是否参与。
@@ -1510,6 +1588,14 @@ export default function FollowUp() {
                       </button>
                     )}
                     <button
+                      onClick={() => void openApplyClass()}
+                      title="把这份回访的主题/表现/内容套用到同班同学，再逐个微调"
+                      className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      套用到同班
+                    </button>
+                    <button
                       onClick={() => {
                         if (editing) {
                           // 点「完成」要把编辑结果合回 content，否则用户改了就白改了
@@ -1729,6 +1815,127 @@ export default function FollowUp() {
           </div>
         </aside>
       )}
+
+      {/* ① 套用到同班弹窗 */}
+      <Modal
+        open={showApplyClass}
+        onClose={() => setShowApplyClass(false)}
+        title="套用到同班同学"
+        description="同一个班（同年级·学科·学期）的学生，回访的「课程主题」「课堂表现」「回访内容」高度相似。写好一份后批量套用，再逐个微调个性部分，省去重复写。"
+        size="md"
+        footer={
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">
+              {classmates.length > 0 ? `将套用到 ${classmates.length} 位同班同学` : '没有同班同学'}
+            </span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setShowApplyClass(false)}>取消</Button>
+              <Button
+                icon={<Users className="h-4 w-4" />}
+                disabled={classmates.length === 0 || (!copyTopic && !copyPerformance && !copyContent && !copyMastery)}
+                loading={applyingClass}
+                onClick={() => void applyToClass()}
+              >
+                套用
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {/* 选要套用哪部分 */}
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-slate-500">选择要套用的部分</p>
+            <label className="flex items-start gap-2.5 rounded-xl p-2.5 ring-1 ring-slate-100 bg-white cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-500"
+                checked={copyTopic}
+                onChange={(e) => setCopyTopic(e.target.checked)}
+                disabled={!form.topic.trim()}
+              />
+              <span className="flex-1">
+                <span className="block text-sm text-slate-700">课程主题</span>
+                <span className="block text-xs text-slate-400">
+                  {form.topic.trim() ? '把这份主题套用过去' : '本回访主题为空，无可套用'}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-xl p-2.5 ring-1 ring-slate-100 bg-white cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-500"
+                checked={copyPerformance}
+                onChange={(e) => setCopyPerformance(e.target.checked)}
+                disabled={!form.performance.trim()}
+              />
+              <span className="flex-1">
+                <span className="block text-sm text-slate-700">课堂表现</span>
+                <span className="block text-xs text-slate-400">
+                  {form.performance.trim() ? '把这份表现套用过去' : '本回访表现为空，无可套用'}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-xl p-2.5 ring-1 ring-slate-100 bg-white cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-500"
+                checked={copyContent}
+                onChange={(e) => setCopyContent(e.target.checked)}
+                disabled={!content.trim()}
+              />
+              <span className="flex-1">
+                <span className="block text-sm text-slate-700">回访内容</span>
+                <span className="block text-xs text-slate-400">
+                  {content.trim() ? '把这份内容套用过去' : '本回访内容为空，无可套用'}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-xl p-2.5 ring-1 ring-slate-100 bg-white cursor-pointer hover:bg-slate-50">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-brand-500"
+                checked={copyMastery}
+                onChange={(e) => setCopyMastery(e.target.checked)}
+                disabled={!form.mastery.trim()}
+              />
+              <span className="flex-1">
+                <span className="block text-sm text-slate-700">掌握程度</span>
+                <span className="block text-xs text-slate-400">
+                  {form.mastery.trim() ? '把这份掌握程度套用过去' : '本回访掌握程度为空，无可套用'}
+                </span>
+              </span>
+            </label>
+            <p className="text-xs text-slate-400">
+              图片/学生姓名/年级学科等各自不同的字段不会被套用。
+            </p>
+          </div>
+
+          {/* 同班同学列表 */}
+          <div>
+            <p className="mb-1.5 text-xs font-medium text-slate-500">同班同学</p>
+            {loadingClassmates ? (
+              <p className="text-xs text-slate-400">查询中…</p>
+            ) : classmates.length === 0 ? (
+              <p className="text-xs text-slate-400">
+                没有同班同学。只有同年级·学科·学期的回访才会出现在这里。
+              </p>
+            ) : (
+              <ul className="max-h-40 space-y-1 overflow-auto">
+                {classmates.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs">
+                    <span className="text-slate-700">{c.studentName}</span>
+                    <span className="text-slate-400">
+                      {c.hasTopic ? '有主题' : '无主题'} · {c.hasPerformance ? '有表现' : '无表现'} ·
+                      {c.hasContent ? '有内容' : '无内容'} · {c.hasMastery ? '有掌握' : '无掌握'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </Modal>
 
       {/* 移动端抽屉遮罩 */}
       {showHistoryPanel && (

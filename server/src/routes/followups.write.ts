@@ -249,6 +249,113 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
   }
 });
 
+/**
+ * 班级批量复用（回访版）：把一份回访的主题/表现/内容批量复制到同班同学。
+ *
+ * 同一个班的学生（同 grade + subject + term），课后回访的「课程主题」「课堂表现」「回访内容」高度相似。
+ * 老师写好一份后，可以把相同部分批量套用到同班其他学生，再逐个微调个性部分，省去重复写。
+ * 只覆盖 topic/performance/content/mastery（个性化部分），不碰 student_id/student_name/grade/subject/图片等各自不同的字段。
+ * 空内容不覆盖（避免把别人已写的内容清空）。
+ */
+router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的回访 id' });
+
+    const copyTopic = !!req.body?.topic;
+    const copyPerformance = !!req.body?.performance;
+    const copyContent = !!req.body?.content;
+    const copyMastery = !!req.body?.mastery;
+    if (!copyTopic && !copyPerformance && !copyContent && !copyMastery) {
+      return res.status(400).json({ error: '请至少勾选一项要复制的字段' });
+    }
+
+    const source = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    if (!source) return res.status(404).json({ error: '回访记录不存在' });
+
+    // 空内容不覆盖，避免清空别人的
+    if (copyTopic && !String(source.topic || '').trim()) return res.status(400).json({ error: '本回访的主题为空，无法复制' });
+    if (copyPerformance && !String(source.performance || '').trim()) return res.status(400).json({ error: '本回访的课堂表现为空，无法复制' });
+    if (copyContent && !String(source.content || '').trim()) return res.status(400).json({ error: '本回访的回访内容为空，无法复制' });
+    if (copyMastery && !String(source.mastery || '').trim()) return res.status(400).json({ error: '本回访的掌握程度为空，无法复制' });
+
+    // 同班同学：同 grade+subject+term，排除自己
+    const targets = db
+      .prepare(
+        `SELECT id FROM followups
+         WHERE user_id = ? AND id != ?
+           AND grade = ? AND subject = ? AND term = ?
+           AND student_id IS NOT NULL`
+      )
+      .all(userId, id, source.grade, source.subject, source.term) as { id: number }[];
+
+    if (!targets.length) {
+      return res.json({ updated: 0, studentIds: [], message: '没有同班同学（同 grade+subject+term）可复制' });
+    }
+
+    let updated = 0;
+    const updateOne = db.prepare(
+      `UPDATE followups SET
+         topic = ?, performance = ?, content = ?, mastery = ?,
+         word_count = ?, updated_at = datetime('now', '+8 hours')
+       WHERE id = ? AND user_id = ?`
+    );
+    for (const t of targets) {
+      const cur = db.prepare('SELECT topic, performance, content, mastery FROM followups WHERE id = ? AND user_id = ?').get(t.id, userId) as any;
+      const newTopic = copyTopic ? source.topic : cur.topic;
+      const newPerformance = copyPerformance ? source.performance : cur.performance;
+      const newContent = copyContent ? source.content : cur.content;
+      const newMastery = copyMastery ? source.mastery : cur.mastery;
+      const wordCount = copyContent ? String(newContent || '').length : String(cur.content || '').length;
+      updateOne.run(newTopic, newPerformance, newContent, newMastery, wordCount, t.id, userId);
+      updated++;
+    }
+
+    res.json({ updated, studentIds: targets.map((t) => t.id) });
+  } catch (error: any) {
+    res.status(500).json({ error: '套用到同班失败', message: error.message });
+  }
+});
+
+/**
+ * 列出同班同学（同 grade+subject+term），用于前端确认复制对象。
+ */
+router.get('/:id/classmates', (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的回访 id' });
+
+    const source = db.prepare('SELECT grade, subject, term FROM followups WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    if (!source) return res.status(404).json({ error: '回访记录不存在' });
+
+    const rows = db
+      .prepare(
+        `SELECT f.id, f.student_id, f.student_name, f.topic, f.performance, f.content, f.mastery, f.created_at
+         FROM followups f
+         WHERE f.user_id = ? AND f.id != ?
+           AND f.grade = ? AND f.subject = ? AND f.term = ?
+         ORDER BY f.student_name`
+      )
+      .all(userId, id, source.grade, source.subject, source.term) as any[];
+
+    const classmates = rows.map((r) => ({
+      id: Number(r.id),
+      studentId: Number(r.student_id),
+      studentName: String(r.student_name || ''),
+      hasTopic: !!String(r.topic || '').trim(),
+      hasPerformance: !!String(r.performance || '').trim(),
+      hasContent: !!String(r.content || '').trim(),
+      hasMastery: !!String(r.mastery || '').trim(),
+      createdAt: String(r.created_at || ''),
+    }));
+    res.json({ classmates });
+  } catch (error: any) {
+    res.status(500).json({ error: '查询同班同学失败', message: error.message });
+  }
+});
+
 // 删除回访
 router.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
   try {
