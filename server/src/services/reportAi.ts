@@ -61,6 +61,20 @@ export interface ReportAiParams {
    * 得纵向聚合。按月份倒序，text 是该月 summary_intro 全文。
    */
   recentSummaries?: { yearMonth: string; text: string }[];
+
+  /**
+   * ③ 观察记录素材：当月听评课记录，供总结/规划参考课堂细节
+   * 老师不需要重复回忆，AI 直接用观察记录里的 class_notes / report 写总结
+   */
+  observations?: {
+    topic: string;
+    classNotes: string;
+    report: string;
+    observedAt: string;
+    grade: string;
+    subject: string;
+    lessonType: string;
+  }[];
 }
 
 function who(p: ReportAiParams): string {
@@ -164,6 +178,22 @@ function followUpLines(items: ReportAiFollowUp[]): string {
     .join('\n\n');
 }
 
+/** 观察记录素材：听评课记录的课堂细节 */
+function observationsLines(items: ReportAiParams['observations']): string {
+  if (!items?.length) return '（没有观察记录）';
+  return items
+    .map((o) => {
+      const parts = [];
+      if (o.topic) parts.push('主题：' + o.topic);
+      if (o.classNotes) parts.push('课堂记录：' + o.classNotes);
+      if (o.report) parts.push('听课报告：' + o.report);
+      if (o.lessonType) parts.push('课型：' + o.lessonType);
+      if (o.observedAt) parts.push('听课时间：' + o.observedAt.slice(0, 10));
+      return '【听评课】' + parts.join(' | ');
+    })
+    .join('\n\n');
+}
+
 /**
  * 上月总结区块。核心价值是「连续叙事」：上个月提过的问题，
  * 这个月有没有改善——这是家长最关心的，也是单月素材给不出来的。
@@ -234,6 +264,10 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
     '# 这个学生最近的课后回访（收获 / 进步 / 不足的素材）',
     followUpLines(p.followUps),
     '',
+    // ③ 观察记录素材：当月听评课记录，提供课堂细节素材
+    '# 这个学生当月的听评课记录（课堂细节素材）',
+    observationsLines(p.observations),
+    '',
     ...prevSummarySection(p.prevSummary),
     ...recentSummariesSection(p.recentSummaries),
     '# 硬性要求',
@@ -297,6 +331,10 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
     // 趋势用进规划：规划不只针对本月不足，还针对「近几个月反复出现的不足」
     // 给更有针对性的安排（比如独立性连续三个月不足，下月就该安排独立性训练）
     ...recentSummariesSection(p.recentSummaries),
+    // ③ 观察记录素材：当月听评课记录，提供课堂细节素材给规划参考
+    '# 这个学生当月的听评课记录（课堂细节素材，规划时可参考）',
+    observationsLines(p.observations),
+    '',
     followUpImages.length > 0 ? [
       '# 本月回访中的图片素材（作业、试卷、练习本等，供针对性规划参考）',
       followUpImages.map((img, i) => `${i + 1}. ${img}`).join('\n'),

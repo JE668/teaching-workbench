@@ -105,6 +105,26 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     )
     .all(userId, report.student_id, ym) as { year_month: string; summary_intro: string }[];
 
+  // ③ 观察记录↔月度报告打通：把当月的听评课记录也作为 AI 素材
+  // 同一学生、同一月份的观察记录，提供课堂细节素材，避免老师重复回忆
+  const observations = db
+    .prepare(
+      `SELECT topic, class_notes, report, observed_at, grade, subject, lesson_type
+       FROM observations
+       WHERE user_id = ? AND student_name = ? AND observed_at LIKE ? || '-%'
+       ORDER BY observed_at DESC, id DESC
+       LIMIT 6`
+    )
+    .all(userId, String(report.student_name || ''), ym) as {
+    topic: string;
+    class_notes: string;
+    report: string;
+    observed_at: string;
+    grade: string;
+    subject: string;
+    lesson_type: string;
+  }[];
+
   const params: ReportAiParams = {
     field: field as ReportAiField,
     studentName: String(report.student_name || ''),
@@ -118,6 +138,16 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     followUps: followUps.map(f => ({ topic: f.topic, content: f.content, images: f.images ? JSON.parse(f.images) : [] })),
     prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
     recentSummaries: recentRows.map((r) => ({ yearMonth: String(r.year_month || ''), text: String(r.summary_intro || '') })),
+    // ③ 观察记录素材：当月听评课记录，供总结/规划参考课堂细节
+    observations: observations.map(o => ({
+      topic: o.topic,
+      classNotes: o.class_notes,
+      report: o.report,
+      observedAt: o.observed_at,
+      grade: o.grade,
+      subject: o.subject,
+      lessonType: o.lesson_type,
+    })),
   };
 
   const sse = openSse(req, res);
