@@ -78,6 +78,10 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
         return res.status(400).json({ error: '请选择学段（高中 / 小初）' });
       }
       const dryRun = req.body?.dryRun === '1' || req.body?.dryRun === 1;
+      // 新增：冲突处理策略
+      // - 'skip'（默认）：遇到重复直接跳过，不修改已有记录
+      // - 'update'：遇到重复时更新现有记录的 type、score、difficulty、impact、textbook、section 等字段
+      const onConflict = (req.body?.onConflict as string) || 'skip';
 
       const buffer = file.buffer;
       const digest = sha256(buffer);
@@ -89,6 +93,8 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
         subject: s.subject,
         courses: s.courses,
         error: s.error,
+        rowCount: s.rowCount,
+        trackCount: s.trackCount,
       }));
 
       if (dryRun) {
@@ -113,8 +119,8 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
 
       const importId = db
         .prepare(
-          `INSERT INTO catalog_imports (user_id, band, filename, file_sha256, courses_total, courses_imported, courses_duplicated, failed_sheets)
-           VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,
+          `INSERT INTO catalog_imports (user_id, band, filename, file_sha256, courses_total, courses_imported, courses_duplicated, courses_updated, failed_sheets)
+           VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?)`,
         )
         .run(userId, band, filename, digest, parsed.courses.length, JSON.stringify(parsed.failedSheets))
         .lastInsertRowid as number;
@@ -127,7 +133,7 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
 
       let imported = 0;
       let duplicated = 0;
-      // 语句在请求时才 prepare：模块加载时数据库可能还没初始化
+      let updated = 0;
       const insertCourse = db.prepare(`
         INSERT INTO course_catalog
           (user_id, import_id, band, term, grade, subject, track, seq, content,
@@ -136,11 +142,35 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
           (@user_id, @import_id, @band, @term, @grade, @subject, @track, @seq, @content,
            @type, @score, @difficulty, @impact, @textbook, @section, @sheet, @source_row)
       `);
+      // 更新已有记录的可变字段（不改 band/grade/subject/track/term/seq/content 这几个主键列）
+      const updateCourse = db.prepare(`
+        UPDATE course_catalog
+        SET type = @type, score = @score, difficulty = @difficulty, impact = @impact,
+            textbook = @textbook, section = @section, sheet = @sheet, source_row = @source_row,
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = @id
+      `);
+
       const tx = db.transaction(() => {
         for (const c of parsed.courses) {
           const exists = findExisting.get(c.band, c.grade, c.subject, c.track, c.term, c.seq, c.content) as { id: number } | undefined;
           if (exists) {
-            duplicated++;
+            if (onConflict === 'update') {
+              updateCourse.run({
+                id: exists.id,
+                type: c.type,
+                score: c.score,
+                difficulty: c.difficulty,
+                impact: c.impact,
+                textbook: c.textbook,
+                section: c.section,
+                sheet: c.sheet,
+                source_row: c.sourceRow,
+              });
+              updated++;
+            } else {
+              duplicated++;
+            }
             continue;
           }
           insertCourse.run({
@@ -167,8 +197,8 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
       });
       tx();
 
-      db.prepare('UPDATE catalog_imports SET courses_imported = ?, courses_duplicated = ? WHERE id = ?')
-        .run(imported, duplicated, importId);
+      db.prepare('UPDATE catalog_imports SET courses_imported = ?, courses_duplicated = ?, courses_updated = ? WHERE id = ?')
+        .run(imported, duplicated, updated, importId);
 
       res.json({
         importId,
@@ -178,6 +208,7 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
         coursesTotal: parsed.courses.length,
         coursesImported: imported,
         coursesDuplicated: duplicated,
+        coursesUpdated: updated,
         failedSheets: parsed.failedSheets,
         sheets: preview,
       });

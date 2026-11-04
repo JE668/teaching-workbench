@@ -391,6 +391,7 @@ export function initDatabase() {
       courses_total INTEGER NOT NULL DEFAULT 0,
       courses_imported INTEGER NOT NULL DEFAULT 0,
       courses_duplicated INTEGER NOT NULL DEFAULT 0,
+      courses_updated INTEGER NOT NULL DEFAULT 0,
       failed_sheets TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -496,6 +497,7 @@ export function initDatabase() {
 
   // 内置课程目录标记：机构级参考数据随镜像发版，所有账号共享，不能被删除
   ensureColumn('catalog_imports', 'is_builtin', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('catalog_imports', 'courses_updated', 'INTEGER NOT NULL DEFAULT 0');
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');
@@ -508,6 +510,8 @@ export function initDatabase() {
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_user ON followups(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_student ON followups(student_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_created ON followups(created_at DESC)');
+  // 复合索引：优化「我的回访列表」分页查询 WHERE user_id=? ORDER BY created_at DESC, id DESC
+  db.exec('CREATE INDEX IF NOT EXISTS idx_followups_user_created_id ON followups(user_id, created_at DESC, id DESC)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_followups_batch ON followups(batch_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_teachers_user ON teachers(user_id)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_user_name ON teachers(user_id, name)');

@@ -117,6 +117,7 @@ type ImportResult = {
   coursesTotal?: number;
   coursesImported?: number;
   coursesDuplicated?: number;
+  coursesUpdated?: number;
   failedSheets?: string[];
   sheets?: SheetSummary[];
 };
@@ -392,6 +393,7 @@ export default function Catalog() {
   const [importOpen, setImportOpen] = useState(false);
   const [band, setBand] = useState('高中');
   const [pickedFile, setPickedFile] = useState<File | null>(null);
+  const [onConflict, setOnConflict] = useState<'skip' | 'update'>('skip');
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -461,6 +463,7 @@ export default function Catalog() {
     const fd = new FormData();
     fd.append('file', pickedFile);
     fd.append('band', band);
+    fd.append('onConflict', onConflict);
     if (dryRun) fd.append('dryRun', '1');
 
     setImporting(true);
@@ -469,7 +472,10 @@ export default function Catalog() {
       const res = await api.upload<ImportResult>('/catalog/import', fd);
       setImportResult(res);
       if (!dryRun) {
-        toast.success('导入完成，新增 ' + res.coursesImported + ' 条课程');
+        const parts = ['新增 ' + res.coursesImported + ' 条'];
+        if (res.coursesDuplicated) parts.push('跳过重复 ' + res.coursesDuplicated + ' 条');
+        if (res.coursesUpdated) parts.push('更新 ' + res.coursesUpdated + ' 条');
+        toast.success('导入完成，' + parts.join('、') + '课程');
         await reload();
       }
     } catch (e: any) {
@@ -1028,19 +1034,28 @@ export default function Catalog() {
               onChange={(e) => setBand(e.target.value)}
               options={BANDS}
             />
-            <div>
-              <span className="mb-1 block text-sm font-medium text-slate-700">
-                Excel 文件 <span className="text-red-400">*</span>
-              </span>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx"
-                className="block w-full text-sm text-slate-500 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-600 hover=file:bg-brand-100"
-                onChange={(e) => setPickedFile(e.target.files?.[0] || null)}
-                data-testid="catalog-file-input"
-              />
-            </div>
+            <Select
+              label="重复课程怎么处理"
+              value={onConflict}
+              onChange={(e) => setOnConflict(e.target.value as 'skip' | 'update')}
+              options={[
+                { value: 'skip', label: '跳过（保留原记录）' },
+                { value: 'update', label: '更新（同步类型、难度等字段）' },
+              ]}
+            />
+          </div>
+          <div>
+            <span className="mb-1 block text-sm font-medium text-slate-700">
+              Excel 文件 <span className="text-red-400">*</span>
+            </span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx"
+              className="block w-full text-sm text-slate-500 file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-brand-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-brand-600 hover=file:bg-brand-100"
+              onChange={(e) => setPickedFile(e.target.files?.[0] || null)}
+              data-testid="catalog-file-input"
+            />
           </div>
 
           {pickedFile && (
