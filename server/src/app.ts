@@ -23,6 +23,7 @@ import observationRoutes from './routes/observations.js';
 import catalogRoutes from './routes/catalog.js';
 import reportRoutes from './routes/reports.js';
 import reportAiRoutes from './routes/reports.ai.js';
+import aiMetricsRoutes from './routes/aiMetrics.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -187,6 +188,7 @@ export function createApp() {
   app.use('/api/catalog', authMiddleware, catalogRoutes);
   app.use('/api/reports', authMiddleware, reportRoutes);
   app.use('/api/reports', authMiddleware, reportAiRoutes);
+  app.use('/api/ai-metrics', authMiddleware, aiMetricsRoutes);
   app.use('/api/draft', authMiddleware, draftRoutes);
   app.use('/api/draft', authMiddleware, draftHistoryRoutes);
   app.use('/api', authMiddleware, uploadRoutes);

@@ -32,6 +32,7 @@ import {
   Save,
   ClipboardList,
   BookOpen,
+  BarChart3,
 } from 'lucide-react';
 
 // 路由级按需加载：各页面独立分包，进入哪个页面才下载哪个。
@@ -51,6 +52,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Catalog = lazy(() => import('./pages/Catalog'));
 const Reports = lazy(() => import('./pages/Reports'));
 const ReportEdit = lazy(() => import('./pages/ReportEdit'));
+const AiMetrics = lazy(() => import('./pages/AiMetrics'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -109,6 +111,7 @@ function AppRoutes() {
           <Route path="catalog" element={<Catalog />} />
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:id" element={<ReportEdit />} />
+          <Route path="ai-metrics" element={<AiMetrics />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -197,6 +200,7 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
     { id: 'nav-followups', label: '课后回访', description: '撰写/生成回访', shortcut: 'G F', group: '导航', icon: <ClipboardList className="h-4 w-4" />, onSelect: () => navigate('/followups'), keywords: ['回访', '反馈', '家长'] },
     { id: 'nav-observations', label: '听评课', description: '课堂观察与评课', shortcut: 'G O', group: '导航', icon: <Eye className="h-4 w-4" />, onSelect: () => navigate('/observations'), keywords: ['听课', '评课', '观察'] },
     { id: 'nav-catalog', label: '课程目录', description: '管理课程规划目录', shortcut: 'G C', group: '导航', icon: <BookOpen className="h-4 w-4" />, onSelect: () => navigate('/catalog'), keywords: ['目录', '课程', '规划'] },
+    { id: 'nav-ai-metrics', label: 'AI 指标看板', description: '查看 AI 调用成本/性能/错误', shortcut: 'G M', group: '导航', icon: <BarChart3 className="h-4 w-4" />, onSelect: () => navigate('/ai-metrics'), keywords: ['AI', '指标', '成本', '性能', '错误'] },
     { id: 'nav-settings', label: '设置', description: 'AI 模型、偏好、密码', shortcut: 'G P', group: '导航', icon: <SettingsIcon className="h-4 w-4" />, onSelect: () => navigate('/settings'), keywords: ['设置', '配置', 'AI', '模型'] },
 
     // 动作组

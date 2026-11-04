@@ -8,6 +8,7 @@ import {
   Eye,
   BookOpen,
   CalendarRange,
+  BarChart3,
   LogOut,
   GraduationCap,
   Sparkles,
@@ -27,6 +28,7 @@ const navItems = [
   { to: '/observations', label: '听评课', icon: Eye },
   { to: '/catalog', label: '课程目录', icon: BookOpen },
   { to: '/reports', label: '月度总结规划', icon: CalendarRange },
+  { to: '/ai-metrics', label: 'AI 指标看板', icon: BarChart3 },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 
