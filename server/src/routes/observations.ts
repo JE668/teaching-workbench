@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { db } from '../config/database.js';
-import { AuthenticatedRequest } from '../types/index.js';
+import { AuthenticatedRequest, OverallGrade } from '../types/index.js';
 import { validateBody } from '../utils/validation.js';
 import { observationCreateSchema, observationUpdateSchema } from '../utils/schemas.js';
 import {
@@ -23,12 +23,76 @@ import { log } from '../utils/logger.js';
 
 const router = Router();
 
+/** observations 表完整行结构（SELECT * 返回的形状） */
+interface ObservationRow {
+  id: number;
+  user_id: number;
+  teacher_id: number | null;
+  topic: string;
+  lesson_type: string | null;
+  observed_at: string | null;
+  grade: string | null;
+  subject: string | null;
+  level: string | null;
+  student_name: string | null;
+  class_notes: string | null;
+  report: string | null;
+  report_at: string | null;
+  overall_grade: string | null;
+  status: string;
+  teacher_reply: string | null;
+  created_at: string;
+  updated_at: string;
+  course_id: number | null;
+}
+
+/** fetchWithTeacher 返回行：observations.* + teacher_name（LEFT JOIN 可能为 NULL） */
+interface ObservationWithTeacherRow extends ObservationRow {
+  teacher_name: string | null;
+}
+
+/** /teacher-stats 聚合行 */
+interface TeacherStatsRow {
+  teacher_id: number;
+  teacher_name: string;
+  subject: string | null;
+  obs_count: number;
+  last_observed: string | null;
+  g_excellent: number;
+  g_good: number;
+  g_pass: number;
+  g_needs: number;
+  g_ungraded: number;
+}
+
+/** /reply-loop 聚合行 */
+interface ReplyLoopRow {
+  pending: number;
+  awaiting: number;
+  replied: number;
+  total: number;
+}
+
+/** /coverage 聚合行 */
+interface CoverageRow {
+  teacher_id: number;
+  teacher_name: string;
+  subject: string | null;
+  window_count: number;
+  last_observed: string | null;
+}
+
+/** 把库里存的等级串安全收窄为 OverallGrade；非法值回落 null */
+function toGrade(v: string | null | undefined): OverallGrade | null {
+  return v === 'excellent' || v === 'good' || v === 'pass' || v === 'needs_work' ? v : null;
+}
+
 const STATUS_VALUES = new Set(['draft', 'sent', 'archived']);
 
 /** 手工保存评课报告的长度上限（和生成时的 max_tokens 同量级，防误贴大段无关文本） */
 const MAX_REPORT_LEN = 12000;
 
-function fetchWithTeacher(userId: number, id: number): any | undefined {
+function fetchWithTeacher(userId: number, id: number): ObservationWithTeacherRow | undefined {
   return db
     .prepare(
       `SELECT o.*, t.name AS teacher_name
@@ -36,7 +100,7 @@ function fetchWithTeacher(userId: number, id: number): any | undefined {
          LEFT JOIN teachers t ON t.id = o.teacher_id
          WHERE o.id = ? AND o.user_id = ?`
     )
-    .get(id, userId);
+    .get(id, userId) as ObservationWithTeacherRow | undefined;
 }
 
 /** 校验 teacherId 归属当前用户（不传/传 null 视为"未关联老师"） */
@@ -133,7 +197,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
           WHERE ${clauses.join(' AND ')}
           ORDER BY o.observed_at IS NULL, date(o.observed_at) DESC, o.id DESC`
       )
-      .all(...params) as any[];
+      .all(...params) as ObservationWithTeacherRow[];
 
     res.json({ observations: mapObservations(rows) });
   } catch (error: any) {
@@ -227,7 +291,7 @@ router.get('/teacher-stats', (req: AuthenticatedRequest, res: Response) => {
          ${having}
          ORDER BY last_observed IS NULL, last_observed DESC, obs_count DESC`
       )
-      .all(...joinParams, ...whereParams) as any[];
+      .all(...joinParams, ...whereParams) as TeacherStatsRow[];
 
     const teachers = rows.map((r) => ({
       teacherId: r.teacher_id,
@@ -263,7 +327,7 @@ router.get('/reply-metrics', (req: AuthenticatedRequest, res: Response) => {
           FROM observations
          WHERE user_id = ?`
       )
-      .get(userId) as any;
+      .get(userId) as ReplyLoopRow | undefined;
 
     res.json({
       pending: Number(row?.pending || 0),
@@ -301,7 +365,7 @@ router.get('/coverage', (req: AuthenticatedRequest, res: Response) => {
          WHERE t.user_id = ?
          GROUP BY t.id`
       )
-      .all(from, to, userId, userId) as any[];
+      .all(from, to, userId, userId) as CoverageRow[];
 
     // 「几天没听过课」按北京日历日算，不能拿 UTC 毫秒做差：
     // observed_at 是用户填的日期串，Date.now() 是 UTC 时刻，两者直接相减
@@ -361,7 +425,7 @@ router.put('/:id', validateBody(observationUpdateSchema), (req: AuthenticatedReq
   try {
     const userId = req.userId!;
     const id = parseInt(req.params.id, 10);
-    const existing = db.prepare('SELECT * FROM observations WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    const existing = db.prepare('SELECT * FROM observations WHERE id = ? AND user_id = ?').get(id, userId) as ObservationRow | undefined;
     if (!existing) return res.status(404).json({ error: '听评课记录不存在' });
 
     const f = readFields(req.body, userId);
@@ -430,15 +494,15 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
     const chosenGrade = normalizeOverallGrade(req.body?.overallGrade);
     const report = await runObservationGeneration(req.userId!, {
       teacherName: row.teacher_name || (row.teacher_id ? '老师' : '被听课老师'),
-      topic: row.topic,
+      topic: row.topic || '',
       lessonTypeLabel: LESSON_TYPE_LABELS[normalizeLessonType(row.lesson_type)] || '其他',
       observedAt: row.observed_at,
       grade: row.grade,
       subject: row.subject,
       level: row.level,
       studentName: row.student_name,
-      classNotes: row.class_notes,
-      overallGrade: chosenGrade ?? row.overall_grade ?? null,
+      classNotes: row.class_notes || '',
+      overallGrade: chosenGrade ?? toGrade(row.overall_grade),
     });
 
     const suggested = parseSuggestedGrade(report);
@@ -490,15 +554,15 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
     const chosenGrade = normalizeOverallGrade(req.body?.overallGrade);
     const params = {
       teacherName: row.teacher_name || (row.teacher_id ? '老师' : '被听课老师'),
-      topic: row.topic,
+      topic: row.topic || '',
       lessonTypeLabel: LESSON_TYPE_LABELS[normalizeLessonType(row.lesson_type)] || '其他',
       observedAt: row.observed_at,
       grade: row.grade,
       subject: row.subject,
       level: row.level,
       studentName: row.student_name,
-      classNotes: row.class_notes,
-      overallGrade: chosenGrade ?? row.overall_grade ?? null,
+      classNotes: row.class_notes || '',
+      overallGrade: chosenGrade ?? toGrade(row.overall_grade),
     };
 
     let full = '';
@@ -539,7 +603,7 @@ router.patch('/:id/report', (req: AuthenticatedRequest, res: Response) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: '听评课记录 ID 无效' });
 
-    const existing = db.prepare('SELECT id FROM observations WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    const existing = db.prepare('SELECT id FROM observations WHERE id = ? AND user_id = ?').get(id, userId) as { id: number } | undefined;
     if (!existing) return res.status(404).json({ error: '听评课记录不存在' });
 
     const report = typeof req.body?.report === 'string' ? req.body.report : '';
@@ -564,7 +628,7 @@ router.get('/:id/docx', async (req: AuthenticatedRequest, res: Response) => {
 
     // 评课人签名：优先用「设置」里填的签名，没填则回落登录用户名
     const pref = readPreferences(userId);
-    const me = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+    const me = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
     const signature = (pref.signature || (me?.username ? String(me.username) : '')).trim();
 
     const parsed = parseObservationReport(row.report);

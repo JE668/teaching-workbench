@@ -329,7 +329,7 @@ Internet → 域名 → Lucky (反代+SSL)
 
 | 层级 | 技术 | 用例数 | 命令 |
 |------|------|--------|------|
-| 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 671 | `cd server && npm test` |
+| 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 728 | `cd server && npm test` |
 | 前端 | Vitest + Testing Library + jsdom | 422 | `cd web && npm test` |
 | 端到端 | Playwright（复用系统 Chrome，串行执行） | 66 | `cd web && npm run e2e:full` |
 
@@ -337,6 +337,34 @@ Internet → 域名 → Lucky (反代+SSL)
 > **任一环节失败都不会发布镜像。**
 > push 前可本地跑齐 CI 的静态守护（模板入镜像 / 时区 / engines /
 > shared 副本一致性 / compose 与示例 .env 对齐）：`bash scripts/check-deploy-assets.sh`
+
+### E2E 本地一键跑法
+
+```bash
+# 一键：清空 e2e 专用库 → typecheck → 构建前后端 → 跑全部 66 个用例
+cd web && npm run e2e:full
+```
+
+前置条件只有两个：系统装了 Chrome（用例走 `channel: 'chrome'`，不下载 Playwright 浏览器），
+且 3111 / 3999 / 4173 三个端口没被占用（`e2e:full` 会先自动杀掉残留进程）。
+
+跑完报告在 `web/playwright-report/index.html`，浏览器打开即可看每步截图与 trace。
+
+```bash
+# 只跑某个场景（文件名匹配）
+cd web && npx playwright test specs/reports.spec.ts
+
+# 跳过重建，直接用上次的构建产物（改完用例快速迭代时用）
+cd web && npm run e2e
+
+# 有头模式，肉眼看浏览器操作
+cd web && npx playwright test --headed specs/auth.spec.ts
+```
+
+E2E 用独立的 `server/.e2e-data` 数据库（`E2E_FRESH_DB=1` 每轮全量重建），
+AI 走 `e2e/mock-sensenova.cjs` 模拟流式协议——**不碰开发数据、不耗真实额度**。
+三个服务（模拟 AI :3999 → 后端 :3111 → 前端 preview :4173）由 Playwright `webServer`
+自动拉起、跑完自动回收，不需要手动起任何进程。
 
 ### 后端测试覆盖
 
@@ -466,6 +494,20 @@ docker compose up -d
 新增列一律带 `DEFAULT`，因此**老数据无需手工干预**，已有记录会取默认值。
 实测：用旧版表结构建立数据库并写入数据后启动新版，
 列被自动补齐，老记录 `session_count` 为 1、`course_type` 为 `one_on_one`。
+
+### 版本化迁移（`server/src/migrations/`）
+
+跨版本的结构性变更（时区订正、表拆分、数据清洗）走版本化迁移，由 `runner.ts`
+在 `initDatabase()` 里自动执行：
+
+- **文件即迁移**：`YYYYMMDDHHMMSS_描述.ts`，按文件名升序应用，新迁移放进目录即生效；
+- **版本记录**：`PRAGMA user_version` 存当前进度（注意它是 32 位整数，存的是**序号**而非时间戳——时间戳超 int32 会静默归零，这是踩过的坑）；
+- **幂等**：每次启动只应用未执行的迁移，已应用的全部 skipped；
+- **事务**：每个迁移的 `up()` + 版本写入在同一个事务里，失败即回滚；
+- **回滚**：迁移可定义 `down()`，`migrateDown(序号)` 逆序回滚；数据清洗类迁移标记 `irreversible` 拒绝回滚。
+
+迁移与 `schema_migrations` 留痕表并存：一次性数据订正（时区、目录去重）用留痕表
+标记只跑一次，结构性变更用版本号管理。
 
 ## 移动端与效率优化
 

@@ -11,13 +11,22 @@ import { mapTeacher, mapTeachers } from '../utils/mappers.js';
  */
 const router = Router();
 
+/** teachers 表完整行结构 */
+interface TeacherRow {
+  id: number;
+  user_id: number;
+  name: string;
+  subject: string | null;
+  created_at: string;
+}
+
 const MAX_NAME = 30;
 
 router.get('/', (req: AuthenticatedRequest, res) => {
   try {
     const rows = db
       .prepare('SELECT * FROM teachers WHERE user_id = ? ORDER BY name, id')
-      .all(req.userId!) as any[];
+      .all(req.userId!) as TeacherRow[];
     res.json({ teachers: mapTeachers(rows) });
   } catch (error: any) {
     res.status(500).json({ error: '获取老师列表失败', message: error.message });
@@ -36,7 +45,7 @@ router.post('/', validateBody(teacherCreateSchema), (req: AuthenticatedRequest, 
 
     const existing = db
       .prepare('SELECT * FROM teachers WHERE user_id = ? AND name = ?')
-      .get(userId, name) as any;
+      .get(userId, name) as TeacherRow | undefined;
     if (existing) {
       // 顺带补一下主教科目（若之前没填）
       if (subject) {

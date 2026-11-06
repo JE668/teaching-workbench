@@ -30,16 +30,30 @@ function parseIds(raw: any): number[] {
  * 只返回该用户仍然存在的学生 id。
  * 学生被删除后分组里会留下悬空 id —— 读的时候顺手清理，避免前端勾选不上。
  */
+/** students 表精简投影 */
+interface StudentIdRow {
+  id: number;
+}
+
+/** groups 表完整行结构 */
+interface GroupRow {
+  id: number;
+  user_id: number;
+  name: string;
+  student_ids: string;
+  created_at: string;
+}
+
 function liveMemberIds(userId: number, ids: number[]): number[] {
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => '?').join(',');
   const rows = db
     .prepare('SELECT id FROM students WHERE user_id = ? AND id IN (' + placeholders + ')')
-    .all(userId, ...ids) as any[];
+    .all(userId, ...ids) as StudentIdRow[];
   return rows.map((r) => r.id);
 }
 
-function mapGroup(userId: number, row: any) {
+function mapGroup(userId: number, row: GroupRow) {
   const stored = parseIds(row.student_ids);
   const live = liveMemberIds(userId, stored);
 
@@ -59,7 +73,7 @@ router.get('/', (req: any, res) => {
   try {
     const rows = db
       .prepare('SELECT * FROM groups WHERE user_id = ? ORDER BY created_at DESC, id DESC')
-      .all(req.userId) as any[];
+      .all(req.userId) as GroupRow[];
 
     res.json({ groups: rows.map((r) => mapGroup(req.userId, r)) });
   } catch (error: any) {
@@ -91,7 +105,7 @@ router.post('/', validateBody(groupCreateSchema), (req: any, res) => {
       .prepare('INSERT INTO groups (user_id, name, student_ids) VALUES (?, ?, ?)')
       .run(userId, name, JSON.stringify(ids));
 
-    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(result.lastInsertRowid);
+    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(result.lastInsertRowid) as GroupRow;
     res.json({ group: mapGroup(userId, row) });
   } catch (error: any) {
     res.status(500).json({ error: '创建分组失败', message: error.message });
@@ -103,7 +117,7 @@ router.put('/:id', validateBody(groupUpdateSchema), (req: any, res) => {
   try {
     const userId = req.userId;
     const groupId = parseInt(req.params.id, 10);
-    const existing = db.prepare('SELECT * FROM groups WHERE id = ? AND user_id = ?').get(groupId, userId) as any;
+    const existing = db.prepare('SELECT * FROM groups WHERE id = ? AND user_id = ?').get(groupId, userId) as GroupRow | undefined;
     if (!existing) return res.status(404).json({ error: '分组不存在' });
 
     let name = existing.name;
@@ -132,7 +146,10 @@ router.put('/:id', validateBody(groupUpdateSchema), (req: any, res) => {
       userId
     );
 
-    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId);
+    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(groupId) as GroupRow | undefined;
+    if (!row) {
+      return res.status(404).json({ error: '分组不存在或已删除' });
+    }
     res.json({ group: mapGroup(userId, row) });
   } catch (error: any) {
     res.status(500).json({ error: '更新分组失败', message: error.message });

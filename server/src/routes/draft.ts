@@ -70,7 +70,8 @@ function broadcastPresence(userId: number) {
 const MAX_PAYLOAD = 512 * 1024; // 512KB，防止异常膨胀
 
 function readDraft(userId: number): { payload: any; updatedAt: string } | null {
-  const row = db.prepare('SELECT payload, updated_at FROM drafts WHERE user_id = ?').get(userId) as any;
+  const row = db.prepare('SELECT payload, updated_at FROM drafts WHERE user_id = ?').get(userId) as
+    { payload: string; updated_at: string } | undefined;
   if (!row) return null;
   try {
     return { payload: JSON.parse(row.payload), updatedAt: row.updated_at };

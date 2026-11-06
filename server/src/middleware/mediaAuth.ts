@@ -99,7 +99,7 @@ export function requireMediaAuth(req: Request, res: Response, next: NextFunction
   // 注意不能只写 Number(owner)：账户名（如 "admin"）会得到 NaN，
   // Number.isFinite 为 false 会把校验整个跳过 —— 等于对用户名目录不设防。
   const owner = String(req.params.owner ?? req.params.userId ?? '');
-  const me = db.prepare('SELECT username FROM users WHERE id = ?').get(auth.userId) as any;
+  const me = db.prepare('SELECT username FROM users WHERE id = ?').get(auth.userId) as { username: string } | undefined;
   const myUsername = me ? String(me.username || '') : '';
 
   const allowed =

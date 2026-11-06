@@ -11,7 +11,9 @@ import { db, initDatabase } from '../config/database.js';
  * （尤其是启动时批量灌 3589 条内置目录）都要白更新几棵 B-tree。
  */
 function indexColumns(name: string): string[] {
-  return (db.prepare('PRAGMA index_info(' + name + ')').all() as any[]).map((r) => r.name);
+  return (db.prepare('PRAGMA index_info(' + name + ')').all() as { name: string }[]).map(
+    (r) => r.name
+  );
 }
 
 function indexExists(name: string): boolean {
@@ -21,8 +23,8 @@ function indexExists(name: string): boolean {
   return row.n === 1;
 }
 
-before(() => {
-  initDatabase();
+before(async () => {
+  await initDatabase();
 });
 
 describe('课程目录索引', () => {
@@ -51,14 +53,14 @@ describe('课程目录索引', () => {
     ]);
   });
 
-  test('initDatabase 可重复执行，索引形状不变', () => {
-    initDatabase();
-    initDatabase();
+  test('initDatabase 可重复执行，索引形状不变', async () => {
+    await initDatabase();
+    await initDatabase();
     assert.deepEqual(indexColumns('idx_course_catalog_filter'), ['grade', 'subject', 'term']);
     assert.ok(!indexExists('idx_course_catalog_user'));
   });
 
-  test('旧库的 user_id 打头索引会被自动订正', () => {
+  test('旧库的 user_id 打头索引会被自动订正', async () => {
     // 模拟 #40 之前的库
     db.exec('DROP INDEX IF EXISTS idx_course_catalog_filter');
     db.exec(
@@ -71,8 +73,9 @@ describe('课程目录索引', () => {
       'term',
     ]);
 
-    initDatabase();
+    await initDatabase();
 
     assert.deepEqual(indexColumns('idx_course_catalog_filter'), ['grade', 'subject', 'term']);
+    assert.ok(!indexExists('idx_course_catalog_user'));
   });
 });

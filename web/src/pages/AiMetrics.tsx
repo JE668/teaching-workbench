@@ -115,7 +115,7 @@ function Sparkline({ data, color = 'brand', height = 40, metric = 'calls' }: {
   data: TimeSeriesPoint[];
   color?: 'brand' | 'emerald' | 'amber' | 'red';
   height?: number;
-  metric?: 'calls' | 'tokens' | 'latency' | 'success_rate';
+  metric?: 'calls' | 'tokens' | 'latency' | 'success_rate' | 'errors';
 }) {
   if (!data.length) return <div className={`h-${height} text-slate-300`} />;
   const values = data.map(d => {
@@ -123,6 +123,7 @@ function Sparkline({ data, color = 'brand', height = 40, metric = 'calls' }: {
       case 'tokens': return d.tokens;
       case 'latency': return d.avgLatencyMs;
       case 'success_rate': return d.successRate;
+      case 'errors': return d.errorCount;
       default: return d.calls;
     }
   });
@@ -249,7 +250,7 @@ export default function AiMetrics() {
   const [days, setDays] = useState('30');
   const [groupBy, setGroupBy] = useState('endpoint');
   const [interval, setInterval] = useState('day');
-  const [metric, setMetric] = useState('calls');
+  const [metric, setMetric] = useState<'calls' | 'tokens' | 'latency' | 'success_rate' | 'errors'>('calls');
   const [activeTab, setActiveTab] = useState<'overview' | 'endpoints' | 'timeseries' | 'errors'>('overview');
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [cleanupDays, setCleanupDays] = useState('90');
@@ -435,7 +436,7 @@ export default function AiMetrics() {
         {activeTab === 'timeseries' && (
           <>
             <Select value={interval} onChange={e => setInterval(e.target.value)} options={INTERVAL_OPTIONS} className="w-28" aria-label="时间粒度" />
-            <Select value={metric} onChange={e => setMetric(e.target.value)} options={METRIC_OPTIONS} className="w-36" aria-label="指标" />
+            <Select value={metric} onChange={e => setMetric(e.target.value as 'calls' | 'tokens' | 'latency' | 'success_rate' | 'errors')} options={METRIC_OPTIONS} className="w-36" aria-label="指标" />
           </>
         )}
       </div>
@@ -522,7 +523,7 @@ export default function AiMetrics() {
         <Card>
           <CardHeader title="趋势图" description={`按 ${INTERVAL_OPTIONS.find(o => o.value === interval)?.label} · ${METRIC_OPTIONS.find(o => o.value === metric)?.label}`} />
           <div className="h-72">
-            <Sparkline data={timeseries} color="brand" height={288} metric={metric as any} />
+            <Sparkline data={timeseries} color="brand" height={288} metric={metric} />
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatCard label="峰值调用" value={fmtNum(Math.max(...timeseries.map(d => d.calls)))} icon={<TrendingUp size={18} />} />

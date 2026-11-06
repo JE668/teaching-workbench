@@ -8,14 +8,60 @@ import { validateBody } from '../utils/validation.js';
 import { studentCreateSchema, studentUpdateSchema } from '../utils/schemas.js';
 import { parseSections } from '../utils/sections.js';
 
+interface StudentRow {
+  id: number;
+  user_id: number;
+  name: string;
+  grade: string;
+  subject: string;
+  phone: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 待回访查询行：StudentRow + 最近一次回访时间（LEFT JOIN 可能没有） */
+interface OverdueStudentRow extends StudentRow {
+  last_at: string | null;
+}
+
+interface FollowUpRow {
+  id: number;
+  user_id: number;
+  student_id: number | null;
+  student_name: string;
+  grade: string;
+  subject: string;
+  topic: string;
+  performance: string;
+  mastery: string;
+  session_count: number;
+  course_type: string;
+  module: string;
+  modules: string;
+  images: string;
+  content: string;
+  word_count: number;
+  batch_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LatestFollowUp {
+  student_id: number;
+  topic: string;
+  mastery: string;
+  content: string;
+}
+
 const router = Router();
 
 // 获取学生列表
 router.get('/', (req: any, res) => {
   try {
     const userId = req.userId;
-    const rows = db.prepare('SELECT * FROM students WHERE user_id = ? ORDER BY created_at DESC').all(userId);
-    res.json({ students: mapStudents(rows as any[]) });
+    const rows = db.prepare('SELECT * FROM students WHERE user_id = ? ORDER BY created_at DESC').all(userId) as StudentRow[];
+    res.json({ students: mapStudents(rows) });
   } catch (error: any) {
     res.status(500).json({ error: '获取学生列表失败', message: error.message });
   }
@@ -33,9 +79,9 @@ router.get('/search', (req: any, res) => {
 
     const rows = db.prepare(
       'SELECT * FROM students WHERE user_id = ? AND (name LIKE ? OR subject LIKE ? OR grade LIKE ?) ORDER BY created_at DESC'
-    ).all(userId, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    ).all(userId, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`) as StudentRow[];
 
-    res.json({ students: mapStudents(rows as any[]) });
+    res.json({ students: mapStudents(rows) });
   } catch (error: any) {
     res.status(500).json({ error: '搜索学生失败', message: error.message });
   }
@@ -51,7 +97,34 @@ router.get('/needs-followup', (req: any, res) => {
     const userId = req.userId;
     const days = Math.min(365, Math.max(1, parseInt(req.query.days as string, 10) || 7));
 
-    const rows = db
+    interface FollowUpRow {
+      id: number;
+      user_id: number;
+      student_id: number | null;
+      student_name: string;
+      grade: string;
+      subject: string;
+      topic: string;
+      performance: string;
+      mastery: string;
+      session_count: number;
+      course_type: string;
+      module: string;
+      images: string;
+      content: string;
+      word_count: number;
+      batch_id: string | null;
+      created_at: string;
+      updated_at: string;
+      last_at: string | null;
+    }
+
+    // created_at 统一存北京时间字符串（datetime('now','+8 hours')），
+      // new Date(...) 解析出来的 epoch 相当于「把北京墙上时钟当 UTC 解读」，
+      // 比真实时刻多 8 小时。所以这里的 now 也必须是同一个坐标系里的值，
+      // 否则在北京 00:00–08:00 之间会整整少算一天 —— 20 天未回访的提醒
+      // 会推迟 8 小时才触发。本仓库已修过两次同类问题。
+      const rows = db
       .prepare(
         `SELECT s.*, MAX(f.created_at) AS last_at
          FROM students s
@@ -61,31 +134,26 @@ router.get('/needs-followup', (req: any, res) => {
          HAVING last_at IS NULL OR last_at <= datetime('now', '+8 hours', ?)
          ORDER BY last_at IS NOT NULL, last_at ASC, s.created_at ASC`
       )
-      .all(userId, '-' + days + ' days') as any[];
+      .all(userId, '-' + days + ' days') as OverdueStudentRow[];
 
-    // created_at 统一存北京时间字符串（datetime('now','+8 hours')），
-    // new Date(...) 解析出来的 epoch 相当于「把北京墙上时钟当 UTC 解读」，
-    // 比真实时刻多 8 小时。所以这里的 now 也必须是同一个坐标系里的值，
-    // 否则在北京 00:00–08:00 之间会整整少算一天 —— 20 天未回访的提醒
-    // 会推迟 8 小时才触发。本仓库已修过两次同类问题。
     const now = Date.now() + 8 * 3_600_000;
     const students = rows.map((r) => {
-      const lastAt = r.last_at as string | null;
-      // SQLite 存的是北京时间字符串。必须显式按 UTC 解析（补一个 Z）：
-      // 不带偏移量的 datetime 串会被 JS 当成「runner 本地时间」，容器不是
-      // Asia/Shanghai 时就会整体偏移 —— 上面把 now 也挪到北京坐标系后，
-      // 两端就都在同一个坐标系里了。
-      const lastMs = lastAt ? Date.parse(lastAt.replace(' ', 'T') + 'Z') : null;
-      return {
-        ...mapStudent(r),
-        lastFollowUpAt: lastAt,
-        daysSince: lastMs ? Math.floor((now - lastMs) / 86400000) : null,
-        // 下面三个在"带出上次课后任务"时填充
-        lastTopic: null as string | null,
-        lastMastery: null as string | null,
-        lastTask: null as string | null,
-      };
-    });
+        const lastAt = r.last_at as string | null;
+        // SQLite 存的是北京时间字符串。必须显式按 UTC 解析（补一个 Z）：
+        // 不带偏移量的 datetime 串会被 JS 当成「runner 本地时间」，容器不是
+        // Asia/Shanghai 时就会整体偏移 —— 上面把 now 也挪到北京坐标系后，
+        // 两端就都在同一个坐标系里了。
+        const lastMs = lastAt ? Date.parse(lastAt.replace(' ', 'T') + 'Z') : null;
+        return {
+          ...mapStudent(r),
+          lastFollowUpAt: lastAt,
+          daysSince: lastMs ? Math.floor((now - lastMs) / 86400000) : null,
+          // 下面三个在"带出上次课后任务"时填充
+          lastTopic: null as string | null,
+          lastMastery: null as string | null,
+          lastTask: null as string | null,
+        };
+      });
 
     // 给「有过回访」的待回访学生带出最近一条的【课后任务】等，
     // 让老师点进表单前就知道上次布置了什么，不用再翻历史。
@@ -102,7 +170,7 @@ router.get('/needs-followup', (req: any, res) => {
              GROUP BY student_id
            )`
         )
-        .all(userId, ...ids) as any[];
+        .all(userId, ...ids) as LatestFollowUp[];
 
       const byStudent = new Map(latest.map((r) => [r.student_id, r]));
       for (const s of students) {
@@ -133,7 +201,7 @@ router.get('/:id/profile', (req: any, res) => {
 
     const followupRows = db.prepare(
       'SELECT * FROM followups WHERE user_id = ? AND student_id = ? ORDER BY created_at DESC'
-    ).all(userId, studentId) as any[];
+    ).all(userId, studentId) as FollowUpRow[];
 
     const followups = mapFollowUps(followupRows);
 
@@ -185,7 +253,7 @@ router.get('/:id/export', (req: any, res) => {
 
     const rows = db
       .prepare('SELECT * FROM followups ' + where + ' ORDER BY created_at ASC, id ASC')
-      .all(...params) as any[];
+      .all(...params) as FollowUpRow[];
 
     const student = mapStudent(studentRow);
     const followups = mapFollowUps(rows);
@@ -235,7 +303,7 @@ router.post('/', validateBody(studentCreateSchema), (req: any, res) => {
     // 关键：老师可能是"先写回访、后建档案"。
     // 建档时把同名且未关联的历史回访一并归位，
     // 否则这个学生的档案页里看不到自己过往的记录。
-    const { linked, skippedNames } = linkOrphansByName(userId, (row as any).name);
+    const { linked, skippedNames } = linkOrphansByName(userId, (row as StudentRow).name);
 
     res.json({
       student: mapStudent(row),
@@ -254,7 +322,7 @@ router.put('/:id', validateBody(studentUpdateSchema), (req: any, res) => {
     const studentId = parseInt(req.params.id);
     const { name, grade, subject, phone, notes } = req.body as StudentUpdate;
 
-    const existing = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId) as any;
+    const existing = db.prepare('SELECT * FROM students WHERE id = ? AND user_id = ?').get(studentId, userId) as StudentRow | undefined;
     if (!existing) {
       return res.status(404).json({ error: '学生不存在' });
     }
@@ -270,7 +338,10 @@ router.put('/:id', validateBody(studentUpdateSchema), (req: any, res) => {
       studentId
     );
 
-    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId) as any;
+    const row = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId) as StudentRow | undefined;
+    if (!row) {
+      return res.status(404).json({ error: '学生不存在' });
+    }
 
     // 改名后，用新名字再归位一次（老师可能一开始名字打错了）
     let linkedFollowUps = 0;

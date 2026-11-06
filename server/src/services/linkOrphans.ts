@@ -26,7 +26,7 @@ export function linkOrphansByName(userId: number, onlyName?: string): LinkResult
         .prepare(
           'SELECT DISTINCT student_name FROM followups WHERE user_id = ? AND student_id IS NULL'
         )
-        .all(userId) as any[]).map((r) => String(r.student_name || ''));
+        .all(userId) as { student_name: string | null }[]).map((r) => String(r.student_name || ''));
 
   const findStudents = db.prepare('SELECT id FROM students WHERE user_id = ? AND name = ?');
   const link = db.prepare(
@@ -40,7 +40,7 @@ export function linkOrphansByName(userId: number, onlyName?: string): LinkResult
     const name = String(raw || '').trim();
     if (!name) continue;
 
-    const candidates = findStudents.all(userId, name) as any[];
+    const candidates = findStudents.all(userId, name) as { id: number; name: string }[];
     if (candidates.length !== 1) {
       // 没这个人 → 什么都不做；有多个同名 → 不猜，避免挂错档案
       if (candidates.length > 1) skippedNames++;
@@ -56,7 +56,7 @@ export function linkOrphansByName(userId: number, onlyName?: string): LinkResult
 
 /** 启动时对所有用户做一次存量修复（幂等，可重复执行） */
 export function repairAllUsers(): number {
-  const users = db.prepare('SELECT id FROM users').all() as any[];
+  const users = db.prepare('SELECT id FROM users').all() as { id: number }[];
   let total = 0;
 
   for (const u of users) {

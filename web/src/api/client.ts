@@ -102,7 +102,7 @@ class ApiClient {
       // 注意：反向代理层（nginx / Lucky 等）拒绝时返回的是 HTML 错误页，
       // 解析 JSON 会失败。此时必须把 HTTP 状态带出来，
       // 否则用户只看到笼统的"上传失败"，无从排查。
-      const errorData = await response.json().catch(() => ({} as any));
+      const errorData = await response.json().catch(() => ({} as Record<string, unknown>));
 
       if (response.status === 401) {
         this.handleUnauthorized(path, !!this.token);
@@ -214,7 +214,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({} as any));
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.status === 401) {
         this.handleUnauthorized(path, !!this.token);
       }
@@ -315,7 +315,7 @@ class ApiClient {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({} as any));
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.status === 401) {
         this.handleUnauthorized(path, !!this.token);
       }
@@ -382,7 +382,7 @@ class ApiClient {
 
     const res = await fetch(BASE_URL + path, { headers });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({} as any));
+      const err = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.status === 401) {
         this.handleUnauthorized(path, !!this.token);
       }

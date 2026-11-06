@@ -112,7 +112,7 @@ export async function prepareImageForUpload(file: File): Promise<PrepareResult> 
     // 转 JPEG 会丢掉透明通道，先铺白底，否则透明区域会变黑
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, targetW, targetH);
-    ctx.drawImage(src as any, 0, 0, targetW, targetH);
+    ctx.drawImage(src as CanvasImageSource, 0, 0, targetW, targetH);
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)

@@ -718,15 +718,15 @@ describe('目录智能排课 · 按轨道推荐下月该上什么', () => {
 
     const res = await req('GET', `/api/reports/${r.id}/next-courses`, { token });
     assert.equal(res.status, 200);
-    const byTrack = new Map(res.body.suggestions.map((s: any) => [s.track, s]));
+    const byTrack = new Map<string, { track: string; takenCount: number; totalCount: number; course: { id: number; content: string }; finished: boolean }>(res.body.suggestions.map((s: { track: string; takenCount: number; totalCount: number; course: { id: number; content: string }; finished: boolean }) => [s.track, s]));
 
-    const mech = byTrack.get('力学');
+    const mech = byTrack.get('力学')!
     assert.equal(mech.takenCount, 1);
     assert.equal(mech.totalCount, 3);
     assert.equal(mech.course.id, m2);
     assert.equal(mech.course.content, '牛顿第一定律');
 
-    const opt = byTrack.get('光学');
+    const opt = byTrack.get('光学')!
     assert.equal(opt.takenCount, 0);
     assert.equal(opt.course.id, o1);
     assert.equal(opt.course.content, '光的反射');
@@ -751,7 +751,7 @@ describe('目录智能排课 · 按轨道推荐下月该上什么', () => {
     seedCourse({ term: '寒假', track: '错学期', seq: 1, content: '寒假的课' });
     const r = await ncReport('2027-01');
     const res = await req('GET', `/api/reports/${r.id}/next-courses`, { token });
-    const tracks = res.body.suggestions.map((s: any) => s.track);
+    const tracks = res.body.suggestions.map((s: { track: string; takenCount: number; totalCount: number; course: { id: number; content: string }; finished: boolean }) => s.track);
     assert.ok(!tracks.includes('错年级'));
     assert.ok(!tracks.includes('错学期'));
   });

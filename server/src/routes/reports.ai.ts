@@ -23,6 +23,48 @@ import { z } from 'zod';
  * 材料取自这块报告自己的课程明细 + 这个学生最近的课后回访，所以
  * 「总结」和「规划」两段写出来不会雷同。
  */
+/** monthly_reports 行 + 学生姓名（LEFT JOIN 出来的投影） */
+interface ReportWithStudentRow {
+  id: number;
+  user_id: number;
+  student_id: number | null;
+  student_name: string | null;
+  year_month: string;
+  term: string;
+  grade: string | null;
+  subject: string | null;
+  summary_enabled: number;
+  plan_enabled: number;
+  summary_intro: string | null;
+  plan_intro: string | null;
+  farewell: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** report_items 完整行 */
+interface ReportItemRow {
+  id: number;
+  user_id: number;
+  report_id: number;
+  kind: string;
+  seq: number;
+  content: string;
+  type: string;
+  score: string;
+  difficulty: string;
+  scheduled_at: string | null;
+  attendance: string | null;
+  notes_done: string | null;
+  mistakes_done: string | null;
+  homework_done: string | null;
+  exam: string | null;
+  sort: number;
+  created_at: string;
+  updated_at: string;
+  course_id: number | null;
+}
+
 const router = Router();
 
 const reportAiSchema = z.object({
@@ -48,12 +90,12 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
        LEFT JOIN students s ON s.id = r.student_id AND s.user_id = r.user_id
        WHERE r.id = ? AND r.user_id = ?`
     )
-    .get(id, userId) as any;
+    .get(id, userId) as ReportWithStudentRow | undefined;
   if (!report) return res.status(404).json({ error: '报告不存在' });
 
   const items = db
     .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ?')
-    .all(id, userId) as any[];
+    .all(id, userId) as ReportItemRow[];
   // 事实预聚合需要出勤 + 三项完成度，所以 pick() 把这些字段一并带上
   // （以前只带 content/type/difficulty，出勤和完成度根本进不了 prompt）。
   const pick = (kind: 'summary' | 'plan') =>
@@ -91,7 +133,7 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
        ORDER BY year_month DESC, id DESC
        LIMIT 1`
     )
-    .get(userId, report.student_id, ym) as any;
+    .get(userId, report.student_id, ym) as { summary_intro: string } | undefined;
 
   // 方向 C：近几个月的总结，用于识别「反复出现的问题」——
   // 家长最想看到「这个不足连续三个月了」，单月素材给不出来，得纵向聚合。

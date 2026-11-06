@@ -10,6 +10,15 @@ import { mapUser } from '../utils/mappers.js';
 import { validateBody } from '../utils/validation.js';
 import { registerSchema, loginSchema, changePasswordSchema } from '../utils/schemas.js';
 
+/** users 表完整行结构 */
+interface UserRow {
+  id: number;
+  username: string;
+  password: string;
+  preferences: string | null;
+  created_at: string;
+}
+
 const router = Router();
 
 // 登录/注册限流：15 分钟内同一 IP 最多 20 次【失败】尝试，防止暴力破解。
@@ -79,7 +88,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req, res) =
     }
 
     // 查找用户
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as UserRow | undefined;
     if (!user) {
       return res.status(401).json({ error: '用户名或密码错误' });
     }
@@ -120,7 +129,7 @@ router.put('/password', authMiddleware, validateBody(changePasswordSchema), (req
       return res.status(400).json({ error: '新密码不能与当前密码相同' });
     }
 
-    const user = db.prepare('SELECT id, password FROM users WHERE id = ?').get(req.userId) as any;
+    const user = db.prepare('SELECT id, password FROM users WHERE id = ?').get(req.userId) as { id: number; password: string } | undefined;
     if (!user) return res.status(404).json({ error: '用户不存在' });
 
     if (!bcrypt.compareSync(String(currentPassword), user.password)) {
@@ -152,7 +161,7 @@ const DEFAULT_PREFERENCES = {
 const SIGNATURE_MAX = 20;
 
 function readPreferences(userId: number): typeof DEFAULT_PREFERENCES {
-  const row = db.prepare('SELECT preferences FROM users WHERE id = ?').get(userId) as any;
+  const row = db.prepare('SELECT preferences FROM users WHERE id = ?').get(userId) as { preferences: string | null } | undefined;
   let saved: any = {};
   try {
     saved = row?.preferences ? JSON.parse(row.preferences) : {};

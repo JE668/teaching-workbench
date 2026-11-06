@@ -143,7 +143,8 @@ export async function buildCatalogXlsx(input: CatalogExcelInput): Promise<Buffer
   // 打印设置：A4 横向、按宽度缩放到一页宽，直接打印不用再调
   ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1 };
   // 旧版 exceljs 的类型定义里没有 pageSetUpPr，这里跳过类型检查
-  (ws.properties as any).pageSetUpPr = { fitToPage: true };
+  // exceljs 类型定义缺 pageSetUpPr（运行时支持），用精确字面量类型收窄
+  (ws.properties as ExcelJS.WorksheetProperties & { pageSetUpPr?: { fitToPage?: boolean } }).pageSetUpPr = { fitToPage: true };
 
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

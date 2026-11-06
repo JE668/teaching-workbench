@@ -9,6 +9,48 @@ import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { getAiMetricsSummary, getRecentAiErrors, cleanupAiMetrics } from '../services/aiMetrics.js';
 
+/** ai_metrics 聚合行（/summary 用） */
+interface AiMetricAggRow {
+  [key: string]: unknown;
+  calls: number;
+  success_count: number;
+  error_count: number;
+  retry_count: number;
+  avg_latency_ms: number | null;
+  max_latency_ms: number | null;
+  total_tokens: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  avg_word_count: number | null;
+  last_call: string | null;
+}
+
+/** ai_metrics 聚合行（时间序列用） */
+interface AiMetricTrendRow {
+  period: string;
+  calls: number;
+  success_count: number;
+  error_count: number;
+  retry_count: number;
+  avg_latency_ms: number | null;
+  total_tokens: number | null;
+}
+
+/** ai_metrics 聚合行（按 endpoint 分组用） */
+interface AiMetricEndpointRow {
+  endpoint: string;
+  calls: number;
+  success_count: number;
+  error_count: number;
+  retry_count: number;
+  avg_latency_ms: number | null;
+  total_tokens: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  avg_word_count: number | null;
+  last_call: string | null;
+}
+
 const router = Router();
 
 /**
@@ -48,7 +90,7 @@ router.get('/summary', (req: AuthenticatedRequest, res) => {
          GROUP BY ${groupBy}
          ORDER BY calls DESC`
       )
-      .all(userId, days) as any[];
+      .all(userId, days) as AiMetricAggRow[];
 
     // 计算成功率
     const summary = rows.map((r) => ({
@@ -105,7 +147,7 @@ router.get('/timeseries', (req: AuthenticatedRequest, res) => {
          GROUP BY ${groupBy}
          ORDER BY period ASC`
       )
-      .all(userId, days) as any[];
+      .all(userId, days) as AiMetricTrendRow[];
 
     // 补全缺失的时间点
     const data = rows.map((r) => ({
@@ -144,7 +186,7 @@ router.get('/errors', (req: AuthenticatedRequest, res) => {
          ORDER BY created_at DESC
          LIMIT ?`
       )
-      .all(userId, days, limit) as any[];
+      .all(userId, days, limit) as AiMetricTrendRow[];
 
     res.json({ errors: rows, limit, days });
   } catch (error: any) {
@@ -179,7 +221,7 @@ router.get('/endpoints', (req: AuthenticatedRequest, res) => {
          GROUP BY endpoint
          ORDER BY calls DESC`
       )
-      .all(userId, days) as any[];
+      .all(userId, days) as AiMetricEndpointRow[];
 
     const endpoints = rows.map((r) => ({
       endpoint: r.endpoint,

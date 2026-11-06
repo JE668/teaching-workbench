@@ -3,7 +3,7 @@ import { AuthenticatedRequest } from '../types/index.js';
 import {
   dedupeCourseCatalog,
   resetCatalogToBuiltIn,
-} from '../migrations/catalogDedupe.js';
+} from '../utils/catalogDedupe.js';
 
 const router = Router();
 

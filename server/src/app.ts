@@ -28,8 +28,10 @@ import aiMetricsRoutes from './routes/aiMetrics.js';
 /**
  * 创建 Express 应用（不启动监听）。
  * 拆出来是为了让测试可以直接对 app 发请求，无需占用端口。
+ * 注：组件测试直接渲染页面（不经由这里），不受懒加载影响。
  */
 export function createApp() {
+  // 同步初始化数据库（在测试中会自动初始化）
   initDatabase();
 
   const app = express();

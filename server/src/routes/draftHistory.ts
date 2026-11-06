@@ -1,6 +1,15 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
 
+/** draft_history 表精简投影 */
+interface DraftHistoryRow {
+  id: number;
+  payload: string;
+  created_at: string;
+  source: string;
+  client_id: string | null;
+}
+
 const router = Router();
 
 // 草稿历史表结构（如果不存在则自动创建）
@@ -80,7 +89,7 @@ router.get('/history', (req: any, res) => {
        WHERE user_id = ?
        ORDER BY created_at DESC
        LIMIT ?`
-    ).all(userId, limit) as any[];
+    ).all(userId, limit) as DraftHistoryRow[];
 
     const history = rows.map(row => ({
       id: row.id,
@@ -105,7 +114,7 @@ router.post('/history/:id/restore', (req: any, res) => {
 
     const row = db.prepare(
       `SELECT payload FROM draft_history WHERE id = ? AND user_id = ?`
-    ).get(historyId, userId) as any;
+    ).get(historyId, userId) as DraftHistoryRow | undefined;
 
     if (!row) {
       return res.status(404).json({ error: '历史版本不存在' });

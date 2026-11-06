@@ -19,6 +19,35 @@ import { followUpCreateSchema, followUpUpdateSchema } from '../utils/schemas.js'
 /**
  * 写操作路由：创建（1对1 + 小组课）/ 更新 / 删除。
  */
+/** students 表精简投影：批量校验学生归属用 */
+interface StudentIdRow {
+  id: number;
+  name: string;
+}
+
+/** followups 表完整行结构（SELECT * 返回的形状；表没有 term 列） */
+interface FollowUpRow {
+  id: number;
+  user_id: number;
+  student_id: number | null;
+  student_name: string;
+  grade: string;
+  subject: string;
+  topic: string;
+  performance: string;
+  mastery: string;
+  session_count: number;
+  course_type: string;
+  module: string;
+  modules: string;
+  images: string;
+  content: string;
+  word_count: number;
+  batch_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 const router = Router();
 
 /**
@@ -74,7 +103,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
       const placeholders = ids.map(() => '?').join(',');
       const students = db
         .prepare('SELECT id, name FROM students WHERE user_id = ? AND id IN (' + placeholders + ')')
-        .all(userId, ...ids) as any[];
+        .all(userId, ...ids) as StudentIdRow[];
 
       if (students.length !== ids.length) {
         return res.status(400).json({ error: '有学生不存在或无权访问' });
@@ -125,7 +154,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
       // 显式指定的学生：校验归属，避免越权写入他人档案
       const owned = db
         .prepare('SELECT id FROM students WHERE id = ? AND user_id = ?')
-        .get(studentId, userId) as any;
+        .get(studentId, userId) as { id: number } | undefined;
       if (!owned) {
         return res.status(400).json({ error: '关联的学生不存在或无权访问' });
       }
@@ -134,7 +163,7 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
       // 未选学生但填了姓名：先匹配学生库，没有则建档
       const matched = db
         .prepare('SELECT id FROM students WHERE user_id = ? AND name = ? ORDER BY id LIMIT 1')
-        .get(userId, studentName) as any;
+        .get(userId, studentName) as { id: number } | undefined;
 
       if (matched) {
         linkedStudentId = matched.id;
@@ -176,7 +205,7 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
     const followupId = parseInt(req.params.id, 10);
     const { studentId, studentName, grade, subject, topic, performance, mastery, images, content, syncBatch } = req.body;
 
-    const existing = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(followupId, userId) as any;
+    const existing = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(followupId, userId) as FollowUpRow | undefined;
     if (!existing) {
       return res.status(404).json({ error: '回访记录不存在' });
     }
@@ -271,7 +300,7 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res: Response) =>
       return res.status(400).json({ error: '请至少勾选一项要复制的字段' });
     }
 
-    const source = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    const source = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(id, userId) as FollowUpRow | undefined;
     if (!source) return res.status(404).json({ error: '回访记录不存在' });
 
     // 空内容不覆盖，避免清空别人的
@@ -280,18 +309,19 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res: Response) =>
     if (copyContent && !String(source.content || '').trim()) return res.status(400).json({ error: '本回访的回访内容为空，无法复制' });
     if (copyMastery && !String(source.mastery || '').trim()) return res.status(400).json({ error: '本回访的掌握程度为空，无法复制' });
 
-    // 同班同学：同 grade+subject+term，排除自己
+    // 同班同学：同 grade+subject，排除自己
+    // （followups 表没有 term 列 —— 之前 as any 掩盖了 source.term 恒为 undefined 的 bug）
     const targets = db
       .prepare(
         `SELECT id FROM followups
          WHERE user_id = ? AND id != ?
-           AND grade = ? AND subject = ? AND term = ?
+           AND grade = ? AND subject = ?
            AND student_id IS NOT NULL`
       )
-      .all(userId, id, source.grade, source.subject, source.term) as { id: number }[];
+      .all(userId, id, source.grade, source.subject) as { id: number }[];
 
     if (!targets.length) {
-      return res.json({ updated: 0, studentIds: [], message: '没有同班同学（同 grade+subject+term）可复制' });
+      return res.json({ updated: 0, studentIds: [], message: '没有同班同学（同 grade+subject）可复制' });
     }
 
     let updated = 0;
@@ -302,7 +332,8 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res: Response) =>
        WHERE id = ? AND user_id = ?`
     );
     for (const t of targets) {
-      const cur = db.prepare('SELECT topic, performance, content, mastery FROM followups WHERE id = ? AND user_id = ?').get(t.id, userId) as any;
+      const cur = db.prepare('SELECT topic, performance, content, mastery FROM followups WHERE id = ? AND user_id = ?').get(t.id, userId) as
+        { topic: string | null; performance: string | null; content: string | null; mastery: string | null };
       const newTopic = copyTopic ? source.topic : cur.topic;
       const newPerformance = copyPerformance ? source.performance : cur.performance;
       const newContent = copyContent ? source.content : cur.content;
@@ -327,7 +358,8 @@ router.get('/:id/classmates', (req: AuthenticatedRequest, res: Response) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的回访 id' });
 
-    const source = db.prepare('SELECT grade, subject, term FROM followups WHERE id = ? AND user_id = ?').get(id, userId) as any;
+    const source = db.prepare('SELECT grade, subject FROM followups WHERE id = ? AND user_id = ?').get(id, userId) as
+      { grade: string; subject: string } | undefined;
     if (!source) return res.status(404).json({ error: '回访记录不存在' });
 
     const rows = db
@@ -335,10 +367,10 @@ router.get('/:id/classmates', (req: AuthenticatedRequest, res: Response) => {
         `SELECT f.id, f.student_id, f.student_name, f.topic, f.performance, f.content, f.mastery, f.created_at
          FROM followups f
          WHERE f.user_id = ? AND f.id != ?
-           AND f.grade = ? AND f.subject = ? AND f.term = ?
+           AND f.grade = ? AND f.subject = ?
          ORDER BY f.student_name`
       )
-      .all(userId, id, source.grade, source.subject, source.term) as any[];
+      .all(userId, id, source.grade, source.subject) as FollowUpRow[];
 
     const classmates = rows.map((r) => ({
       id: Number(r.id),

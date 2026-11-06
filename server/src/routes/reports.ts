@@ -23,6 +23,73 @@ import { suggestNextCourses } from '../utils/nextCourse.js';
  *   - plan     下月要上的课，只有课程属性 + 计划上课时间
  *   - exam     阶测安排，单独一行插规划中间
  */
+
+/**
+ * 数据库行类型定义，替代 as any 类型断言
+ */
+interface ReportRow {
+  id: number;
+  user_id: number;
+  student_id: number | null;
+  student_name?: string;
+  year_month: string;
+  term: string;
+  grade: string | null;
+  subject: string | null;
+  summary_enabled: number;
+  plan_enabled: number;
+  summary_intro: string | null;
+  plan_intro: string | null;
+  farewell: string | null;
+  item_count?: number;
+  created_at: string;
+  updated_at: string;
+  track: string;
+  seq: number;
+  content: string;
+  type: string;
+  difficulty: string;
+}
+
+interface ReportItemRow {
+  id: number;
+  report_id: number;
+  user_id: number;
+  kind: string;
+  seq: number;
+  content: string;
+  type: string;
+  score: string;
+  difficulty: string;
+  scheduled_at: string;
+  attendance: string;
+  notes_done: string;
+  mistakes_done: string;
+  homework_done: string;
+  exam: string;
+  course_id: number | null;
+  sort: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface StudentRow {
+  id: number;
+  user_id: number;
+  name: string;
+  grade: string | null;
+  subject: string | null;
+}
+
+interface ClassmateRow {
+  id: number;
+  student_id: number;
+  student_name: string;
+  year_month: string;
+  has_summary: number;
+  has_plan: number;
+}
+
 const router = Router();
 
 const KINDS = new Set(['summary', 'plan', 'exam']);
@@ -143,7 +210,7 @@ router.get('/', (req: AuthenticatedRequest, res) => {
          GROUP BY r.id
          ORDER BY s.name, r.year_month DESC`
       )
-      .all(...params) as any[];
+      .all(...params) as ReportRow[];
     res.json({ reports: rows.map(mapReport) });
   } catch (error: any) {
     res.status(500).json({ error: '获取月度报告失败', message: error.message });
@@ -160,7 +227,7 @@ router.post('/', (req: AuthenticatedRequest, res) => {
     }
     const student = db
       .prepare('SELECT * FROM students WHERE id = ? AND user_id = ?')
-      .get(studentId, userId) as any;
+      .get(studentId, userId) as StudentRow | undefined;
     if (!student) return res.status(404).json({ error: '学生不存在' });
 
     const yearMonth = String(req.body?.yearMonth || '').trim();
@@ -175,7 +242,7 @@ router.post('/', (req: AuthenticatedRequest, res) => {
     // 同名学生同月已存在就返回那条，不重复建
     const dup = db
       .prepare('SELECT * FROM monthly_reports WHERE user_id = ? AND student_id = ? AND year_month = ?')
-      .get(userId, studentId, yearMonth) as any;
+      .get(userId, studentId, yearMonth) as ReportRow | undefined;
     if (dup) {
       return res.json({ report: mapReport({ ...dup, student_name: student.name }), duplicated: true });
     }
@@ -187,7 +254,7 @@ router.post('/', (req: AuthenticatedRequest, res) => {
       )
       .run(userId, studentId, yearMonth, term, grade, subject).lastInsertRowid as number;
 
-    const created = db.prepare('SELECT * FROM monthly_reports WHERE id = ?').get(id) as any;
+    const created = db.prepare('SELECT * FROM monthly_reports WHERE id = ?').get(id) as { m: number } | undefined;
     res.json({
       report: mapReport({ ...created, student_name: student.name }),
       duplicated: false,
@@ -209,12 +276,12 @@ router.get('/:id', (req: AuthenticatedRequest, res) => {
          JOIN students s ON s.id = r.student_id AND s.user_id = r.user_id
          WHERE r.id = ? AND r.user_id = ?`
       )
-      .get(id, req.userId!) as any;
+      .get(id, req.userId!) as ReportRow | undefined;
     if (!row) return res.status(404).json({ error: '月度报告不存在' });
 
     const items = db
       .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ? ORDER BY sort, id')
-      .all(id, req.userId!) as any[];
+      .all(id, req.userId!) as ReportItemRow[];
     res.json({ report: mapReport(row), items: items.map(mapItem) });
   } catch (error: any) {
     res.status(500).json({ error: '获取月度报告失败', message: error.message });
@@ -236,7 +303,7 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
 
     const cur = db
       .prepare('SELECT id, student_id, year_month FROM monthly_reports WHERE id = ? AND user_id = ?')
-      .get(id, userId) as any;
+      .get(id, userId) as ReportRow | undefined;
     if (!cur) return res.status(404).json({ error: '月度报告不存在' });
     if (!cur.student_id) return res.json({ prevReportId: null, undelivered: [] });
 
@@ -247,7 +314,7 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
          WHERE user_id = ? AND student_id = ? AND year_month < ?
          ORDER BY year_month DESC LIMIT 1`
       )
-      .get(userId, cur.student_id, String(cur.year_month || '')) as any;
+      .get(userId, cur.student_id, String(cur.year_month || '')) as ReportRow | undefined;
     if (!prev) return res.json({ prevReportId: null, undelivered: [] });
 
     // 上月规划课 = 上月报告里 kind=plan 的行。
@@ -255,11 +322,11 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
     // 老师不用再手动补（以前只取 content+course_id，顺延后类型难度全丢）。
     const prevItems = db
       .prepare('SELECT content, course_id, type, difficulty FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
-      .all(prev.id, userId, 'plan') as any[];
+      .all(prev.id, userId, "plan") as ReportItemRow[];
     // 本月已上课 = 本报告里 kind=summary 的行（比对用，只需 content+course_id）
     const curItems = db
       .prepare('SELECT content, course_id FROM report_items WHERE report_id = ? AND user_id = ? AND kind = ? ORDER BY seq, id')
-      .all(id, userId, 'summary') as any[];
+      .all(id, userId, "summary") as ReportItemRow[];
 
     const toContinuity = (rows: any[]): ContinuityCourse[] =>
       rows.map((r) => ({
@@ -319,7 +386,7 @@ router.get('/:id/next-courses', (req: AuthenticatedRequest, res) => {
         `SELECT id, track, seq, content, type, difficulty FROM course_catalog
          WHERE user_id = ? AND grade = ? AND subject = ? AND term = ?`
       )
-      .all(userId, grade, subject, term) as any[];
+      .all(userId, grade, subject, term) as ReportRow[];
 
     const catalog = catalogRows.map((r) => ({
       id: Number(r.id),
@@ -368,7 +435,7 @@ router.get('/:id/classmates', (req: AuthenticatedRequest, res) => {
         userId, id,
         String(report.grade || ''), String(report.subject || ''),
         String(report.term || ''), String(report.year_month || '')
-      ) as any[];
+      ) as ReportRow[];
 
     const classmates = rows.map((r) => ({
       id: Number(r.id),
@@ -436,20 +503,45 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res) => {
       .all(...params) as { id: number }[];
 
     let updated = 0;
-    const applyOne = db.prepare(
-      `UPDATE monthly_reports SET
-         summary_intro = ?, plan_intro = ?, updated_at = datetime('now', '+8 hours')
-       WHERE id = ? AND user_id = ?`
-    );
-    for (const t of targets) {
-      // 只更新被选中的字段，另一个字段保留对方自己的（用 COALESCE 语义在 SQL 外处理）
-      const cur = db
-        .prepare('SELECT summary_intro, plan_intro FROM monthly_reports WHERE id = ? AND user_id = ?')
-        .get(t.id, userId) as any;
-      const newSummary = copySummary ? summaryText : String(cur?.summary_intro ?? '');
-      const newPlan = copyPlan ? planText : String(cur?.plan_intro ?? '');
-      applyOne.run(newSummary, newPlan, t.id, userId);
-      updated++;
+    if (targets.length > 0) {
+      const ids = targets.map(t => t.id);
+      const placeholders = ids.map(() => '?').join(',');
+      
+      // 使用单条 SQL 批量更新，避免 N+1 查询
+      // 使用 CASE WHEN 保持未选字段的原值
+      const setClauses = [];
+      const values = [];
+      
+      if (copySummary) {
+        setClauses.push('summary_intro = ?');
+        values.push(summaryText);
+      } else {
+        // 保留原值：CASE id WHEN ? THEN (SELECT summary_intro FROM monthly_reports WHERE id = ?) ...
+        const caseParts = targets.map((t, i) => 'WHEN ? THEN (SELECT summary_intro FROM monthly_reports WHERE id = ?)').join(' ');
+        const caseValues = targets.flatMap(t => [t.id, t.id]);
+        setClauses.push('summary_intro = CASE id ' + caseParts + ' ELSE summary_intro END');
+        values.push(...caseValues);
+      }
+      
+      if (copyPlan) {
+        setClauses.push('plan_intro = ?');
+        values.push(planText);
+      } else {
+        const caseParts = targets.map((t, i) => 'WHEN ? THEN (SELECT plan_intro FROM monthly_reports WHERE id = ?)').join(' ');
+        const caseValues = targets.flatMap(t => [t.id, t.id]);
+        setClauses.push('plan_intro = CASE id ' + caseParts + ' ELSE plan_intro END');
+        values.push(...caseValues);
+      }
+      
+      setClauses.push("updated_at = datetime('now', '+8 hours')");
+      
+      const whereIn = targets.map(() => '?').join(',');
+      values.push(...targets.map(t => t.id)); // for WHERE IN
+      values.push(userId);
+      
+      updated = db.prepare(
+        `UPDATE monthly_reports SET ${setClauses.join(', ')} WHERE id IN (${whereIn}) AND user_id = ?`
+      ).run(...values).changes;
     }
 
     res.json({ updated, studentIds: targets.map((t) => t.id) });
@@ -470,7 +562,7 @@ router.get('/:id/xlsx', async (req: AuthenticatedRequest, res) => {
 
     const items = db
       .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ? ORDER BY sort, id')
-      .all(id, userId) as any[];
+      .all(id, userId) as ReportItemRow[];
     const pick = (kind: string) => items.filter((i) => i.kind === kind).map(toExcelItem);
 
     const input: ReportExcelInput = {
@@ -567,7 +659,7 @@ router.post('/:id/exams', (req: AuthenticatedRequest, res) => {
          WHERE report_id = ? AND user_id = ? AND kind = 'plan'
          ORDER BY sort, id`
       )
-      .all(id, userId) as any[];
+      .all(id, userId) as ReportItemRow[];
 
     const start = String(req.body?.startDate || '').trim();
     const end = String(req.body?.endDate || '').trim();
@@ -597,7 +689,7 @@ router.post('/:id/exams', (req: AuthenticatedRequest, res) => {
     if (req.body?.insert) {
       const maxSort = db
         .prepare('SELECT COALESCE(MAX(sort), 0) AS m FROM report_items WHERE report_id = ?')
-        .get(id) as any;
+        .get(id) as { m: number } | undefined;
       let base = Number(maxSort?.m || 0);
       db.transaction(() => {
         for (const s of suggestions) {
@@ -632,7 +724,7 @@ router.post('/:id/items/move', (req: AuthenticatedRequest, res) => {
     const result = db.transaction(() => {
       const items = db
         .prepare('SELECT id, sort FROM report_items WHERE report_id = ? AND user_id = ? ORDER BY sort, id')
-        .all(reportId, userId) as any[];
+        .all(reportId, userId) as { id: number; sort: number }[];
       if (!items.length) return { items: [] };
       const idx = items.findIndex((x) => x.id === itemId);
       if (idx < 0) return { items, moved: false };
@@ -648,7 +740,7 @@ router.post('/:id/items/move', (req: AuthenticatedRequest, res) => {
 
     const list = db
       .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ? ORDER BY sort, id')
-      .all(reportId, userId) as any[];
+      .all(reportId, userId) as ReportItemRow[];
     res.json({ moved: result.moved, items: list.map(mapItem) });
   } catch (error: any) {
     res.status(500).json({ error: '排序失败', message: error.message });
@@ -670,7 +762,7 @@ router.post('/:id/items', (req: AuthenticatedRequest, res) => {
 
     const maxSort = db
       .prepare('SELECT COALESCE(MAX(sort), 0) AS m FROM report_items WHERE report_id = ?')
-      .get(reportId) as any;
+      .get(reportId) as { m: number } | undefined;
 
     const id = db
       .prepare(
@@ -698,7 +790,7 @@ router.post('/:id/items', (req: AuthenticatedRequest, res) => {
       ).lastInsertRowid as number;
 
     db.prepare("UPDATE monthly_reports SET updated_at = datetime('now', '+8 hours') WHERE id = ?").run(reportId);
-    res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(id) as any) });
+    res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(id) as ReportItemRow | undefined) });
   } catch (error: any) {
     res.status(500).json({ error: '新增明细失败', message: error.message });
   }
@@ -716,7 +808,7 @@ router.patch('/:id/items/:itemId', (req: AuthenticatedRequest, res) => {
 
     const existing = db
       .prepare('SELECT * FROM report_items WHERE id = ? AND report_id = ? AND user_id = ?')
-      .get(itemId, reportId, userId) as any;
+      .get(itemId, reportId, userId) as ReportItemRow | undefined;
     if (!existing) return res.status(404).json({ error: '明细不存在' });
 
     const body = itemBody(req.body);
@@ -746,7 +838,7 @@ router.patch('/:id/items/:itemId', (req: AuthenticatedRequest, res) => {
     db.prepare(`UPDATE report_items SET ${sets.join(', ')} WHERE id = ?`).run(...params);
     db.prepare("UPDATE monthly_reports SET updated_at = datetime('now', '+8 hours') WHERE id = ?").run(reportId);
 
-    res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(itemId) as any) });
+    res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(itemId) as ReportItemRow | undefined) });
   } catch (error: any) {
     res.status(500).json({ error: '更新明细失败', message: error.message });
   }

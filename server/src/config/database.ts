@@ -4,6 +4,7 @@ import fs from 'fs';
 import bcrypt from 'bcryptjs';
 import { env } from './env.js';
 import { log } from '../utils/logger.js';
+import { migrateUp } from '../migrations/runner.js';
 
 const dbPath = path.join(env.DATA_DIR, 'teaching.db');
 
@@ -29,7 +30,7 @@ db.pragma('foreign_keys = ON');
  * 列定义需自带 DEFAULT，否则 NOT NULL 的新列无法加到已有数据的表上。
  */
 function ensureColumn(table: string, column: string, definition: string): void {
-  const columns = db.prepare('PRAGMA table_info(' + table + ')').all() as any[];
+  const columns = db.prepare('PRAGMA table_info(' + table + ')').all() as { name: string }[];
   if (columns.some((c) => c.name === column)) return;
 
   db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
@@ -45,7 +46,7 @@ function ensureColumn(table: string, column: string, definition: string): void {
  * 这里复用旧索引名、按新列重建，幂等且能自愈，不用留一次性迁移标记。
  */
 function ensureIndexShape(name: string, table: string, columns: string[]): void {
-  const existing = (db.prepare('PRAGMA index_info(' + name + ')').all() as any[]).map(
+  const existing = (db.prepare('PRAGMA index_info(' + name + ')').all() as { name: string }[]).map(
     (c) => c.name
   );
   if (existing.join(',') === columns.join(',')) return;
@@ -94,7 +95,7 @@ export const SERVER_GENERATED_TIMES: Array<[string, string]> = [
 function latestUtcSkewMs(): number | null {
   let latest: string | null = null;
   for (const [table, column] of SERVER_GENERATED_TIMES) {
-    const row = db.prepare('SELECT MAX(' + column + ") AS m FROM " + table).get() as any;
+    const row = db.prepare('SELECT MAX(' + column + ") AS m FROM " + table).get() as { m: unknown } | undefined;
     const m = row?.m ? String(row.m) : null;
     if (m && (!latest || m > latest)) latest = m;
   }
@@ -158,9 +159,9 @@ function migrateSettingsPerUser(): void {
   if (!hasLegacy) return;
 
   try {
-    const rows = db.prepare('SELECT key, value FROM settings').all() as any[];
+    const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
     if (rows.length > 0) {
-      const users = db.prepare('SELECT id FROM users').all() as any[];
+      const users = db.prepare('SELECT id FROM users').all() as { id: number }[];
       const insert = db.prepare(
         `INSERT OR IGNORE INTO settings_user (user_id, key, value, updated_at)
          VALUES (?, ?, ?, datetime('now', '+8 hours'))`
@@ -179,7 +180,7 @@ function migrateSettingsPerUser(): void {
   }
 }
 
-export function initDatabase() {
+export async function initDatabase() {
   // 用户表
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -501,6 +502,9 @@ export function initDatabase() {
 
   // 创建索引
   db.exec('CREATE INDEX IF NOT EXISTS idx_students_user ON students(user_id)');
+
+  // 版本化迁移：自动应用所有未执行的迁移
+  await migrateUp();
 
   // 存量数据时区订正（一次性）
   migrateTimestampsUtcToLocal();

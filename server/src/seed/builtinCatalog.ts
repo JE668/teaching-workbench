@@ -53,7 +53,9 @@ function sha256(buffer: Uint8Array): string {
 async function loadWorkbook(buffer: Uint8Array): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
   // exceljs 与新版 @types/node 的 Buffer 泛型定义不一致，这里直接跳过类型检查
-  await wb.xlsx.load(buffer as any);
+  // exceljs 声明要 Buffer（无泛型），@types/node@26 的 Buffer 带泛型导致 variance 不匹配；
+// 运行时就是同一块内存，这里收窄为 exceljs 自己的读入类型
+  await wb.xlsx.load(buffer as unknown as Parameters<ExcelJS.Xlsx['load']>[0]);
   return wb;
 }
 

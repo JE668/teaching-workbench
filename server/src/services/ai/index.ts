@@ -29,6 +29,15 @@ export class AiQueueTimeoutError extends Error {
   }
 }
 
+/** OpenAI 流式 chunk 的最小结构（SDK Stream 泛型收窄用） */
+interface ChatStreamChunk {
+  choices?: Array<{
+    delta?: { content?: string | null };
+    finish_reason?: string | null;
+  }>;
+}
+
+
 export async function acquireAiSlot(timeoutMs: number = AI_QUEUE_TIMEOUT_MS): Promise<void> {
   while (aiInFlight >= MAX_CONCURRENT_AI) {
     await new Promise<void>((resolve, reject) => {
@@ -262,7 +271,7 @@ export async function* streamOnce(
     const stream = (await ai.chat.completions.create(
       await buildRequest(config, userId, params, correction, true),
       { signal: watchdog.signal }
-    )) as any;
+    )) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
       watchdog.kick();
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta
@@ -361,7 +370,7 @@ export async function* streamChat(
     const stream = (await ai.chat.completions.create(
       buildChatRequest(userId, messages, opts, true),
       { signal: watchdog.signal }
-    )) as any;
+    )) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
       watchdog.kick();
       const delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta

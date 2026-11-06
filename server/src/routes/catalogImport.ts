@@ -20,6 +20,23 @@ import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { parseCatalogWorkbook, type Band } from '../utils/catalogParse.js';
 
+/** catalog_imports 行 + 导入者用户名（LEFT JOIN 投影） */
+interface CatalogImportRow {
+  id: number;
+  user_id: number;
+  band: string;
+  filename: string;
+  file_sha256: string;
+  courses_total: number;
+  courses_imported: number;
+  courses_duplicated: number;
+  courses_updated: number;
+  failed_sheets: string;
+  created_at: string;
+  is_builtin: number;
+  importer: string | null;
+}
+
 const router = Router();
 
 const BANDS: Band[] = ['高中', '小初'];
@@ -50,7 +67,9 @@ function safeFilename(raw: string): string {
 async function loadWorkbook(buffer: Uint8Array): Promise<ExcelJS.Workbook> {
   const wb = new ExcelJS.Workbook();
   // exceljs 与新版 @types/node 的 Buffer 泛型定义不一致，这里直接跳过类型检查
-  await wb.xlsx.load(buffer as any);
+  // exceljs 声明要 Buffer（无泛型），@types/node@26 的 Buffer 带泛型导致 variance 不匹配；
+// 运行时就是同一块内存，这里收窄为 exceljs 自己的读入类型
+  await wb.xlsx.load(buffer as unknown as Parameters<ExcelJS.Xlsx['load']>[0]);
   return wb;
 }
 
@@ -231,7 +250,7 @@ router.get('/imports', (req: AuthenticatedRequest, res) => {
          LEFT JOIN users u ON u.id = i.user_id
          ORDER BY i.id DESC`
       )
-      .all() as any[];
+      .all() as CatalogImportRow[];
     res.json({
       imports: rows.map((r) => ({
         ...r,

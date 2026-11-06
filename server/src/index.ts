@@ -4,7 +4,7 @@ import { env } from './config/env.js';
 import { db } from './config/database.js';
 import { createApp } from './app.js';
 import { seedBuiltInCatalog } from './seed/builtinCatalog.js';
-import { dedupeCourseCatalog } from './migrations/catalogDedupe.js';
+import { dedupeCourseCatalog } from './utils/catalogDedupe.js';
 import { repairAllUsers } from './services/linkOrphans.js';
 import { cleanupAiMetrics } from './services/aiMetrics.js';
 import {
@@ -14,157 +14,160 @@ import {
 } from './services/imageLifecycle.js';
 import { log } from './utils/logger.js';
 
-// ========== 初始化 ==========
-const app = createApp();
+async function startServer() {
+  const app = await createApp();
 
-// ========== 内置课程目录 ==========
-// 「全年课程体系目录」是机构级参考数据，随镜像一起发版：启动时幂等灌库，
-// 任何账号登录后目录就在那里，不用谁先去上传一份。
-// 放在 listen 之前——服务一就绪目录就已在库里，不会出现「刚部署完查不到课」。
-// 幂等：按文件 sha 判重，重启不会重复灌；测试环境自动跳过。
-try {
-  const seeded = await seedBuiltInCatalog();
-  if (seeded.imports > 0 || seeded.courses > 0) {
-    log.info(
-      { imports: seeded.imports, courses: seeded.courses },
-      '内置课程目录已就位'
-    );
-  }
-} catch (err: any) {
-  log.warn({ err: err.message }, '内置课程目录灌库失败（不影响启动）');
-}
-
-// ========== 课程目录去重 ==========
-// #40 之前目录按账号隔离、去重键里带 user_id；改成全局共享后，早期导入的行和内置灌库的行
-// 其实是同一门课，却各自占一份，页面上就是「内置 3589 条 + 自己导的 3589 条」叠成七千多条。
-// 这里按 (band, grade, subject, track, term, seq, TRIM(content)) 合并重复行：优先留系统内置
-// 那份，并把手工指向重复行的月度总结 / 课堂观察改指到保留行，不会留下孤儿。
-// 幂等：结果写 schema_migrations 留痕，只跑一次；页面上也能手工再跑。
-try {
-  const deduped = dedupeCourseCatalog();
-  if (deduped.removed > 0) {
-    log.info(
-      { groups: deduped.groups, removed: deduped.removed, reassigned: deduped.reassigned },
-      '已合并课程目录里的重复行'
-    );
-  }
-} catch (err: any) {
-  log.warn({ err: err.message }, '课程目录去重失败（不影响启动）');
-}
-
-// 启动时做一次「孤儿回访」修复：把按姓名能唯一确定的未关联回访
-// 补挂到对应学生档案。历史遗留数据（先写回访、后建档案）靠这一步归位。
-// 幂等，可重复执行；同名歧义时不会猜，只跳过。
-try {
-  const repaired = repairAllUsers();
-  if (repaired > 0) {
-    log.info({ repaired }, '已把未关联的历史回访归位到对应学生档案');
-  }
-} catch (err: any) {
-  log.warn({ err: err.message }, '历史回访归位失败（不影响启动）');
-}
-
-// ========== 图片目录整理（幂等，可重复执行） ==========
-// 1) 历史目录迁移：uploads/<数字ID>/ 改名为 uploads/<账户名>/，
-//    并同步改写回访与草稿里存的引用路径。
-try {
-  const migrated = migrateLegacyFolders();
-  if (migrated.movedFiles > 0 || migrated.renamedDirs > 0) {
-    log.info({ movedFiles: migrated.movedFiles, renamedDirs: migrated.renamedDirs }, '已迁移历史图片目录到账户名目录');
-  }
-} catch (err: any) {
-  log.warn({ err: err.message }, '历史目录迁移失败（不影响启动）');
-}
-
-// 2) 清理：过期的暂存图（没保存回访的）+ 没有任何记录引用的孤儿文件。
-//    保留期 7 天，与草稿一致 —— 草稿还在，它引用的暂存图就不能删。
-try {
-  const staged = gcStagedImages();
-  const orphans = cleanupOrphanImages();
-  if (staged + orphans > 0) {
-    log.info({ staged, orphans }, '已清理过期暂存图与无引用孤儿文件');
-  }
-} catch (err: any) {
-  log.warn({ err: err.message }, '清理失败（不影响启动）');
-}
-
-// ========== AI 指标保留期清理 ==========
-// ai_metrics 只写不删会无限增长：/metrics 每次抓取都对它做 24h 聚合，
-// 表越长越大查询越慢、磁盘持续膨胀。启动时清一次，之后每天定时清。
-// 保留期默认 90 天（AI_METRICS_RETAIN_DAYS 可调）。
-try {
-  const removed = cleanupAiMetrics(env.AI_METRICS_RETAIN_DAYS);
-  if (removed > 0) {
-    log.info({ removed, retainDays: env.AI_METRICS_RETAIN_DAYS }, '已清理超保留期的 AI 指标');
-  }
-} catch (err: any) {
-  log.warn({ err: err.message }, 'AI 指标清理失败（不影响启动）');
-}
-// 每日定时再清一次（长驻进程跨天累积）。unref 让它不阻止进程退出。
-const aiMetricsCleanupTimer = setInterval(
-  () => {
-    try {
-      const removed = cleanupAiMetrics(env.AI_METRICS_RETAIN_DAYS);
-      if (removed > 0) log.info({ removed }, '定时清理超保留期的 AI 指标');
-    } catch (err: any) {
-      log.warn({ err: err.message }, '定时清理 AI 指标失败');
+  // ========== 内置课程目录 ==========
+  // 「全年课程体系目录」是机构级参考数据，随镜像一起发版：启动时幂等灌库，
+  // 任何账号登录后目录就在那里，不用谁先去上传一份。
+  // 放在 listen 之前——服务一就绪目录就已在库里，不会出现「刚部署完查不到课」。
+  // 幂等：按文件 sha 判重，重启不会重复灌；测试环境自动跳过。
+  try {
+    const seeded = await seedBuiltInCatalog();
+    if (seeded.imports > 0 || seeded.courses > 0) {
+      log.info(
+        { imports: seeded.imports, courses: seeded.courses },
+        '内置课程目录已就位'
+      );
     }
-  },
-  24 * 60 * 60 * 1000
-);
-aiMetricsCleanupTimer.unref?.();
+  } catch (err: any) {
+    log.warn({ err: err.message }, '内置课程目录灌库失败（不影响启动）');
+  }
 
-// 每日跑一次清理，让长期运行的服务也能持续回收空间
-const gcTimer = setInterval(() => {
+  // ========== 课程目录去重 ==========
+  // #40 之前目录按账号隔离、去重键里带 user_id；改成全局共享后，早期导入的行和内置灌库的行
+  // 其实是同一门课，却各自占一份，页面上就是「内置 3589 条 + 自己导的 3589 条」叠成七千多条。
+  // 这里按 (band, grade, subject, track, term, seq, TRIM(content)) 合并重复行：优先留系统内置
+  // 那份，并把手工指向重复行的月度总结 / 课堂观察改指到保留行，不会留下孤儿。
+  // 幂等：结果写 schema_migrations 留痕，只跑一次；页面上也能手工再跑。
+  try {
+    const deduped = dedupeCourseCatalog();
+    if (deduped.removed > 0) {
+      log.info(
+        { groups: deduped.groups, removed: deduped.removed, reassigned: deduped.reassigned },
+        '已合并课程目录里的重复行'
+      );
+    }
+  } catch (err: any) {
+    log.warn({ err: err.message }, '课程目录去重失败（不影响启动）');
+  }
+
+  // 启动时做一次「孤儿回访」修复：把按姓名能唯一确定的未关联回访
+  // 补挂到对应学生档案。历史遗留数据（先写回访、后建档案）靠这一步归位。
+  // 幂等，可重复执行；同名歧义时不会猜，只跳过。
+  try {
+    const repaired = repairAllUsers();
+    if (repaired > 0) {
+      log.info({ repaired }, '已把未关联的历史回访归位到对应学生档案');
+    }
+  } catch (err: any) {
+    log.warn({ err: err.message }, '历史回访归位失败（不影响启动）');
+  }
+
+  // ========== 图片目录整理（幂等，可重复执行） ==========
+  // 1) 历史目录迁移：uploads/<数字ID>/ 改名为 uploads/<账户名>/，
+  //    并同步改写回访与草稿里存的引用路径。
+  try {
+    const migrated = migrateLegacyFolders();
+    if (migrated.movedFiles > 0 || migrated.renamedDirs > 0) {
+      log.info({ movedFiles: migrated.movedFiles, renamedDirs: migrated.renamedDirs }, '已迁移历史图片目录到账户名目录');
+    }
+  } catch (err: any) {
+    log.warn({ err: err.message }, '历史目录迁移失败（不影响启动）');
+  }
+
+  // 2) 清理：过期的暂存图（没保存回访的）+ 没有任何记录引用的孤儿文件。
+  //    保留期 7 天，与草稿一致 —— 草稿还在，它引用的暂存图就不能删。
   try {
     const staged = gcStagedImages();
     const orphans = cleanupOrphanImages();
     if (staged + orphans > 0) {
-      log.info({ staged, orphans }, '定时清理：过期暂存图与孤儿文件');
+      log.info({ staged, orphans }, '已清理过期暂存图与无引用孤儿文件');
     }
   } catch (err: any) {
-    log.warn({ err: err.message }, '定时清理失败');
+    log.warn({ err: err.message }, '清理失败（不影响启动）');
   }
-}, 24 * 60 * 60 * 1000);
-gcTimer.unref?.();
 
-const server = http.createServer(app);
-
-// ========== 启动服务器 ==========
-server.listen(env.PORT, env.HOST, () => {
-  const allowed = (env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
-  log.info(
-    { host: env.HOST, port: env.PORT, model: env.SENSENOVA_MODEL, reasoningEffort: env.SENSENOVA_REASONING_EFFORT, cors: allowed.length ? allowed.join(', ') : '(未配置，仅同源访问)' },
-    '1对1老师教学服务工作台 - 后端服务已启动'
+  // ========== AI 指标保留期清理 ==========
+  // ai_metrics 只写不删会无限增长：/metrics 每次抓取都对它做 24h 聚合，
+  // 表越长越大查询越慢、磁盘持续膨胀。启动时清一次，之后每天定时清。
+  // 保留期默认 90 天（AI_METRICS_RETAIN_DAYS 可调）。
+  try {
+    const removed = cleanupAiMetrics(env.AI_METRICS_RETAIN_DAYS);
+    if (removed > 0) {
+      log.info({ removed, retainDays: env.AI_METRICS_RETAIN_DAYS }, '已清理超保留期的 AI 指标');
+    }
+  } catch (err: any) {
+    log.warn({ err: err.message }, 'AI 指标清理失败（不影响启动）');
+  }
+  // 每日定时再清一次（长驻进程跨天累积）。unref 让它不阻止进程退出。
+  const aiMetricsCleanupTimer = setInterval(
+    () => {
+      try {
+        const removed = cleanupAiMetrics(env.AI_METRICS_RETAIN_DAYS);
+        if (removed > 0) log.info({ removed }, '定时清理超保留期的 AI 指标');
+      } catch (err: any) {
+        log.warn({ err: err.message }, '定时清理 AI 指标失败');
+      }
+    },
+    24 * 60 * 60 * 1000
   );
-});
+  aiMetricsCleanupTimer.unref?.();
 
-// ========== 优雅关闭 ==========
-function gracefulShutdown(signal: string) {
-  log.info({ signal }, '收到信号，正在优雅关闭');
+  // 每日跑一次清理，让长驻进程也能持续回收空间
+  const gcTimer = setInterval(() => {
+    try {
+      const staged = gcStagedImages();
+      const orphans = cleanupOrphanImages();
+      if (staged + orphans > 0) {
+        log.info({ staged, orphans }, '定时清理：过期暂存图与孤儿文件');
+      }
+    } catch (err: any) {
+      log.warn({ err: err.message }, '定时清理失败');
+    }
+  }, 24 * 60 * 60 * 1000);
+  gcTimer.unref?.();
 
-  server.close(() => {
-    log.info({}, 'HTTP 服务器已关闭');
-    db.close();
-    log.info({}, '数据库连接已关闭');
-    process.exit(0);
+  const server = http.createServer(app);
+
+  // ========== 启动服务器 ==========
+  server.listen(env.PORT, env.HOST, () => {
+    const allowed = (env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+    log.info(
+      { host: env.HOST, port: env.PORT, model: env.SENSENOVA_MODEL, reasoningEffort: env.SENSENOVA_REASONING_EFFORT, cors: allowed.length ? allowed.join(', ') : '(未配置，仅同源访问)' },
+      '1对1老师教学服务工作台 - 后端服务已启动'
+    );
   });
 
-  // 强制退出兜底（10 秒）
-  setTimeout(() => {
-    log.error({ signal }, '关闭超时，强制退出');
-    process.exit(1);
-  }, 10000).unref();
+  // ========== 优雅关闭 ==========
+  function gracefulShutdown(signal: string) {
+    log.info({ signal }, '收到信号，正在优雅关闭');
+
+    server.close(() => {
+      log.info({}, 'HTTP 服务器已关闭');
+      db.close();
+      log.info({}, '数据库连接已关闭');
+      process.exit(0);
+    });
+
+    // 强制退出兜底（10 秒）
+    setTimeout(() => {
+      log.error({ signal }, '关闭超时，强制退出');
+      process.exit(1);
+    }, 10000).unref();
+  }
+
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+  process.on('unhandledRejection', (reason) => {
+    log.error({ reason: String(reason) }, '未处理的 Promise 拒绝');
+  });
+
+  process.on('uncaughtException', (error) => {
+    log.fatal({ err: error.stack }, '未捕获的异常');
+    gracefulShutdown('uncaughtException');
+  });
 }
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-process.on('unhandledRejection', (reason) => {
-  log.error({ reason: String(reason) }, '未处理的 Promise 拒绝');
-});
-
-process.on('uncaughtException', (error) => {
-  log.fatal({ err: error.stack }, '未捕获的异常');
-  gracefulShutdown('uncaughtException');
-});
+startServer();

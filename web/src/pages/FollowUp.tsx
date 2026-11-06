@@ -287,10 +287,12 @@ export default function FollowUp() {
       if (remote.form) {
         setForm((prev) => {
           const next: FormState = { ...prev };
-          for (const [key, value] of Object.entries(remote.form)) {
+          for (const [key, value] of Object.entries(remote.form) as Array<[keyof FormState, unknown]>) {
             // 正在输入 / 刚改过的字段不覆盖，避免打断
             if (effSkip.has(key)) continue;
-            (next as any)[key] = value;
+            // 草稿与本地的 FormState 同构，按运行时同 key 赋值；TS 无法证明这点，
+            // 用受控的 Record 写入替代 as any
+            (next as Record<keyof FormState, unknown>)[key] = value;
           }
           return next;
         });

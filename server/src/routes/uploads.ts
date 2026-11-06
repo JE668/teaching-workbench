@@ -213,7 +213,7 @@ router.get('/images/:userId/:filename', (req: AuthenticatedRequest, res) => {
 
   // 关键：只能读自己目录下的文件，否则 B 能读 A 的学生照片
   const myUsername = String(
-    ((db.prepare('SELECT username FROM users WHERE id = ?').get(req.userId) as any)?.username || '')
+    ((db.prepare('SELECT username FROM users WHERE id = ?').get(req.userId) as { username: string } | undefined)?.username || '')
   );
   const mine = ownerParam === String(req.userId) || (myUsername !== '' && ownerParam === myUsername);
   if (!mine) {

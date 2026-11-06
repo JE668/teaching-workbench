@@ -84,7 +84,7 @@ export function readRaw(key: string, userId: number): string | null {
   try {
     const row = db
       .prepare('SELECT value FROM settings_user WHERE user_id = ? AND key = ?')
-      .get(userId, key) as any;
+      .get(userId, key) as { value: string } | undefined;
     return row ? String(row.value) : null;
   } catch {
     return null;

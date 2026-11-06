@@ -35,8 +35,8 @@ function seedUser(username: string): number {
   return Number(info.lastInsertRowid);
 }
 
-before(() => {
-  initDatabase();
+before(async () => {
+  await initDatabase();
 });
 
 describe('时区迁移（UTC → 北京时间）', () => {

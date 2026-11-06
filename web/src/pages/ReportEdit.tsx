@@ -220,7 +220,8 @@ export default function ReportEdit() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [aiError, setAiError] = useState<{ status?: number; detail?: any; message: string } | null>(null);
+  type AiErrorDetail = { error?: string; message?: string; [key: string]: unknown };
+  const [aiError, setAiError] = useState<{ status?: number; detail?: AiErrorDetail; message: string } | null>(null);
 
   // 草稿历史
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
@@ -701,8 +702,9 @@ export default function ReportEdit() {
       );
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {
-        const status = (e as any)?.status;
-        const detail = (e as any)?.detail;
+        const err = e as { status?: number; detail?: AiErrorDetail };
+        const status = err?.status;
+        const detail = err?.detail;
         setAiError({
           status,
           detail,

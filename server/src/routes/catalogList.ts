@@ -18,6 +18,58 @@ import {
   type CatalogExcelInput,
 } from '../utils/catalogExcel.js';
 
+/** course_catalog 表完整行结构（SELECT * 返回的形状） */
+interface CatalogCourseRow {
+  id: number;
+  user_id: number;
+  import_id: number | null;
+  band: string;
+  term: string;
+  grade: string;
+  subject: string;
+  track: string;
+  seq: number;
+  content: string;
+  type: string;
+  score: string;
+  difficulty: string;
+  impact: string;
+  textbook: string;
+  section: string;
+  sheet: string;
+  source_row: number;
+  mastery_star: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** usage map 里每个课程的聚合条目 */
+interface CourseUsageEntry {
+  course_id: number;
+  taught: number;
+  planned: number;
+  observed: number;
+  entries: Array<{
+    report_id: number;
+    student_id: number | null;
+    student_name: string;
+    year_month: string;
+    kind: string;
+    source: string | null;
+  }>;
+}
+
+/** /usage 聚合行：报告条目 × 课程 */
+interface CourseUsageRow {
+  course_id: number;
+  kind: string;
+  source: string | null;
+  ref_id: number;
+  student_id: number | null;
+  student_name: string | null;
+  year_month: string;
+}
+
 const router = Router();
 
 function clean(v: unknown): string {
@@ -63,7 +115,7 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
     const countSql = `SELECT COUNT(*) AS n FROM course_catalog WHERE ${clause}`;
 
     const total = (db.prepare(countSql).get(...params) as { n: number }).n;
-    const rows = db.prepare(sql).all(...params, limit) as any[];
+    const rows = db.prepare(sql).all(...params, limit) as CatalogCourseRow[];
     // total 是**未截断**的匹配条数，rows.length 才是实际返回的。
     // 以前直接写 rows.length，一旦超过 limit 就会把「少了几千条」报成「就这么点」。
     res.json({ courses: rows.map(mapCourse), total, rows: rows.length });
@@ -83,7 +135,7 @@ router.get('/xlsx', async (req: AuthenticatedRequest, res) => {
     const { clause, params } = courseFilter(req);
     const rows = db
       .prepare(`SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER}`)
-      .all(...params) as any[];
+      .all(...params) as CatalogCourseRow[];
 
     const input: CatalogExcelInput = {
       title: `课程目录 · 共 ${rows.length} 课`,
@@ -152,13 +204,13 @@ router.get('/usage', (req: AuthenticatedRequest, res) => {
            WHERE o.user_id = ? AND o.course_id IS NOT NULL`}
          ) ORDER BY course_id, year_month DESC, student_name`
       )
-      .all(...(onlyStudent ? [userId, studentParam] : [userId, userId])) as any[];
+      .all(...(onlyStudent ? [userId, studentParam] : [userId, userId])) as CourseUsageRow[];
 
     const usage: Record<string, unknown> = {};
     for (const r of rows) {
       const key = String(r.course_id);
       const entry =
-        (usage[key] as any) ||
+        (usage[key] as CourseUsageEntry | undefined) ||
         (usage[key] = { course_id: r.course_id, taught: 0, planned: 0, observed: 0, entries: [] });
       if (r.kind === 'plan') entry.planned++;
       else if (r.source === 'observation') entry.observed++;
@@ -238,7 +290,7 @@ router.post('/courses/suggest-stars', (req: AuthenticatedRequest, res: Response)
            ${COURSE_ORDER}
            LIMIT ?`
         )
-        .all(...params, limit) as any[];
+        .all(...params, limit) as CatalogCourseRow[];
 
       send('start', { total: rows.length, limit, onlyEmpty });
       if (!rows.length) {
@@ -329,7 +381,7 @@ export function mapCourse(row: any) {
 router.get('/facets', (req: AuthenticatedRequest, res) => {
   try {
     const values = (col: string) =>
-      (db.prepare(`SELECT DISTINCT ${col} AS v FROM course_catalog`).all() as any[])
+      (db.prepare(`SELECT DISTINCT ${col} AS v FROM course_catalog`).all() as { v: unknown }[])
         .map((r) => String(r.v ?? ''));
 
     const distinct = (col: string, cmp: (a: string, b: string) => number) =>
@@ -377,7 +429,7 @@ router.patch('/courses/:id', (req: AuthenticatedRequest, res) => {
     const r = db.prepare(`UPDATE course_catalog SET ${sets.join(', ')} WHERE id = ?`).run(...params);
     if (!r.changes) return res.status(404).json({ error: '课程不存在' });
 
-    res.json({ course: mapCourse(db.prepare('SELECT * FROM course_catalog WHERE id = ?').get(id) as any) });
+    res.json({ course: mapCourse(db.prepare('SELECT * FROM course_catalog WHERE id = ?').get(id) as CatalogCourseRow) });
   } catch (error: any) {
     res.status(500).json({ error: '更新失败', message: error.message });
   }

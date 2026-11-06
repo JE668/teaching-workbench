@@ -14,6 +14,56 @@ const router = Router();
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
+/** followups 表完整行结构（SELECT * 返回的形状） */
+interface FollowUpRow {
+  id: number;
+  user_id: number;
+  student_id: number | null;
+  student_name: string;
+  grade: string;
+  subject: string;
+  topic: string;
+  performance: string;
+  mastery: string;
+  session_count: number;
+  course_type: string;
+  module: string;
+  modules: string;
+  images: string;
+  content: string;
+  word_count: number;
+  batch_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** /last 接口的精简投影行 */
+interface LastFollowUpRow {
+  id: number;
+  topic: string;
+  performance: string;
+  mastery: string;
+  session_count: number;
+  course_type: string;
+  module: string;
+  subject: string;
+  grade: string;
+  word_count: number;
+  created_at: string;
+}
+
+/** /suggestions 的 topic/performance 投影行 */
+interface SuggestionRow {
+  topic: string | null;
+  performance: string | null;
+}
+
+/** /:id/batch 里第一条查询的投影行 */
+interface BatchIdRow {
+  id: number;
+  batch_id: string | null;
+}
+
 /** 获取回访列表（支持按学生/学科/年级过滤 + 分页） */
 router.get('/', (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -40,7 +90,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
     const p = Math.max(1, parseInt(page, 10) || 1);
     const ps = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(pageSize, 10) || DEFAULT_PAGE_SIZE));
 
-    const total = (db.prepare('SELECT COUNT(*) AS n FROM followups ' + where).get(...params) as any).n;
+    const total = (db.prepare('SELECT COUNT(*) AS n FROM followups ' + where).get(...params) as { n: number }).n;
     const totalPages = Math.max(1, Math.ceil(total / ps));
     const offset = (p - 1) * ps;
 
@@ -48,7 +98,7 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
     // 因此必须追加 id 作为稳定排序键。
     const rows = db
       .prepare('SELECT * FROM followups ' + where + ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
-      .all(...params, ps, offset) as any[];
+      .all(...params, ps, offset) as FollowUpRow[];
 
     res.json({
       followups: mapFollowUps(rows),
@@ -67,13 +117,13 @@ router.get('/stats', (req: AuthenticatedRequest, res: Response) => {
     // 仅取需要的列，避免把全文都拉出来
     const rows = db
       .prepare('SELECT images, subject FROM followups WHERE user_id = ?')
-      .all(userId) as any[];
+      .all(userId) as { images: string | null; subject: string }[];
 
     const totalImages = rows.reduce((sum, r) => sum + parseImages(r.images).length, 0);
 
     const recent = db
       .prepare('SELECT * FROM followups WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 5')
-      .all(userId) as any[];
+      .all(userId) as FollowUpRow[];
 
     res.json({
       totalFollowUps: rows.length,
@@ -98,12 +148,12 @@ router.get('/suggestions', (req: AuthenticatedRequest, res: Response) => {
           .prepare(
             'SELECT topic, performance FROM followups WHERE user_id = ? AND student_id = ? ORDER BY created_at DESC LIMIT 100'
           )
-          .all(userId, studentId) as any[])
+          .all(userId, studentId) as SuggestionRow[])
       : [];
 
     const global = db
       .prepare('SELECT topic, performance FROM followups WHERE user_id = ? ORDER BY created_at DESC LIMIT 300')
-      .all(userId) as any[];
+      .all(userId) as SuggestionRow[];
 
     const topicCount = new Map<string, number>();
     for (const row of [...scoped, ...global]) {
@@ -156,7 +206,7 @@ router.get('/last', (req: AuthenticatedRequest, res: Response) => {
          FROM followups WHERE user_id = ? AND student_id = ?
          ORDER BY created_at DESC, id DESC LIMIT 1`
       )
-      .get(userId, studentId) as any;
+      .get(userId, studentId) as LastFollowUpRow | undefined;
 
     if (!row) {
       return res.json({ followup: null });
@@ -192,7 +242,7 @@ router.get('/:id/batch', (req: AuthenticatedRequest, res: Response) => {
     const followupId = parseInt(req.params.id, 10);
     const f = db
       .prepare('SELECT id, batch_id FROM followups WHERE id = ? AND user_id = ?')
-      .get(followupId, userId) as any;
+      .get(followupId, userId) as BatchIdRow | undefined;
 
     if (!f) {
       return res.status(404).json({ error: '回访记录不存在' });
@@ -203,7 +253,7 @@ router.get('/:id/batch', (req: AuthenticatedRequest, res: Response) => {
 
     const members = db
       .prepare('SELECT * FROM followups WHERE user_id = ? AND batch_id = ? ORDER BY student_id ASC')
-      .all(userId, f.batch_id) as any[];
+      .all(userId, f.batch_id) as FollowUpRow[];
 
     res.json({
       batch: {
@@ -222,7 +272,7 @@ router.get('/:id', (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.userId!;
     const followupId = parseInt(req.params.id, 10);
-    const row = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(followupId, userId) as any;
+    const row = db.prepare('SELECT * FROM followups WHERE id = ? AND user_id = ?').get(followupId, userId) as FollowUpRow | undefined;
     if (!row) {
       return res.status(404).json({ error: '回访记录不存在' });
     }

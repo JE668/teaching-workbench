@@ -5,6 +5,24 @@ import { env } from '../config/env.js';
 import { parseImages } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 
+
+/** users 表精简投影 */
+interface UserIdNameRow {
+  id: number;
+  username: string;
+}
+
+/** followups 图片列投影 */
+interface ImagesRow {
+  images: string | null;
+}
+
+/** drafts 载荷投影 */
+interface DraftPayloadRow {
+  user_id?: number;
+  payload: string;
+}
+
 /**
  * 图片生命周期管理。
  *
@@ -47,7 +65,7 @@ export function safeFolderName(username: string): string {
 
 /** 某用户的归档目录名：优先账户名，不安全时回落数字 ID */
 export function ownerFolderFor(userId: number): string {
-  const row = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as any;
+  const row = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as { username: string } | undefined;
   const folder = row ? safeFolderName(row.username || '') : '';
   return folder || String(userId);
 }
@@ -146,7 +164,7 @@ export function migrateLegacyFolders(): { movedFiles: number; renamedDirs: numbe
 
   if (!fs.existsSync(env.UPLOAD_DIR)) return { movedFiles, renamedDirs };
 
-  const users = db.prepare('SELECT id, username FROM users').all() as any[];
+  const users = db.prepare('SELECT id, username FROM users').all() as UserIdNameRow[];
   for (const u of users) {
     const folder = safeFolderName(u.username || '');
     if (!folder) continue; // 账户名不适合做目录名 → 保留数字 ID 目录
@@ -171,7 +189,7 @@ export function migrateLegacyFolders(): { movedFiles: number; renamedDirs: numbe
     }
 
     // 2) 改写数据库引用（followups.images 为 JSON 数组）
-    const rows = db.prepare('SELECT id, images FROM followups WHERE user_id = ?').all(u.id) as any[];
+    const rows = db.prepare('SELECT id, images FROM followups WHERE user_id = ?').all(u.id) as { id: number; images: string | null }[];
     const update = db.prepare('UPDATE followups SET images = ? WHERE id = ?');
     for (const r of rows) {
       const imgs = parseImages(r.images).map((p) =>
@@ -181,7 +199,7 @@ export function migrateLegacyFolders(): { movedFiles: number; renamedDirs: numbe
     }
 
     // 3) 改写草稿里的引用
-    const drafts = db.prepare('SELECT user_id, payload FROM drafts WHERE user_id = ?').all(u.id) as any[];
+    const drafts = db.prepare('SELECT user_id, payload FROM drafts WHERE user_id = ?').all(u.id) as { user_id: number; payload: string }[];
     const updateDraft = db.prepare('UPDATE drafts SET payload = ? WHERE user_id = ?');
     for (const d of drafts) {
       try {
@@ -260,11 +278,11 @@ export function cleanupOrphanImages(maxAgeMs = STAGING_TTL_MS): number {
 
   const referenced = new Set<string>();
 
-  for (const r of db.prepare('SELECT images FROM followups').all() as any[]) {
+  for (const r of db.prepare('SELECT images FROM followups').all() as ImagesRow[]) {
     for (const p of parseImages(r.images)) referenced.add(p);
   }
 
-  for (const d of db.prepare('SELECT payload FROM drafts').all() as any[]) {
+  for (const d of db.prepare('SELECT payload FROM drafts').all() as DraftPayloadRow[]) {
     try {
       const payload = JSON.parse(d.payload);
       if (Array.isArray(payload?.images)) {

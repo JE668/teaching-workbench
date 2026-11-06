@@ -68,6 +68,15 @@ export const OBSERVATION_DIMENSIONS = [
  *
  * 1对1 课堂：全程禁用"小组/合作/同学们/多名学生"等集体口径。
  */
+/** OpenAI 流式 chunk 的最小结构（SDK Stream 泛型收窄用） */
+interface ChatStreamChunk {
+  choices?: Array<{
+    delta?: { content?: string | null };
+    finish_reason?: string | null;
+  }>;
+}
+
+
 export function buildObservationPrompt(p: ObservationReportParams): string {
   // 注意：学生姓名有意不放进提示词 —— 报告统一称"学生"。
   // 传进去模型很容易顺着写具体名字，尤其报告会被打印进 Word 表。
@@ -239,7 +248,7 @@ export async function* streamObservationGeneration(
       reasoning_effort: config.reasoningEffort,
       stream: true,
     };
-    const stream = (await ai.chat.completions.create(body)) as any;
+    const stream = (await ai.chat.completions.create(body)) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
       const delta = chunk?.choices?.[0]?.delta?.content;
       if (delta) yield delta as string;
