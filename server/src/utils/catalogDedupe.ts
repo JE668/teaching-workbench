@@ -152,14 +152,19 @@ export function dedupeCourseCatalog(options: { force?: boolean } = {}): { groups
 
 /**
  * 重置为内置目录：清除所有非内置导入及其课程。
- * 
+ *
  * 会把月度总结 / 听评课里指向被删课程的引用改指到内置同名课。
  * 收尾会再跑一轮去重。
+ *
+ * 返回字段沿用 ResetReport 口径（removed / importsRemoved）——
+ * 设置页 toast 与 e2e 断言依赖这套字段名，不要改成 removedCourses 之类。
  */
-export async function resetCatalogToBuiltIn(): Promise<{ removedImports: number; removedCourses: number; reassigned: number; remaining: number; reseeded: number; deduped: number }> {
-  let removedImports = 0;
-  let removedCourses = 0;
+export async function resetCatalogToBuiltIn(): Promise<{ removed: number; importsRemoved: number; reassigned: number; remaining: number; reseeded: number; deduped: number }> {
+  let importsRemoved = 0;
+  let removed = 0;
   let reassigned = 0;
+  let reseeded = 0;
+  let deduped = 0;
 
   // 找出所有非内置导入
   const nonBuiltinImports = db.prepare(`
@@ -167,7 +172,20 @@ export async function resetCatalogToBuiltIn(): Promise<{ removedImports: number;
   `).all() as { id: number }[];
 
   if (nonBuiltinImports.length === 0) {
-    return { removedImports: 0, removedCourses: 0, reassigned: 0, remaining: 0, reseeded: 0, deduped: 0 };
+    // 没有可清的导入也要走完收尾：重新灌库把缺的内置学段补回来。
+    // e2e / 新库场景里启动灌库被跳过（NODE_ENV=test），这里就是内置目录的唯一来路 ——
+    // 旧版语义是「线上入口永远重灌」，不能因早退而跳过。
+    reseeded = (await seedBuiltInCatalog({ force: true })).courses;
+    const after = dedupeCourseCatalog({ force: true });
+    deduped = after.removed;
+    return {
+      removed: 0,
+      importsRemoved: 0,
+      reassigned: 0,
+      remaining: (db.prepare('SELECT COUNT(*) AS n FROM course_catalog').get() as { n: number }).n,
+      reseeded,
+      deduped,
+    };
   }
 
   const nonBuiltinIds = nonBuiltinImports.map(r => r.id);
@@ -206,12 +224,12 @@ export async function resetCatalogToBuiltIn(): Promise<{ removedImports: number;
     // 删除受影响的课程
     if (affectedIds.length > 0) {
       const affectedPlaceholders = affectedIds.map(() => '?').join(',');
-      removedCourses = db.prepare(`DELETE FROM course_catalog WHERE id IN (${affectedPlaceholders})`).run(...affectedIds).changes;
+      removed = db.prepare(`DELETE FROM course_catalog WHERE id IN (${affectedPlaceholders})`).run(...affectedIds).changes;
     }
 
     // 删除非内置导入记录
     const importPlaceholders = nonBuiltinIds.map(() => '?').join(',');
-    removedImports = db.prepare(`DELETE FROM catalog_imports WHERE id IN (${importPlaceholders})`).run(...nonBuiltinIds).changes;
+    importsRemoved = db.prepare(`DELETE FROM catalog_imports WHERE id IN (${importPlaceholders})`).run(...nonBuiltinIds).changes;
 
     // 再跑一轮去重，清理内置目录内部的历史重复
     const duplicateGroups = db.prepare(`
@@ -259,8 +277,14 @@ export async function resetCatalogToBuiltIn(): Promise<{ removedImports: number;
     }
   })();
 
-  // 重新灌库内置目录（小初 + 高中）
-  const seedResult = await seedBuiltInCatalog({ force: true });
+  // 收尾重新灌库内置目录（小初 + 高中）：老师若先于内置导过同一份文件，
+  // 上面删掉他那些课程后整段学段会缺失，这里按 sha 判重补回来。
+  reseeded = (await seedBuiltInCatalog({ force: true })).courses;
 
-  return { removedImports, removedCourses, reassigned, remaining: 0, reseeded: seedResult.courses, deduped: 0 };
+  // 再跑一轮去重：重灌的行和库里剩余的可能重合
+  deduped = dedupeCourseCatalog({ force: true }).removed;
+
+  const remaining = (db.prepare('SELECT COUNT(*) AS n FROM course_catalog').get() as { n: number }).n;
+
+  return { removed, importsRemoved, reassigned, remaining, reseeded, deduped };
 }

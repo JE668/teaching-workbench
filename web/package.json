@@ -16,7 +16,8 @@
     "e2e:prepare": "node -e \"require('fs').rmSync('../server/.e2e-data',{recursive:true,force:true})\" && npm run typecheck:e2e && npm run build --prefix ../server && vite build",
     "e2e": "npm run e2e:kill && playwright test",
     "e2e:full": "npm run e2e:kill && npm run e2e:prepare && playwright test",
-    "e2e:kill": "lsof -tiTCP:3111,3999,4173 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true"
+    "e2e:kill": "lsof -tiTCP:3111,3999,4173 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true",
+    "test:e2e:local": "npm run e2e:full"
   },
   "dependencies": {
     "clsx": "^2.1.1",

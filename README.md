@@ -342,7 +342,7 @@ Internet → 域名 → Lucky (反代+SSL)
 
 ```bash
 # 一键：清空 e2e 专用库 → typecheck → 构建前后端 → 跑全部 66 个用例
-cd web && npm run e2e:full
+cd web && npm run test:e2e:local   # 即 e2e:full 的别名
 ```
 
 前置条件只有两个：系统装了 Chrome（用例走 `channel: 'chrome'`，不下载 Playwright 浏览器），

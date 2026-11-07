@@ -266,11 +266,11 @@ describe('POST /api/catalog/reset-to-builtin', () => {
 
     const res = await req('POST', '/api/catalog/reset-to-builtin', { token });
     assert.equal(res.status, 200);
-    assert.equal(res.body.removedCourses, 1);
-    assert.equal(res.body.removedImports, 1);
+    // 字段名沿用 ResetReport 口径：removed / importsRemoved（设置页 toast 与 e2e 依赖）
+    assert.equal(res.body.removed, 1);
+    assert.equal(res.body.importsRemoved, 1);
     // 线上入口永远顺带重新灌库，小初 + 高中两份全年目录都得回来
-    // Note: reseeded is not returned by the function
-    // assert.ok(res.body.reseeded > 1000, '应该重新灌回内置目录，实际 ' + res.body.reseeded);
+    assert.ok(res.body.reseeded > 1000, '应该重新灌回内置目录，实际 ' + res.body.reseeded);
     const builtinFiles = db
       .prepare('SELECT filename FROM catalog_imports WHERE is_builtin = 1')
       .all() as { filename: string }[];
