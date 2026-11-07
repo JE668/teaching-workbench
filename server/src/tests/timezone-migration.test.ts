@@ -19,14 +19,34 @@ function resetMarker() {
   db.prepare('DELETE FROM schema_migrations WHERE name = ?').run(MARKER);
 }
 
-/** 让整个库看起来像「旧版 UTC 容器」写出来的：所有时间戳回退 8 小时，
- * 再插一条当前 UTC 时间的记录，使 MAX 落在 UTC 区间，触发订正判定。 */
+/** 让整个库看起来像「旧版 UTC 容器」写出来的：所有时间戳统一压到「遥远的过去」，
+ * 再把探针设为**此刻 UTC**，使 MAX 恰好落在 UTC 相位上。
+ *
+ * 为什么要这样写（本地绿、CI 红的老坑）：
+ *  - 不能只对全库 `-8 hours`：users.created_at 有列默认值 datetime('now','+8 hours')，
+ *    INSERT OR REPLACE 是先删后插，落库值由默认值决定、会覆盖掉 UPDATE 的效果，
+ *    于是 MAX 混进一个「北京相位」的行，skew 算成 0，迁移误判为「已是北京时间」而跳过。
+ *  - 也不能把探针写成 datetime('now','-8 hours')：后端基准是 datetime('now','+8 hours')，
+ *    两者相差 16 小时，超出 [4h,12h) 判定窗口，同样跳过。
+ *  - 所以先「抹平」全库时间戳，再单独写探针 —— 不依赖任何执行时序或列默认值。
+ */
 function makeDbUtcBased() {
+  db.prepare(
+    "INSERT OR REPLACE INTO users (username, password) VALUES ('tz-probe', 'x')"
+  ).run();
+
+  // 抹平：所有服务端时间戳都压到 2000-01-01（远早于「此刻」，不会成为 MAX 干扰项）
   for (const [table, column] of SERVER_GENERATED_TIMES) {
-    db.prepare('UPDATE ' + table + ' SET ' + column + " = datetime(" + column + ", '-8 hours')").run();
+    db.prepare(
+      "UPDATE " + table + " SET " + column + " = '2000-01-01 00:00:00' WHERE " + column + " IS NOT NULL"
+    ).run();
   }
-  // INSERT OR REPLACE：同一测试文件里多个用例都会调这个函数，username 唯一约束会撞
-  db.prepare("INSERT OR REPLACE INTO users (username, password, created_at) VALUES ('tz-probe', 'x', datetime('now'))").run();
+
+  // 探针 = 此刻的 UTC 墙钟，即「旧版 UTC 容器」会写进库里的那种值
+  db.prepare(
+    "UPDATE users SET created_at = datetime('now') WHERE username = 'tz-probe'"
+  ).run();
+
   resetMarker();
 }
 
@@ -41,15 +61,21 @@ before(async () => {
 
 describe('时区迁移（UTC → 北京时间）', () => {
   test('库里存的是 UTC → 各表时间戳统一 +8 小时', () => {
-    const before = utcNowStr();
     makeDbUtcBased();
+
+    // 断言的是「相对位移」：迁移把库内原值整体 +8 小时。
+    // 不能拿 utcNowStr()（此刻真实 UTC）当基准 —— 伪造库里探针是 datetime('now','-8 hours')，
+    // 再加 8 小时恰好回到此刻，两者相减恒为 0，测不出任何位移（旧版正是这样误打误撞过的）。
+    const beforeValue = (
+      db.prepare('SELECT created_at FROM users WHERE username = ?').get('tz-probe') as { created_at: string }
+    ).created_at;
 
     migrateTimestampsUtcToLocal();
 
     const row = db.prepare('SELECT created_at FROM users WHERE username = ?').get('tz-probe') as any;
     assert.ok(row, '探针记录应存在');
-    const drift = toMs(row.created_at) - toMs(before);
-    assert.ok(Math.abs(drift - 8 * HOUR) < 5000, '应偏移 8 小时，实际 ' + Math.round(drift / HOUR) + ' 小时');
+    const drift = toMs(row.created_at) - toMs(beforeValue);
+    assert.ok(Math.abs(drift - 8 * HOUR) < 5000, '应在原值上偏移 8 小时，实际 ' + Math.round(drift / HOUR) + ' 小时');
   });
 
   test('已是北京时间的库 → 不重复偏移', () => {

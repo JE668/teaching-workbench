@@ -89,9 +89,16 @@ export const SERVER_GENERATED_TIMES: Array<[string, string]> = [
   ['observations', 'report_at'],
 ];
 
-/** 库里存的最新时间戳，相对「当前 UTC 时刻」的偏差（毫秒）。
- * 存的是 UTC → 偏差点（刚写过的记录几乎为 0）
- * 存的是北京时间 → 负 8 小时（把北京时间当 UTC 解析会超前 8 小时） */
+/** 库里存的最新时间戳，相对「此刻的北京时间」的偏差（毫秒）。
+ *
+ * 关键：比较基准必须取自 **SQLite 自己**（`datetime('now','+8 hours')`），
+ * 不能用 Node 的 `Date.now()` —— 后者是真正的 UTC 时刻，而库里存的是
+ * 「北京时间」这个不带时区的字符串。在 UTC runner（CI 的 ubuntu）上，
+ * 两个基准天然差 8 小时，会把「存的是 UTC」误判成「已经是北京时间」，
+ * 于是整批跳过订正（本地 macOS 是东八区，Date.now() 与北京墙钟同相，所以看不出来）。
+ *
+ * 存的是 UTC → 偏差点（刚写过的记录，与北京墙钟差 +8 小时）
+ * 存的是北京时间 → 接近 0（同相） */
 function latestUtcSkewMs(): number | null {
   let latest: string | null = null;
   for (const [table, column] of SERVER_GENERATED_TIMES) {
@@ -103,7 +110,16 @@ function latestUtcSkewMs(): number | null {
 
   const asUtc = Date.parse(latest.replace(' ', 'T') + 'Z');
   if (Number.isNaN(asUtc)) return null;
-  return Date.now() - asUtc;
+
+  // 同一 SQLite 连接里取「此刻北京时间」，与库内字符串同源同格式
+  const nowRow = db
+    .prepare("SELECT datetime('now', '+8 hours') AS n")
+    .get() as { n: string } | undefined;
+  if (!nowRow?.n) return null;
+  const beijingNow = Date.parse(nowRow.n.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(beijingNow)) return null;
+
+  return beijingNow - asUtc;
 }
 
 export function migrateTimestampsUtcToLocal(): void {
@@ -114,9 +130,16 @@ export function migrateTimestampsUtcToLocal(): void {
   }
 
   const skew = latestUtcSkewMs();
-  // 判定门槛：偏差在 0~12 小时之间才认定「库里是 UTC」。
-  // 超过 12 小时说明最后一条记录太旧，无法和「本地库 + 长时间未使用」区分，宁可不动。
-  const shift = process.env.MIGRATE_TZ_FORCE === '1' || (skew !== null && skew >= 0 && skew < 12 * 3600 * 1000);
+  // 判定门槛（skew = 此刻北京时间 − 库里最新时间戳）：
+  //   · 库里是北京时间 → 刚写过约 0；闲置一段时间则是一个正的小偏移
+  //   · 库里是 UTC      → 约 +8 小时（北京墙钟比 UTC 快 8 小时）
+  // 所以窗口取 [4h, 12h)：明显落后半小时以上才认「存的是 UTC」，避免把
+  // 时区正确的老库误判；超过 12h 说明记录太旧，与「本地库闲置很久」无法区分，宁可不动。
+  const SHIFT_MIN_MS = 4 * 3600 * 1000;
+  const SHIFT_MAX_MS = 12 * 3600 * 1000;
+  const shift =
+    process.env.MIGRATE_TZ_FORCE === '1' ||
+    (skew !== null && skew >= SHIFT_MIN_MS && skew < SHIFT_MAX_MS);
 
   if (!shift) {
     db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, datetime(\'now\', \'+8 hours\'))').run(TZ_FIX_VERSION);
