@@ -61,12 +61,16 @@ done
 [ -z "$MISSING" ] || fail "docker-compose.yml 用到的变量在 .env.production.example 缺失:$MISSING"
 echo "✅ .env.production.example 覆盖 compose 全部变量"
 
-# ===== 4. package.json 必须声明 Node 版本下限 =====
+# ===== 4. package.json 必须声明 Node 版本下限，且与实际要求一致 =====
+# 历史事故：engines 写 >=20，但 better-sqlite3@13 要求 >=22.12 —— Node 20 用户
+# npm install 能装完，到 node-gyp 编译时才崩，报错与版本无关，极难排查。
+# engines 没有 engine-strict 时只是警告，所以这里把下限本身也校验掉。
 for f in server/package.json web/package.json; do
   grep -q '"engines"' "$f" || fail "$f 缺 engines 字段"
   grep -q '"node":' "$f" || fail "$f 的 engines 缺 node"
+  grep -qE '"node": *">=22\.12\.0"' "$f" || fail "$f 的 node engines 应为 >=22.12.0（better-sqlite3@13 / vitest@5 的实际要求）"
 done
-echo "✅ engines 声明齐全"
+echo "✅ engines 声明齐全（node >=22.12.0）"
 
 # ===== 5. shared 三处副本必须一致 =====
 # 根目录 shared/ 是唯一事实源；CI 的 cp -r shared 会盖副本，本地副本漂移

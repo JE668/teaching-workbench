@@ -292,6 +292,22 @@ describe('图片访问鉴权（多用户隔离）', () => {
     assert.equal(res.status, 401, '过期令牌不应通过');
   });
 
+  test('?t= 查询令牌不再放行（回归：URL 里的令牌会进日志/历史/分享链接）', async () => {
+    const up = await req('POST', '/api/upload', { token, raw: pngForm() });
+    const p = up.body.paths[0] as string;
+
+    // 取本会话真实有效的媒体令牌值（登录时 Set-Cookie 下发的那个）
+    const rawToken = mediaCookie.split('=')[1];
+    assert.ok(rawToken, '测试前置：会话应携带媒体 cookie');
+
+    // 同一个令牌值：走 ?t= 必须被拒绝，走 cookie 仍放行
+    const viaQuery = await fetch(url('/uploads/' + p + '?t=' + encodeURIComponent(rawToken)));
+    assert.equal(viaQuery.status, 401, '?t= 不应再作为有效凭证');
+
+    const viaCookie = await fetch(url('/uploads/' + p), { headers: { Cookie: mediaCookie } });
+    assert.equal(viaCookie.status, 200, '同一令牌走 cookie 应正常放行');
+  });
+
   test('【核心】用户 B 不能访问用户 A 的图片', async () => {
     // A 上传一张图
     const aSession = await createUserSession('media-user-a');

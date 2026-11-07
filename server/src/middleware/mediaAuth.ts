@@ -84,10 +84,14 @@ export function clearMediaCookie(res: Response): void {
 /**
  * 图片路由的鉴权中间件。
  * 挂在 `/uploads/:userId/:filename` 上——依赖 params.userId 做归属校验。
+ *
+ * 只认 httpOnly cookie，不接受 `?t=` 查询参数：
+ * URL 里的令牌会落进访问日志、浏览器历史与分享链接（等于把 7 天图片访问权
+ * 泄给出现在 URL 旁的任何人）。同源 <img> 会自动带 cookie，无需查询参数；
+ * 历史上支持 ?t= 时前端也从未使用过。
  */
 export function requireMediaAuth(req: Request, res: Response, next: NextFunction) {
-  const token =
-    readCookie(req.headers.cookie, MEDIA_COOKIE) || (typeof req.query.t === 'string' ? req.query.t : undefined);
+  const token = readCookie(req.headers.cookie, MEDIA_COOKIE);
 
   const auth = verifyMediaToken(token);
   if (!auth) {

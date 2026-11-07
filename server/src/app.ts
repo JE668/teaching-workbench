@@ -100,7 +100,10 @@ export function createApp() {
   }
 
   // Body parser
-  app.use(express.json({ limit: '50mb' }));
+  // JSON 上限 5mb：图片走 multipart（multer 单张 40MB，nginx 层 45m），不经过这里；
+  // JSON 里只存图片【路径数组】与文本字段。此前全局 50mb 只是给内存放大攻击
+  // （单个 JSON 请求即可占住 50MB 堆内存）留门，收窄到业务上限之上即可。
+  app.use(express.json({ limit: '5mb' }));
 
   // ========== 图片服务（需鉴权） ==========
   // 不能直接用 express.static：那样任何拿到 URL 的人都能访问，
@@ -163,12 +166,18 @@ export function createApp() {
   });
 
   // ========== Prometheus 指标 ==========
-  // 设了 METRICS_TOKEN 就必须带 ?token=xxx 或 Authorization: Bearer，
-  // 不对一律 404（不暴露端点存在性）。未设则开放——NAS 内网默认够用，
-  // 公网/反代暴露时务必在 .env 里设置该变量。
-  // 读 process.env 而非启动期定格的 env 对象：测试要能两种模式都覆盖。
+  // 门禁规则：
+  //   - 设了 METRICS_TOKEN：必须带 ?token=xxx 或 Authorization: Bearer，
+  //     不对一律 404（不暴露端点存在性）；
+  //   - 未设 token：仅开发/测试环境开放（本机调试方便）；生产环境默认 404，
+  //     防止 Lucky 反代把整个域名（含 /metrics）暴露到公网时泄露版本、
+  //     uptime 与路径直方图。生产要开启监控就显式设置 METRICS_TOKEN。
+  // 读 process.env 而非启动期定格的 env 对象：测试要能多种模式都覆盖。
   app.get('/metrics', (req, res) => {
     const token = (process.env.METRICS_TOKEN || '').trim();
+    if (!token && process.env.NODE_ENV === 'production') {
+      return res.status(404).end();
+    }
     if (token) {
       const given = String(req.query.token || '') ||
         (/^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1] ?? '');

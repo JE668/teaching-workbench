@@ -35,9 +35,26 @@ export function rateLimit(options: RateLimitOptions) {
   cleaner.unref?.();
 
   const clientIp = (req: Request): string => {
-    // 优先取反向代理传递的真实 IP
+    // 取「距离后端最近的可信反代」写入的真实客户端 IP。
+    //
+    // 部署链：浏览器 → Lucky → nginx($proxy_add_x_forwarded_for) → 本服务。
+    // nginx 的 $proxy_add_x_forwarded_for 是【追加】：XFF 链第一段是客户端
+    // 自己填的、完全不可信（攻击者每个请求带一个随机 XFF 即可伪造无限个
+    // 限流桶，让爆破限制形同虚设）——真实 IP 在链的【最后一段】。
+    //
+    // 优先级：
+    //   1) X-Real-IP：nginx.conf 已显式设置（$remote_addr，反代直连客户端），
+    //      单一值、无伪造面，最可靠；
+    //   2) XFF 最后一段：链上最靠近 nginx 的一跳，多层代理时最准；
+    //      【不能取第一段】；
+    //   3) req.ip 兜底：未设 trust proxy 时它是反代容器的 IP——所有人共用
+    //      一条桶，会误伤全体，所以只在前两者都缺失时才用它。
+    const realIp = (req.headers['x-real-ip'] as string) || '';
+    if (realIp.trim()) return realIp.trim();
     const forwarded = (req.headers['x-forwarded-for'] as string) || '';
-    return forwarded.split(',')[0].trim() || req.ip || 'unknown';
+    const lastHop = forwarded.split(',').pop()?.trim() || '';
+    if (lastHop) return lastHop;
+    return req.ip || 'unknown';
   };
 
   return (req: Request, res: Response, next: NextFunction) => {

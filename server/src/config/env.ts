@@ -121,7 +121,9 @@ export const env = {
   DATA_DIR,
   // Tesseract OCR 语言数据目录（CI 中需下载 chi_sim.traineddata、eng.traineddata）
   TESSDATA_PREFIX: process.env.TESSDATA_PREFIX || path.resolve(DATA_DIR, 'tessdata'),
-  // /metrics 访问口令。留空 = 开放（内网默认）；公网暴露必须设置。
+  // /metrics 访问口令。留空时仅开发/测试环境开放；生产环境（NODE_ENV=production）
+  // 端点直接 404 —— 防止反代把整个域名暴露出去时泄露运行指标。生产要开监控
+  // 就显式设置该变量（openssl rand -hex 16 即可）。
   METRICS_TOKEN: (process.env.METRICS_TOKEN || '').trim(),
   // AI 指标保留天数。ai_metrics 只写不删会无限增长（拖慢 /metrics 抓取与占盘），
   // 超过保留期的运营遥测行定期删除。默认 90 天。
