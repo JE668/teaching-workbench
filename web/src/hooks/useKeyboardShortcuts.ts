@@ -66,6 +66,9 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]) {
 
       const parsed = parseShortcut(shortcut.key);
 
+      // 字母序列键特别容易和正常打字冲突（例如输入 "g f"），任何输入场景都不启用。
+      if (parsed.sequence && isInput) continue;
+
       if (parsed.sequence) {
         // 序列键处理：'g s' -> 先按 g，再按 s
         const expectedKey = parsed.sequence[sequenceStateRef.current.buffer.length];

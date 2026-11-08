@@ -155,6 +155,8 @@ const DEFAULT_PREFERENCES = {
   pendingDays: 7,
   /** 听评课 Word 里的评课人签名（未填时回落到登录用户名） */
   signature: '' as string,
+  /** 导航序列键（g f 等）。默认关闭：老师常在输入框打字，字母序列容易误跳页 */
+  navShortcutsEnabled: false as boolean,
 };
 
 /** 签名最多 20 字：这是要落进正式报送表的，长文本没有意义 */
@@ -173,6 +175,7 @@ function readPreferences(userId: number): typeof DEFAULT_PREFERENCES {
     phraseMode: saved.phraseMode === 'history_only' ? 'history_only' : 'mixed',
     pendingDays: Math.min(365, Math.max(1, parseInt(saved.pendingDays, 10) || 7)),
     signature: typeof saved.signature === 'string' ? saved.signature.slice(0, SIGNATURE_MAX) : '',
+    navShortcutsEnabled: saved.navShortcutsEnabled === true,
   };
 }
 
@@ -211,6 +214,9 @@ router.put('/preferences', authMiddleware, (req: any, res) => {
       signature: typeof incoming.signature === 'string'
         ? incoming.signature.trim().slice(0, SIGNATURE_MAX)
         : current.signature,
+      navShortcutsEnabled: incoming.navShortcutsEnabled === undefined
+        ? current.navShortcutsEnabled
+        : incoming.navShortcutsEnabled === true,
     };
 
     db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(JSON.stringify(next), userId);

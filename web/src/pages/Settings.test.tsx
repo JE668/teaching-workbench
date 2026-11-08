@@ -637,6 +637,50 @@ describe('设置页 · 防止 .env 出厂值被冻结', () => {
 });
 
 
+describe('设置页 · 快捷键', () => {
+  it('默认关闭 G + 字母导航键，并提交开启偏好', async () => {
+    const user = userEvent.setup();
+    mockSettings();
+    put.mockResolvedValue({ success: true });
+
+    renderWithProviders(<Settings />);
+    const toggle = await screen.findByRole('switch', { name: 'G + 字母导航键开关' });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText(/普通输入不会再误跳页面/)).toBeInTheDocument();
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith(
+        '/auth/preferences',
+        expect.objectContaining({ navShortcutsEnabled: true })
+      );
+    });
+    expect(await screen.findByText(/已开启。命令面板/)).toBeInTheDocument();
+  });
+
+  it('开启后可关闭', async () => {
+    const user = userEvent.setup();
+    mockSettings();
+    put.mockResolvedValue({ success: true });
+
+    renderWithProviders(<Settings />);
+    const toggle = await screen.findByRole('switch', { name: 'G + 字母导航键开关' });
+    await user.click(toggle);
+    expect(await screen.findByText(/已开启。命令面板/)).toBeInTheDocument();
+
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith(
+        '/auth/preferences',
+        expect.objectContaining({ navShortcutsEnabled: false })
+      );
+    });
+    expect(await screen.findByText(/普通输入不会再误跳页面/)).toBeInTheDocument();
+  });
+});
+
 describe('设置页 · 修改密码', () => {
   it('两次新密码不一致时阻止提交', async () => {
     const user = userEvent.setup();

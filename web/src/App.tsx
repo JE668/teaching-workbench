@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useRef, useState, useCallback, useMem
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider, useToast } from './components/ui/Toast';
+import { usePreferences } from './hooks/usePreferences';
 import { onAppUpdated } from './lib/serviceWorker';
 import Layout from './components/Layout';
 import { CommandPalette } from './components/ui/CommandPalette';
@@ -124,6 +125,7 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const toast = useToast();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const { preferences } = usePreferences();
 
   // 页面级动作（需要根据当前路由动态注册）
   const navigate = useNavigate();

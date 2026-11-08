@@ -15,6 +15,8 @@ export interface Preferences {
   pendingDays: number;
   /** 听评课 Word 里的评课人签名；留空时导出回落到登录用户名 */
   signature: string;
+  /** 导航序列键（g f 等）。默认关闭，避免输入时误跳页面 */
+  navShortcutsEnabled: boolean;
 }
 
 const DEFAULTS: Preferences = {
@@ -22,6 +24,7 @@ const DEFAULTS: Preferences = {
   // 一周一次课的节奏：7 天刚到期就提醒
   pendingDays: 7,
   signature: '',
+  navShortcutsEnabled: false,
 };
 
 export function usePreferences() {

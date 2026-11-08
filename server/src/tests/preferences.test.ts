@@ -23,20 +23,23 @@ describe('用户偏好', () => {
     // 一周一次课的节奏：7 天刚到期就提醒
     assert.equal(res.body.preferences.pendingDays, 7);
     assert.equal(res.body.preferences.signature, '', '签名默认为空（导出时回落登录用户名）');
+    assert.equal(res.body.preferences.navShortcutsEnabled, false, '导航序列键默认关闭，避免输入时误跳页');
   });
 
   test('可保存并读回', async () => {
     const res = await req('PUT', '/api/auth/preferences', {
       token,
-      body: { phraseMode: 'history_only', pendingDays: 14 },
+      body: { phraseMode: 'history_only', pendingDays: 14, navShortcutsEnabled: true },
     });
     assert.equal(res.status, 200);
     assert.equal(res.body.preferences.phraseMode, 'history_only');
     assert.equal(res.body.preferences.pendingDays, 14);
+    assert.equal(res.body.preferences.navShortcutsEnabled, true);
 
     const read = await req('GET', '/api/auth/preferences', { token });
     assert.equal(read.body.preferences.phraseMode, 'history_only');
     assert.equal(read.body.preferences.pendingDays, 14);
+    assert.equal(read.body.preferences.navShortcutsEnabled, true);
   });
 
   test('部分更新不会重置另一个字段', async () => {
@@ -89,6 +92,7 @@ describe('用户偏好', () => {
 
     const read = await req('GET', '/api/auth/preferences', { token });
     assert.deepEqual(Object.keys(read.body.preferences).sort(), [
+      'navShortcutsEnabled',
       'pendingDays',
       'phraseMode',
       'signature',

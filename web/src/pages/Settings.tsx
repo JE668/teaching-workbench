@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle, PenLine, BookOpen, Trash2 } from 'lucide-react';
+import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle, PenLine, BookOpen, Trash2, Keyboard } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -671,6 +671,52 @@ export default function Settings() {
           >
             保存签名
           </Button>
+        </div>
+      </Card>
+
+      {/* ===== 快捷键 ===== */}
+      <Card className="lg:max-w-3xl">
+        <CardHeader
+          title="快捷键"
+          description="只在需要时开启字母导航键，避免输入内容时误跳页面"
+          icon={<Keyboard className="h-4 w-4" />}
+        />
+        <div className="space-y-4 p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-slate-700">G + 字母导航键</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                例如 G F 跳到课后回访。默认关闭；开启后也需要先点击页面空白处，在输入框里输入时不会触发。
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={preferences.navShortcutsEnabled}
+              aria-label="G + 字母导航键开关"
+              onClick={() => updatePreferences({ navShortcutsEnabled: !preferences.navShortcutsEnabled })}
+              className="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+            >
+              <span
+                className={
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ' +
+                  (preferences.navShortcutsEnabled ? 'translate-x-6' : 'translate-x-1')
+                }
+              />
+            </button>
+          </div>
+          <div
+            className={
+              'rounded-xl px-3.5 py-3 text-xs leading-relaxed ring-1 ' +
+              (preferences.navShortcutsEnabled
+                ? 'bg-amber-50 text-amber-700 ring-amber-200'
+                : 'bg-brand-50 text-brand-700 ring-brand-200')
+            }
+          >
+            {preferences.navShortcutsEnabled
+              ? '已开启。命令面板的 ⌘K、保存 ⌘S 和生成 ⌘Enter 不受影响。'
+              : '已关闭。普通输入不会再误跳页面；⌘K 命令面板仍可用。'}
+          </div>
         </div>
       </Card>
 
