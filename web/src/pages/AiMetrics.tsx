@@ -322,9 +322,8 @@ export default function AiMetrics() {
   const maxCalls = Math.max(...endpoints.map(e => e.calls), 1);
   const maxTokens = Math.max(...endpoints.map(e => e.totalTokens), 1);
   const maxLatency = Math.max(...endpoints.map(e => e.avgLatencyMs), 1);
-
-  // 最近 30 天 vs 前 30 天对比（简化版：只用当前周期的总数）
-  const prevCalls = totalCalls; // 实际应该查前一周期，这里简化
+  const firstPeriod = timeseries[0]?.period;
+  const lastPeriod = timeseries[timeseries.length - 1]?.period;
 
   return (
     <div className="space-y-5">
@@ -335,7 +334,7 @@ export default function AiMetrics() {
             AI 调用成本/性能看板
           </h1>
           <p className="mt-0.5 text-sm text-slate-400">
-            基于最近 {days} 天的 ai_metrics 数据 · 保留 90 天 · 仅统计不记业务敏感内容
+            基于最近 {days} 天的 ai_metrics 数据 · 仅统计不记业务敏感内容
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -377,7 +376,7 @@ export default function AiMetrics() {
           label="总 Token"
           value={fmtNum(totalTokens)}
           icon={<Zap size={18} />}
-          subtitle={"约 $" + (totalTokens / 1000 * 0.002).toFixed(2)}
+          subtitle={"约 $" + (totalTokens / 1000 * 0.002).toFixed(2) + "（按 $0.002/1K tokens 估算）"}
         />
         <StatCard
           label="错误数"
@@ -527,6 +526,12 @@ export default function AiMetrics() {
           <div className="h-72">
             <Sparkline data={timeseries} color="brand" height={288} metric={metric} />
           </div>
+          {firstPeriod && lastPeriod && (
+            <div className="mt-2 flex justify-between text-xs text-slate-400">
+              <span>{firstPeriod}</span>
+              <span>{lastPeriod}</span>
+            </div>
+          )}
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatCard label="峰值调用" value={fmtNum(Math.max(...timeseries.map(d => d.calls), 0))} icon={<TrendingUp size={18} />} />
             <StatCard label="峰值 Token" value={fmtNum(Math.max(...timeseries.map(d => d.tokens || 0), 0))} icon={<Zap size={18} />} />

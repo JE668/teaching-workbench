@@ -7,7 +7,7 @@
 import { Router } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
-import { getAiMetricsSummary, getRecentAiErrors, cleanupAiMetrics } from '../services/aiMetrics.js';
+import { cleanupAiMetrics } from '../services/aiMetrics.js';
 
 /** ai_metrics 聚合行（/summary 用） */
 interface AiMetricAggRow {
@@ -55,6 +55,11 @@ const router = Router();
 
 function parseQueryNumber(value: unknown, fallback: number): number {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBodyNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -133,7 +138,6 @@ router.get('/timeseries', (req: AuthenticatedRequest, res) => {
       return res.status(400).json({ error: 'metric 必须是 calls|tokens|latency|success_rate|errors 之一' });
     }
 
-    const dateFormat = interval === 'hour' ? '%Y-%m-%d %H:00' : '%Y-%m-%d';
     const groupBy = interval === 'hour'
       ? "strftime('%Y-%m-%d %H:00', created_at)"
       : "date(created_at)";
@@ -254,7 +258,7 @@ router.get('/endpoints', (req: AuthenticatedRequest, res) => {
  */
 router.post('/cleanup', (req: AuthenticatedRequest, res) => {
   try {
-    const days = Math.max(7, Math.floor(Number(req.body?.days || 90)));
+    const days = Math.min(Math.max(Math.floor(parseBodyNumber(req.body?.days, 90)), 7), 365);
     const deleted = cleanupAiMetrics(days, req.userId!);
     res.json({ deleted, days });
   } catch (error: any) {
