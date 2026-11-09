@@ -17,6 +17,8 @@ export async function startServer(): Promise<string> {
 
 export async function stopServer(): Promise<void> {
   if (!server) return;
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
   await new Promise<void>((resolve) => server!.close(() => resolve()));
   server = null;
 }

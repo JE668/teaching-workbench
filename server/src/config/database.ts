@@ -24,6 +24,12 @@ export const db = new Database(dbPath);
 // 启用 WAL 模式提升并发性能
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+// WAL 模式推荐配置：避免并发写入立刻报 SQLITE_BUSY，
+// 并用 NORMAL 同步等级换取明显更低的磁盘 I/O（WAL 下仍不会丢已提交事务）。
+// 16MB cache：当前数据量完全够用，也不会挤占 NAS 常规内存。
+db.pragma('busy_timeout = 5000');
+db.pragma('synchronous = NORMAL');
+db.pragma('cache_size = -16000');
 
 /**
  * 确保某张表存在指定列，缺则补上（SQLite 的简易迁移）。
