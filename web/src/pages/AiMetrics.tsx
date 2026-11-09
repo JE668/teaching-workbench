@@ -100,13 +100,15 @@ const DAYS_OPTIONS = [
   { value: '90', label: '最近 90 天' },
 ];
 
-const fmtNum = (n: number) => {
+const fmtNum = (n: number | null | undefined) => {
+  if (n == null || !Number.isFinite(n)) return '0';
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return String(Math.round(n));
 };
 
-const fmtTime = (ms: number) => {
+const fmtTime = (ms: number | null | undefined) => {
+  if (ms == null || !Number.isFinite(ms)) return '—';
   if (ms < 1000) return Math.round(ms) + 'ms';
   return (ms / 1000).toFixed(1) + 's';
 };

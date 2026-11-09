@@ -2,6 +2,15 @@ const BASE_URL = '/api';
 
 type UnauthorizedHandler = () => void;
 
+async function fetchApi(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error: any) {
+    if (error?.name === 'AbortError') throw error;
+    throw new Error('网络连接失败，请检查网络后重试');
+  }
+}
+
 class ApiClient {
   private token: string | null = null;
   private user: any = null;
@@ -76,7 +85,7 @@ class ApiClient {
       headers['Authorization'] = 'Bearer ' + this.token;
     }
 
-    const response = await fetch(BASE_URL + path, {
+    const response = await fetchApi(BASE_URL + path, {
       ...options,
       headers,
     });
@@ -97,7 +106,7 @@ class ApiClient {
     if (this.token) {
       headers['Authorization'] = 'Bearer ' + this.token;
     }
-    const response = await fetch(BASE_URL + path, {
+    const response = await fetchApi(BASE_URL + path, {
       method: 'POST',
       headers,
       body: formData,
@@ -136,7 +145,7 @@ class ApiClient {
     const headers: Record<string, string> = { Accept: 'text/event-stream' };
     if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
 
-    const res = await fetch(BASE_URL + path, { method: 'GET', headers, signal });
+    const res = await fetchApi(BASE_URL + path, { method: 'GET', headers, signal });
 
     if (!res.ok) {
       if (res.status === 401) {
@@ -210,7 +219,7 @@ class ApiClient {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
 
-    const res = await fetch(BASE_URL + path, {
+    const res = await fetchApi(BASE_URL + path, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -311,7 +320,7 @@ class ApiClient {
     };
     if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
 
-    const res = await fetch(BASE_URL + path, {
+    const res = await fetchApi(BASE_URL + path, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -384,7 +393,7 @@ class ApiClient {
     const headers: Record<string, string> = {};
     if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
 
-    const res = await fetch(BASE_URL + path, { headers });
+    const res = await fetchApi(BASE_URL + path, { headers });
     if (!res.ok) {
       const err = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.status === 401) {

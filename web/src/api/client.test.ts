@@ -363,6 +363,12 @@ describe('api 客户端 · 登录态失效（401）处理', () => {
     );
   });
 
+  it('网络不可达时返回可读中文提示', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    await expect(api.get('/students')).rejects.toThrow('网络连接失败，请检查网络后重试');
+  });
+
   it('其它错误码不触发跳转，且保留令牌', async () => {
     api.setToken('good-token');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(plainResponse(500, { error: '服务器错误' })));
