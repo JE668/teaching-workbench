@@ -89,6 +89,27 @@ test('recordAiMetrics 仍可正常写入（保留策略不破坏写入路径）'
   assert.equal(row.provider, 'p');
 });
 
+test('指定用户清理时只删除该用户的过期指标', () => {
+  const insertUser = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)');
+  const userA = Number(insertUser.run('cleanup-scope-a', 'x').lastInsertRowid);
+  const userB = Number(insertUser.run('cleanup-scope-b', 'x').lastInsertRowid);
+  const insertMetric = db.prepare(
+    `INSERT INTO ai_metrics (user_id, provider, model, endpoint, total_tokens, latency_ms, status, created_at)
+     VALUES (?, 'p', 'm', 'e', 1, 1, 'success', datetime('now', '+8 hours', ?))`
+  );
+  insertMetric.run(userA, '-100 days');
+  insertMetric.run(userA, '-1 day');
+  insertMetric.run(userB, '-100 days');
+
+  assert.equal(cleanupAiMetrics(90, userA), 1, '只应删除用户 A 的过期行');
+  const remaining = db
+    .prepare('SELECT user_id FROM ai_metrics WHERE user_id IN (?, ?) ORDER BY user_id')
+    .all(userA, userB) as Array<{ user_id: number }>;
+  assert.deepEqual(remaining.map((r) => r.user_id), [userA, userB]);
+
+  db.prepare('DELETE FROM users WHERE id IN (?, ?)').run(userA, userB);
+});
+
 test('AI 指标看板接口在无效数字参数下回退而不是 500', async () => {
   db.prepare('DELETE FROM ai_metrics').run();
   const token = await createUser('ai-metrics-dashboard');
