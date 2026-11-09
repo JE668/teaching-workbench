@@ -55,7 +55,7 @@ const router = Router();
 
 function parseQueryNumber(value: unknown, fallback: number): number {
   const parsed = Number(Array.isArray(value) ? value[0] : value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
 }
 
 function parseBodyNumber(value: unknown, fallback: number): number {

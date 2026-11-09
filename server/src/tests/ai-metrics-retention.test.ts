@@ -118,6 +118,7 @@ test('AI 指标看板接口在无效数字参数下回退而不是 500', async (
     '/api/ai-metrics/summary?days=abc',
     '/api/ai-metrics/timeseries?days=abc',
     '/api/ai-metrics/errors?days=abc&limit=abc',
+    '/api/ai-metrics/errors?days=30&limit=1.5',
   ]) {
     const res = await req('GET', path, { token });
     assert.equal(res.status, 200, `GET ${path} 应回退默认参数`);
