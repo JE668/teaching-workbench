@@ -53,6 +53,11 @@ interface AiMetricEndpointRow {
 
 const router = Router();
 
+function parseQueryNumber(value: unknown, fallback: number): number {
+  const parsed = Number(Array.isArray(value) ? value[0] : value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 /**
  * GET /api/ai-metrics/summary
  * 查询参数：days（默认 30）、groupBy（provider|model|endpoint，默认 endpoint）
@@ -61,7 +66,7 @@ const router = Router();
 router.get('/summary', (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.userId!;
-    const days = Math.min(Math.max(Number(req.query.days || 30), 1), 365);
+    const days = Math.min(Math.max(parseQueryNumber(req.query.days, 30), 1), 365);
     const groupBy = (req.query.groupBy as string) || 'endpoint';
 
     const validGroupBy = ['provider', 'model', 'endpoint'];
@@ -115,7 +120,7 @@ router.get('/summary', (req: AuthenticatedRequest, res) => {
 router.get('/timeseries', (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.userId!;
-    const days = Math.min(Math.max(Number(req.query.days || 30), 1), 90);
+    const days = Math.min(Math.max(parseQueryNumber(req.query.days, 30), 1), 90);
     const interval = (req.query.interval as string) || 'day';
     const metric = (req.query.metric as string) || 'calls';
 
@@ -173,8 +178,8 @@ router.get('/timeseries', (req: AuthenticatedRequest, res) => {
 router.get('/errors', (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.userId!;
-    const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);
-    const days = Math.min(Math.max(Number(req.query.days || 30), 1), 90);
+    const limit = Math.min(Math.max(parseQueryNumber(req.query.limit, 50), 1), 200);
+    const days = Math.min(Math.max(parseQueryNumber(req.query.days, 30), 1), 90);
 
     const rows = db
       .prepare(

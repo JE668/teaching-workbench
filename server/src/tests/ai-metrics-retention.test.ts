@@ -2,6 +2,7 @@ import './setup.js';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer } from './helpers.js';
+import { req, createUser } from './helpers.js';
 import { db } from '../config/database.js';
 import { cleanupAiMetrics, recordAiMetrics } from '../services/aiMetrics.js';
 
@@ -86,4 +87,18 @@ test('recordAiMetrics 仍可正常写入（保留策略不破坏写入路径）'
   const row = db.prepare('SELECT total_tokens, provider FROM ai_metrics LIMIT 1').get() as { total_tokens: number; provider: string };
   assert.equal(row.total_tokens, 42);
   assert.equal(row.provider, 'p');
+});
+
+test('AI 指标看板接口在无效数字参数下回退而不是 500', async () => {
+  db.prepare('DELETE FROM ai_metrics').run();
+  const token = await createUser('ai-metrics-dashboard');
+
+  for (const path of [
+    '/api/ai-metrics/summary?days=abc',
+    '/api/ai-metrics/timeseries?days=abc',
+    '/api/ai-metrics/errors?days=abc&limit=abc',
+  ]) {
+    const res = await req('GET', path, { token });
+    assert.equal(res.status, 200, `GET ${path} 应回退默认参数`);
+  }
 });

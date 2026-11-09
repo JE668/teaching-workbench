@@ -120,7 +120,7 @@ function Sparkline({ data, color = 'brand', height = 40, metric = 'calls' }: {
   if (!data.length) return <div className={`h-${height} text-slate-300`} />;
   const values = data.map(d => {
     switch (metric) {
-      case 'tokens': return d.tokens;
+      case 'tokens': return d.tokens || 0;
       case 'latency': return d.avgLatencyMs;
       case 'success_rate': return d.successRate;
       case 'errors': return d.errorCount;
@@ -313,8 +313,10 @@ export default function AiMetrics() {
   const totalCalls = summary.reduce((s, r) => s + r.calls, 0);
   const totalSuccess = summary.reduce((s, r) => s + r.success_count, 0);
   const totalErrors = summary.reduce((s, r) => s + r.error_count, 0);
-  const totalTokens = summary.reduce((s, r) => s + r.total_tokens, 0);
-  const avgLatency = summary.length ? Math.round(summary.reduce((s, r) => s + (r.avg_latency_ms || 0), 0) / summary.length) : 0;
+  const totalTokens = summary.reduce((s, r) => s + (r.total_tokens || 0), 0);
+  const avgLatency = totalCalls
+    ? Math.round(summary.reduce((s, r) => s + (r.avg_latency_ms || 0) * r.calls, 0) / totalCalls)
+    : 0;
   const overallSuccessRate = totalCalls ? Math.round((totalSuccess / totalCalls) * 10000) / 100 : 0;
 
   const maxCalls = Math.max(...endpoints.map(e => e.calls), 1);
