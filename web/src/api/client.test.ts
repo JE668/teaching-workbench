@@ -357,6 +357,12 @@ describe('api 客户端 · 登录态失效（401）处理', () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it('request() 不允许调用方重复添加 /api 前缀', async () => {
+    await expect(api.get('/api/ai-metrics/summary')).rejects.toThrow(
+      'API 路径配置错误：request() 已自动添加 /api 前缀'
+    );
+  });
+
   it('其它错误码不触发跳转，且保留令牌', async () => {
     api.setToken('good-token');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(plainResponse(500, { error: '服务器错误' })));

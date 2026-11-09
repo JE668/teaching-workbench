@@ -63,6 +63,10 @@ class ApiClient {
   }
 
   async request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+    if (path.startsWith('/api/') || path === '/api') {
+      throw new Error('API 路径配置错误：request() 已自动添加 /api 前缀');
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...options.headers as Record<string, string>,

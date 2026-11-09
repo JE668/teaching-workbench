@@ -258,7 +258,7 @@ export default function AiMetrics() {
   const loadSummary = useCallback(async () => {
     try {
       const res = await api.request<{ summary: AiMetricsSummary[] }>(
-        `/api/ai-metrics/summary?days=${days}&groupBy=${groupBy}`
+        `/ai-metrics/summary?days=${days}&groupBy=${groupBy}`
       );
       setSummary(res.summary || []);
     } catch (e: any) {
@@ -269,7 +269,7 @@ export default function AiMetrics() {
   const loadTimeseries = useCallback(async () => {
     try {
       const res = await api.request<{ data: TimeSeriesPoint[] }>(
-        `/api/ai-metrics/timeseries?days=${days}&interval=${interval}&metric=${metric}`
+        `/ai-metrics/timeseries?days=${days}&interval=${interval}&metric=${metric}`
       );
       setTimeseries(res.data || []);
     } catch (e: any) {
@@ -280,7 +280,7 @@ export default function AiMetrics() {
   const loadEndpoints = useCallback(async () => {
     try {
       const res = await api.request<{ endpoints: EndpointStats[] }>(
-        `/api/ai-metrics/endpoints?days=${days}`
+        `/ai-metrics/endpoints?days=${days}`
       );
       setEndpoints(res.endpoints || []);
     } catch (e: any) {
@@ -291,7 +291,7 @@ export default function AiMetrics() {
   const loadErrors = useCallback(async () => {
     try {
       const res = await api.request<{ errors: AiError[] }>(
-        `/api/ai-metrics/errors?limit=50&days=${days}`
+        `/ai-metrics/errors?limit=50&days=${days}`
       );
       setErrors(res.errors || []);
     } catch (e: any) {
@@ -578,7 +578,7 @@ export default function AiMetrics() {
         onCancel={() => setCleanupOpen(false)}
         onConfirm={async () => {
           try {
-            await api.request('/api/ai-metrics/cleanup', { method: 'POST', body: JSON.stringify({ days: Number(cleanupDays) }) });
+            await api.request('/ai-metrics/cleanup', { method: 'POST', body: JSON.stringify({ days: Number(cleanupDays) }) });
             toast.success('清理完成');
             setCleanupOpen(false);
             await reload();
