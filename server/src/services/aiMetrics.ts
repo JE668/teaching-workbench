@@ -119,13 +119,14 @@ export function getRecentAiErrors(userId: number, limit = 20): any {
  * 默认保留 90 天，可用 AI_METRICS_RETAIN_DAYS 覆盖（最小 7 天防误配）。
  * 返回删除行数，便于启动日志与测试断言。
  */
-export function cleanupAiMetrics(retainDays = 90): number {
+export function cleanupAiMetrics(retainDays = 90, userId?: number): number {
   const days = Math.max(7, Math.floor(retainDays));
   try {
     const info = db.prepare(
       `DELETE FROM ai_metrics
-       WHERE created_at < datetime('now', '-' || ? || ' days', '+8 hours')`
-    ).run(days);
+       WHERE created_at < datetime('now', '-' || ? || ' days', '+8 hours')
+         ${userId === undefined ? '' : 'AND user_id = ?'}`
+    ).run(...(userId === undefined ? [days] : [days, userId]));
     return info.changes;
   } catch (error: any) {
     log.warn({ err: error.message }, '清理 AI 指标失败');

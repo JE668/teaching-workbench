@@ -121,7 +121,7 @@ function Sparkline({ data, color = 'brand', height = 40, metric = 'calls' }: {
   const values = data.map(d => {
     switch (metric) {
       case 'tokens': return d.tokens || 0;
-      case 'latency': return d.avgLatencyMs;
+      case 'latency': return d.avgLatencyMs || 0;
       case 'success_rate': return d.successRate;
       case 'errors': return d.errorCount;
       default: return d.calls;
@@ -528,9 +528,9 @@ export default function AiMetrics() {
             <Sparkline data={timeseries} color="brand" height={288} metric={metric} />
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="峰值调用" value={fmtNum(Math.max(...timeseries.map(d => d.calls)))} icon={<TrendingUp size={18} />} />
-            <StatCard label="峰值 Token" value={fmtNum(Math.max(...timeseries.map(d => d.tokens)))} icon={<Zap size={18} />} />
-            <StatCard label="峰值延迟" value={fmtTime(Math.max(...timeseries.map(d => d.avgLatencyMs)))} icon={<Clock size={18} />} />
+            <StatCard label="峰值调用" value={fmtNum(Math.max(...timeseries.map(d => d.calls), 0))} icon={<TrendingUp size={18} />} />
+            <StatCard label="峰值 Token" value={fmtNum(Math.max(...timeseries.map(d => d.tokens || 0), 0))} icon={<Zap size={18} />} />
+            <StatCard label="峰值延迟" value={fmtTime(Math.max(...timeseries.map(d => d.avgLatencyMs || 0), 0))} icon={<Clock size={18} />} />
             <StatCard label="最低成功率" value={Math.min(...timeseries.map(d => d.successRate)).toFixed(1) + '%'} icon={<AlertTriangle size={18} />} />
           </div>
         </Card>

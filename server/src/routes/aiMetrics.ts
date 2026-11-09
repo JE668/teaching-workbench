@@ -255,7 +255,7 @@ router.get('/endpoints', (req: AuthenticatedRequest, res) => {
 router.post('/cleanup', (req: AuthenticatedRequest, res) => {
   try {
     const days = Math.max(7, Math.floor(Number(req.body?.days || 90)));
-    const deleted = cleanupAiMetrics(days);
+    const deleted = cleanupAiMetrics(days, req.userId!);
     res.json({ deleted, days });
   } catch (error: any) {
     res.status(500).json({ error: '清理 AI 指标失败', message: error.message });
