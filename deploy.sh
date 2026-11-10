@@ -73,8 +73,8 @@ JWT_SECRET=%s
     warn "SENSENOVA_API_KEY 尚未配置，AI 生成功能将不可用"
   fi
 
-  if grep -qE '^DEFAULT_ADMIN_PASS=(123456)?$' .env; then
-    warn "默认管理员密码仍是弱口令，建议修改 DEFAULT_ADMIN_PASS"
+  if grep -qE '^DEFAULT_ADMIN_PASS=(123456|password|your-strong-password-here| CHANGE_ME.*)?$' .env; then
+    warn "默认管理员密码仍是弱口令/示例占位值，必须修改 DEFAULT_ADMIN_PASS"
   fi
 }
 ensure_env_secrets
@@ -139,9 +139,12 @@ else
   log "已用 --no-backup 跳过部署前备份"
 fi
 
-log "拉取最新镜像..."
-docker pull "$REGISTRY/$PROJECT-backend:latest"
-docker pull "$REGISTRY/$PROJECT-frontend:latest"
+log "拉取镜像（TAG=${TAG:-latest}，与 compose 启动同一标签）..."
+# 必须与 compose 的 ${TAG:-latest} 用同一标签：回滚钉住 TAG 后再部署时，
+# 无条件 pull latest 会"拉新镜像、跑旧版本、还打印部署完成"。
+DEPLOY_TAG="${TAG:-latest}"
+docker pull "$REGISTRY/$PROJECT-backend:$DEPLOY_TAG"
+docker pull "$REGISTRY/$PROJECT-frontend:$DEPLOY_TAG"
 
 # ====== 老版本数据迁移（命名卷 → 目录）======
 # 早期版本用 Docker 命名卷 teaching_workbench_db 存数据。
@@ -178,6 +181,9 @@ migrate_legacy_volume() {
 
 migrate_legacy_volume
 
+# 绑定挂载目录不存在时 Docker 会以 root 创建，容器内非 root 用户写库 EACCES。
+# 部署前显式建好并提示属主（属主不对时 Docker Desktop/根less 环境通常可写，本地 root 环境需 chown）。
+mkdir -p "${DATA_PATH:-./data}/uploads"
 log "重启服务..."
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 docker compose -f "$COMPOSE_FILE" up -d
@@ -194,6 +200,9 @@ for i in $(seq 1 10); do
   fi
   if [ "$i" -eq 10 ]; then
     warn "健康检查超时 ($HEALTH_URL)，请查看日志: docker compose -f $COMPOSE_FILE logs"
+    # 超时不能照常 exit 0：上游 cron/CI 会把一次没起来的部署当成成功。
+    # 退出码置非零，运维告警才能接得住。
+    exit 1
   fi
   sleep 2
 done

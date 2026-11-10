@@ -64,10 +64,16 @@ docker cp "$DB_FILE" "$CONTAINER:/tmp/restore.db"
 # WAL/SHM 若随备份存在则一并放回，三件套必须同目录同名
 docker cp "$DB_FILE-wal" "$CONTAINER:/app/data/teaching.db-wal" 2>/dev/null || true
 docker cp "$DB_FILE-shm" "$CONTAINER:/app/data/teaching.db-shm" 2>/dev/null || true
-docker exec "$CONTAINER" sh -c '
+# chown 必须以 root 执行：镜像默认 USER 是非 root 的 nodejs(1001)，
+# 非 root 进程 chown 别人的文件必然失败且被 || true 吞掉 —— 恢复后写库 EACCES。
+# 显式 -u 0 跑 chown，属主落对后端 compose 里 user 指定的任意 UID 都可读，
+# 再把属主交给 PUID（默认 1001）。
+docker exec -u 0 "$CONTAINER" sh -c '
   mv /tmp/restore.db /app/data/teaching.db &&
   rm -f /app/data/teaching.db-wal.tmp /app/data/teaching.db-shm.tmp 2>/dev/null;
-  chown "$(id -u):$(id -g)" /app/data/teaching.db 2>/dev/null || true'
+  chown "${PUID:-1001}:${PGID:-1001}" /app/data/teaching.db ||
+    chown nodejs:nodejs /app/data/teaching.db 2>/dev/null || true'
+docker exec -u 0 "$CONTAINER" sh -c 'test -w /app/data/teaching.db || chmod 664 /app/data/teaching.db' 2>/dev/null || true
 
 # 完整性校验：integrity_check 通过才认为这份库能用
 log "校验数据库完整性..."

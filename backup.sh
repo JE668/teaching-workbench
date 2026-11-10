@@ -41,11 +41,23 @@ docker exec "$CONTAINER" rm -f /tmp/tw-backup.db 2>/dev/null || true
 
 if [ "$ONLINE_OK" = true ]; then
   log "数据库备份完成（WAL 安全）"
-elif docker exec "$CONTAINER" test -f /app/data/teaching.db 2>/dev/null; then  docker cp "$CONTAINER:/app/data/teaching.db" "$DB_FILE"
-  # 连 -wal / -shm 一起存，恢复时放在同一目录即可无损重建
-  docker cp "$CONTAINER:/app/data/teaching.db-wal" "$DB_FILE-wal" 2>/dev/null || true
-  docker cp "$CONTAINER:/app/data/teaching.db-shm" "$DB_FILE-shm" 2>/dev/null || true
-  warn "在线备份失败，已改为直接拷贝数据库文件"
+elif docker exec "$CONTAINER" test -f /app/data/teaching.db 2>/dev/null; then
+  # 回退路径：对运行中的 WAL 库做三件套拷贝不是原子的（三个瞬间），
+  # 可能拷出"校验碰巧通过、恢复时才暴雷"的撕裂备份。
+  # 先在容器内用 sqlite3 的 .backup 生成一致快照，再拷快照 —— 与在线备份同一语义。
+  if docker exec "$CONTAINER" node --input-type=module -e \
+    "import Database from 'better-sqlite3';const db=new Database('/app/data/teaching.db',{readonly:true});db.backup('/tmp/tw-fallback.db').then(()=>{db.close();process.exit(0)}).catch(()=>process.exit(1))" \
+    < /dev/null 2>/dev/null; then
+    docker cp "$CONTAINER:/tmp/tw-fallback.db" "$DB_FILE"
+    docker exec "$CONTAINER" rm -f /tmp/tw-fallback.db 2>/dev/null || true
+  else
+    # 只读 backup 也失败（磁盘满等），才退化到三件套直拷 —— 带醒目告警
+    docker cp "$CONTAINER:/app/data/teaching.db" "$DB_FILE"
+    docker cp "$CONTAINER:/app/data/teaching.db-wal" "$DB_FILE-wal" 2>/dev/null || true
+    docker cp "$CONTAINER:/app/data/teaching.db-shm" "$DB_FILE-shm" 2>/dev/null || true
+    warn "回退备份退化为三件套直拷（非原子），恢复前务必人工 integrity_check"
+  fi
+  warn "在线备份失败，已用容器内 sqlite 快照回退"
 else
   warn "数据库不存在或后端容器未运行，跳过"
 fi

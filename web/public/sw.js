@@ -15,7 +15,7 @@
 const CACHE = 'tw-static-v1';
 
 // Vite 产物文件名带内容哈希，改代码即换名，所以缓存不会串版本
-const IMMUTABLE = /^\/(assets\/.+|icon-\d+\.png|apple-touch-icon\.png|manifest\.webmanifest)$/;
+const IMMUTABLE = /^\/(assets\/.+|icon-\d+\.png|apple-touch-icon\.png)$/;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -25,7 +25,7 @@ self.addEventListener('install', (event) => {
       .catch(() => {})
   );
   // 立即激活，不用等所有旧标签页都关掉
-  return self.skipWaiting();
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', (event) => {

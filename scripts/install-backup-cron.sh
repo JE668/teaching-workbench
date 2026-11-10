@@ -22,11 +22,16 @@ if [ "$DAILY_AT" = "--remove" ]; then
 fi
 
 case "$DAILY_AT" in
-  [0-2][0-9]:[0-5][0-9]) MIN="${DAILY_AT#*:}"; HOUR="${DAILY_AT%%:*}" ;;
-  *) echo "[ERROR] 时间格式应为 HH:MM，例如 03:30"; exit 1 ;;
+  # 小时限定 00-23：旧正则 [0-2][0-9] 会放行 29:xx 这种非法钟点，cron 静默不跑
+  [0-1][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9]) MIN="${DAILY_AT#*:}"; HOUR="${DAILY_AT%%:*}" ;;
+  *) echo "[ERROR] 时间格式应为 HH:MM（00:00-23:59），例如 03:30"; exit 1 ;;
 esac
 # cron 字段不能有前导零歧义（08/09 会被当八进制），转成十进制
 HOUR=$((10#$HOUR)); MIN=$((10#$MIN))
+
+# 日志目录先建好：DATA_PATH 不在默认位置 / 目录还没建时，重定向失败会让
+# 每晚备份静默不执行（cron 的报错只进系统邮件，基本没人看）。
+mkdir -p "$PROJECT_DIR/data"
 
 LINE="$MIN $HOUR * * * cd $PROJECT_DIR && ./backup.sh >> $PROJECT_DIR/data/backup.log 2>&1 $MARKER"
 

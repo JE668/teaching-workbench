@@ -13,6 +13,9 @@ build/
 server/data/
 server/.e2e-data/
 *.db
+# compose 默认 DATA_PATH=./data 挂在仓库根：库的 WAL/SHM、uploads 学生照片、
+# .jwt_secret（能伪造任意用户 JWT）都在里面，绝不能进 git（*.db 挡不住它们）。
+/data/
 
 # Playwright
 test-results/
@@ -38,3 +41,6 @@ desktop.ini
 tw-test-*
 tw-migrate-*
 tw-migrate-*/
+
+# TypeScript 增量构建产物
+*.tsbuildinfo
