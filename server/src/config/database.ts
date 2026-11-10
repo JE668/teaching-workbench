@@ -213,6 +213,13 @@ function migrateSettingsPerUser(): void {
 }
 
 export async function initDatabase() {
+  // ===== 建表：这里与 migrations/20240101000000_initial_schema.ts 各有一份全量 =====
+  // 【双源说明】下方这段 CREATE TABLE IF NOT EXISTS 是【实际生效方】：它在每次启动时
+  // 无条件执行，新库/老库都靠它把表补齐。migrations/initial_schema.ts 那份是历史副产物，
+  // 在带库启动（user_version 已推进）的生产进程里不会被重放，不要指望它生效。
+  // 【改表规则】加字段一律用本文件的 ensureColumn('表','列', 定义)（见下方「增量迁移」段），
+  // 两个地方都要改属于历史遗留的重复，新逻辑只写这份；改完请同步跑一遍
+  // scripts/check-deploy-assets.sh 与全量测试，确认迁移 runner 与 schema 没有分叉。
   // 用户表
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
