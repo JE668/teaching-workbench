@@ -10,13 +10,21 @@ describe('localDateStr / localNowISO', () => {
     expect(localDateStr(new Date(2025, 11, 31, 23, 59, 59))).toBe('2025-12-31');
   });
 
-  it('回归：不能用 toISOString 取日期（那在凌晨会退回前一天）', () => {
-    // 只有本地时区不是 UTC 时两者才会分歧；UTC 环境下无法体现，明确跳过而不是假装通过
-    if (new Date().getTimezoneOffset() === 0) return;
-    // 本地凌晨 1 点：UTC 口径是前一天
-    const d = new Date(2026, 9, 18, 1, 0, 0);
-    expect(d.toISOString().slice(0, 10)).toBe('2026-10-17');
+  it('回归：不能用 toISOString 取日期（那在本地凌晨会退回前一天）', () => {
+    // 只有在「本地 00:00 之后、UTC 仍是前一天」的时区，两者才会分歧。
+    // 硬编码本地 01:00 只在东时区（UTC+8 等）成立；西时区（如 UTC-5）那时 UTC
+    // 已经是当天，断言必挂。所以按当前时区偏移动态挑一个「必然分歧」的本地时刻。
+    const offsetMin = new Date().getTimezoneOffset();
+    if (offsetMin === 0) return; // UTC 环境无从体现，跳过而不是假装通过
+
+    // 东时区：本地凌晨（UTC 尚在前一天）；西时区：本地深夜（UTC 已到次日）
+    const hour = offsetMin > 0 ? 23 : 1;
+    const d = new Date(2026, 9, 18, hour, 0, 0);
+
+    // 本地日期稳定取当天，与 toISOString 的 UTC 口径无关
     expect(localDateStr(d)).toBe('2026-10-18');
+    // 且确实与该本地时刻的 UTC 日期不同（证明我们没用 toISOString 的日截断）
+    expect(d.toISOString().slice(0, 10)).not.toBe(localDateStr(d));
   });
 
   it('默认取当前时刻', () => {
@@ -105,12 +113,15 @@ describe('formatDate', () => {
 });
 
 describe('relativeTime', () => {
+  // 生成【北京时间挂钟串】——这正是后端 datetime('now','+8 hours') 的存储格式。
+  // 不能用 getHours() 取本地时间：CI runner 是 UTC，本地时间会与北京差 8 小时，
+  // 断言就成了「在哪个时区跑测试决定结果」，而不是钉住被测函数的口径。
   const ago = (ms: number) => {
-    const d = new Date(Date.now() - ms);
+    const d = new Date(Date.now() - ms + 8 * 3600 * 1000);
     const p = (n: number) => String(n).padStart(2, '0');
     return (
-      d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
-      p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+      d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' ' +
+      p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds())
     );
   };
 
@@ -138,6 +149,22 @@ describe('relativeTime', () => {
   it('空值返回占位符', () => {
     expect(relativeTime(null)).toBe('-');
     expect(relativeTime(undefined)).toBe('-');
+  });
+
+  it('把无时区串钉死按北京时间解析（与运行环境时区无关）', () => {
+    // 后端存的是 datetime('now','+8 hours') 挂钟串。若哪天有人把它改回
+    // new Date(str)（按浏览器本地时区解析），东八区本地的测试仍然会绿 ——
+    // 只有这条断言能锁住口径。
+    const now = new Date();
+    // 取「此刻的北京时间」精确到秒，写成后端格式
+    const bj = new Date(now.getTime() + 8 * 3600 * 1000);
+    const p = (n: number) => String(n).padStart(2, '0');
+    const bjStr =
+      bj.getUTCFullYear() + '-' + p(bj.getUTCMonth() + 1) + '-' + p(bj.getUTCDate()) + ' ' +
+      p(bj.getUTCHours()) + ':' + p(bj.getUTCMinutes()) + ':' + p(bj.getUTCSeconds());
+
+    // 与当前时刻只差几秒 → 必须是「刚刚」；任何偏离 8 小时的解析都会落进小时/天级
+    expect(relativeTime(bjStr)).toBe('刚刚');
   });
 });
 
