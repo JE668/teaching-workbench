@@ -139,11 +139,24 @@ export default function StudentProfile() {
 
   useEffect(() => {
     if (!id) return;
+    // cancelled 守卫：快速切换学生时，慢的旧响应不得覆盖新学生的档案
+    // （否则 URL 是 B、页面展示与导出按钮却指向 A）。范式同 ObservationStats。
+    let cancelled = false;
     api
       .get('/students/' + id + '/profile')
-      .then(setData)
-      .catch((e) => console.error(e))
-      .finally(() => setLoading(false));
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) toast.error('加载学生档案失败：' + (e?.message || '未知错误'));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (loading) return <PageSkeleton />;

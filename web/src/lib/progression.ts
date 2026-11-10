@@ -83,7 +83,10 @@ export function buildProgression(
       score: MASTERY_SCORE[f.mastery] ?? null,
     }));
 
-  const scored = points.length;
+  const valid0 = points.filter((p) => p.score !== null);
+  // 口径是「参与计算（分值不为空）的点数量」：未定档的点不能计入分母，
+  // 否则无掌握度的回访会把均值/百分比拉低，UI 的 N 次记录也虚高。
+  const scored = valid0.length;
   const empty: Progression = {
     points,
     firstAvg: null,

@@ -251,6 +251,29 @@ export function gcStagedImages(maxAgeMs = STAGING_TTL_MS): number {
   const cutoff = Date.now() - maxAgeMs;
   let removed = 0;
 
+  // 草稿仍在引用的暂存图不能按 mtime 删：草稿会被续写刷新自身 TTL，
+  // 但它第 1 天上传的暂存图 mtime 不随之更新 —— 只按 mtime 会让图先于草稿消失。
+  // 先收集全部草稿 payload 里引用的暂存相对路径，命中的一律跳过。
+  const referenced = new Set<string>();
+  try {
+    for (const d of db.prepare('SELECT payload FROM drafts').all() as Array<{ payload: string }>) {
+      try {
+        const payload = JSON.parse(d.payload);
+        if (Array.isArray(payload?.images)) {
+          for (const p of payload.images) {
+            if (typeof p === 'string' && p.startsWith(STAGING_DIR_NAME + '/')) {
+              referenced.add(p);
+            }
+          }
+        }
+      } catch {
+        /* 脏草稿跳过 */
+      }
+    }
+  } catch {
+    /* drafts 表查询失败（如迁移期）时退回纯 mtime 行为 */
+  }
+
   const walk = (dir: string) => {
     for (const name of fs.readdirSync(dir)) {
       const full = path.join(dir, name);
@@ -258,6 +281,8 @@ export function gcStagedImages(maxAgeMs = STAGING_TTL_MS): number {
       if (stat.isDirectory()) {
         walk(full);
       } else if (stat.mtimeMs < cutoff) {
+        const rel = path.relative(env.UPLOAD_DIR, full).split(path.sep).join('/');
+        if (referenced.has(rel)) continue;
         fs.unlinkSync(full);
         removed++;
       }

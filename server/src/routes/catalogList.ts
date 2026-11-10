@@ -133,9 +133,28 @@ router.get('/courses', (req: AuthenticatedRequest, res) => {
 router.get('/xlsx', async (req: AuthenticatedRequest, res) => {
   try {
     const { clause, params } = courseFilter(req);
-    const rows = db
+    let rows = db
       .prepare(`SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER}`)
       .all(...params) as CatalogCourseRow[];
+
+    // unused=1：「只看未使用」与页面同口径 —— 剔除被任何报告条目/听评课引用过的课。
+    // 之前这个筛选项是页面本地 state，导出 URL 不透传，屏幕筛了文件却是全量。
+    if (req.query.unused === '1') {
+      const userId = req.userId!;
+      const usedIds = new Set(
+        (
+          db
+            .prepare(
+              `SELECT DISTINCT course_id FROM report_items WHERE user_id = ? AND course_id IS NOT NULL
+               UNION
+               SELECT DISTINCT course_id FROM observations WHERE user_id = ? AND course_id IS NOT NULL`
+            )
+            .all(userId, userId) as Array<{ course_id: number | null }>
+        )
+          .map((r) => String(r.course_id))
+      );
+      rows = rows.filter((r) => !usedIds.has(String(r.id)));
+    }
 
     const input: CatalogExcelInput = {
       title: `课程目录 · 共 ${rows.length} 课`,

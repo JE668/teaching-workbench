@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
   DollarSign,
@@ -255,46 +255,56 @@ export default function AiMetrics() {
   const [metric, setMetric] = useState<'calls' | 'tokens' | 'latency' | 'success_rate' | 'errors'>('calls');
   const [activeTab, setActiveTab] = useState<'overview' | 'endpoints' | 'timeseries' | 'errors'>('overview');
   const [cleanupOpen, setCleanupOpen] = useState(false);
+  // 两段式：Modal 选天数 → ConfirmDialog 二次确认（不再共用同一个 open，避免确认弹窗盖住天数选择）
+  const [cleanupConfirmOpen, setCleanupConfirmOpen] = useState(false);
   const [cleanupDays, setCleanupDays] = useState('90');
 
-  const loadSummary = useCallback(async () => {
+  // 批次序号：四个加载器只由 reload 驱动，连点 reload / 快速改 days 时
+  // 旧批次里的任何一个响应都不得再落 state（否则会出现新 summary + 旧 timeseries 的混合态）
+  const reloadSeq = useRef(0);
+
+  const loadSummary = useCallback(async (seq: number) => {
     try {
       const res = await api.request<{ summary: AiMetricsSummary[] }>(
         `/ai-metrics/summary?days=${days}&groupBy=${groupBy}`
       );
+      if (seq !== reloadSeq.current) return;
       setSummary(res.summary || []);
     } catch (e: any) {
       toast.error(e.message || '加载摘要失败');
     }
   }, [days, groupBy]);
 
-  const loadTimeseries = useCallback(async () => {
+  const loadTimeseries = useCallback(async (seq: number) => {
     try {
       const res = await api.request<{ data: TimeSeriesPoint[] }>(
         `/ai-metrics/timeseries?days=${days}&interval=${interval}&metric=${metric}`
       );
+      if (seq !== reloadSeq.current) return;
       setTimeseries(res.data || []);
     } catch (e: any) {
       toast.error(e.message || '加载趋势失败');
     }
   }, [days, interval, metric]);
 
-  const loadEndpoints = useCallback(async () => {
+  const loadEndpoints = useCallback(async (seq: number) => {
     try {
       const res = await api.request<{ endpoints: EndpointStats[] }>(
         `/ai-metrics/endpoints?days=${days}`
       );
+      if (seq !== reloadSeq.current) return;
       setEndpoints(res.endpoints || []);
     } catch (e: any) {
       toast.error(e.message || '加载端点统计失败');
     }
   }, [days]);
 
-  const loadErrors = useCallback(async () => {
+  const loadErrors = useCallback(async (seq: number) => {
     try {
       const res = await api.request<{ errors: AiError[] }>(
         `/ai-metrics/errors?limit=50&days=${days}`
       );
+      if (seq !== reloadSeq.current) return;
       setErrors(res.errors || []);
     } catch (e: any) {
       toast.error(e.message || '加载错误记录失败');
@@ -302,11 +312,12 @@ export default function AiMetrics() {
   }, [days]);
 
   const reload = useCallback(async () => {
+    const seq = ++reloadSeq.current;
     setLoading(true);
     try {
-      await Promise.all([loadSummary(), loadTimeseries(), loadEndpoints(), loadErrors()]);
+      await Promise.all([loadSummary(seq), loadTimeseries(seq), loadEndpoints(seq), loadErrors(seq)]);
     } finally {
-      setLoading(false);
+      if (seq === reloadSeq.current) setLoading(false);
     }
   }, [loadSummary, loadTimeseries, loadEndpoints, loadErrors]);
 
@@ -357,8 +368,7 @@ export default function AiMetrics() {
           label="总调用"
           value={fmtNum(totalCalls)}
           icon={<BarChart3 size={18} />}
-          trend="+12%"
-          subtitle="较前期"
+          subtitle="所选时间范围"
         />
         <StatCard
           label="成功率"
@@ -538,7 +548,7 @@ export default function AiMetrics() {
             <StatCard label="峰值调用" value={fmtNum(Math.max(...timeseries.map(d => d.calls), 0))} icon={<TrendingUp size={18} />} />
             <StatCard label="峰值 Token" value={fmtNum(Math.max(...timeseries.map(d => d.tokens || 0), 0))} icon={<Zap size={18} />} />
             <StatCard label="峰值延迟" value={fmtTime(Math.max(...timeseries.map(d => d.avgLatencyMs || 0), 0))} icon={<Clock size={18} />} />
-            <StatCard label="最低成功率" value={Math.min(...timeseries.map(d => d.successRate)).toFixed(1) + '%'} icon={<AlertTriangle size={18} />} />
+            <StatCard label="最低成功率" value={(timeseries.length ? Math.min(...timeseries.map(d => d.successRate)) : 0).toFixed(1) + '%'} icon={<AlertTriangle size={18} />} />
           </div>
         </Card>
       ) : activeTab === 'errors' && errors.length ? (
@@ -581,14 +591,17 @@ export default function AiMetrics() {
         </Card>
       )}
 
-      {/* 清理弹窗 */}
+      {/* 清理弹窗：两段式 —— 先开 Modal 选保留天数，点「清理」再开 ConfirmDialog 二次确认。
+          之前两者共用同一个 cleanupOpen 同时打开，ConfirmDialog 层级在上，
+          天数下拉碰不到，点确认就按默认值直接删库。 */}
       <ConfirmDialog
-        open={cleanupOpen}
-        onCancel={() => setCleanupOpen(false)}
+        open={cleanupConfirmOpen}
+        onCancel={() => setCleanupConfirmOpen(false)}
         onConfirm={async () => {
           try {
             await api.request('/ai-metrics/cleanup', { method: 'POST', body: JSON.stringify({ days: Number(cleanupDays) }) });
             toast.success('清理完成');
+            setCleanupConfirmOpen(false);
             setCleanupOpen(false);
             await reload();
           } catch (e: any) {
@@ -605,6 +618,12 @@ export default function AiMetrics() {
         onClose={() => setCleanupOpen(false)}
         title="清理旧 AI 指标"
         description="删除指定天数前的记录（最小 7 天），不可恢复。指标是运营遥测，不影响业务数据。"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setCleanupOpen(false)}>取消</Button>
+            <Button variant="danger" size="sm" onClick={() => setCleanupConfirmOpen(true)}>清理…</Button>
+          </div>
+        }
       >
         <div className="space-y-3">
           <div>

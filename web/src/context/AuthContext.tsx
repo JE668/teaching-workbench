@@ -67,6 +67,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => api.setUnauthorizedHandler(null);
   }, []);
 
+  // 跨标签页登录态同步：A 标签页登出后，B 标签页不应还显示已登录（直到下次 401 才纠正）。
+  // localStorage 的 storage 事件只在【其他】标签页触发，正好不会回声。
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== null && e.key !== 'token') return;
+      const next = localStorage.getItem('token');
+      if (!next) {
+        api.clearAuth();
+        setToken(null);
+        setUser(null);
+      } else {
+        api.setTokenFromStorage();
+        setToken(next);
+        setUser(api.getUser());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   const login = async (username: string, password: string) => {
     const result = await api.post('/auth/login', { username, password });
     api.setToken(result.token);

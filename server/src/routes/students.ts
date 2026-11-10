@@ -328,14 +328,15 @@ router.put('/:id', validateBody(studentUpdateSchema), (req: any, res) => {
     }
 
     db.prepare(
-      "UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+      "UPDATE students SET name = ?, grade = ?, subject = ?, phone = ?, notes = ?, updated_at = datetime('now', '+8 hours') WHERE id = ? AND user_id = ?"
     ).run(
       name || existing.name,
       grade || existing.grade,
       subject || existing.subject,
       phone !== undefined ? phone : existing.phone,
       notes !== undefined ? notes : existing.notes,
-      studentId
+      studentId,
+      userId
     );
 
     const row = db.prepare('SELECT * FROM students WHERE id = ?').get(studentId) as StudentRow | undefined;

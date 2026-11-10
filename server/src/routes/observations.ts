@@ -20,6 +20,7 @@ import {
 import { parseObservationReport, buildObservationDocx, buildDocxFilename } from '../utils/observationDocx.js';
 import { readPreferences } from './auth.js';
 import { log } from '../utils/logger.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = Router();
 
@@ -524,7 +525,7 @@ router.post('/:id/report', async (req: AuthenticatedRequest, res: Response) => {
 });
 
 /** SSE 流式生成评课报告（边生成边下发；结束时落库） */
-router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/report/stream', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.userId!;
   const id = parseInt(req.params.id, 10);
   const row = fetchWithTeacher(userId, id);
@@ -590,7 +591,7 @@ router.post('/:id/report/stream', async (req: AuthenticatedRequest, res: Respons
   } finally {
     if (!res.writableEnded) res.end();
   }
-});
+}));
 
 /** 手工编辑后保存评课报告。
  *

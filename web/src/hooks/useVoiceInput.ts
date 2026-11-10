@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface VoiceInput {
   /** 浏览器是否支持 Web Speech API（Chrome/Android 系支持，Safari 视版本） */
@@ -173,6 +173,26 @@ export function useVoiceInput(
     }
     clearState();
   };
+
+  // 组件卸载时释放识别会话：不清理的话麦克风指示灯持续亮（隐私可见），
+  // onresult/onfinal 还会继续对已卸载组件触发，直到下一次 start() 才被顺手回收。
+  useEffect(() => {
+    return () => {
+      const rec = recRef.current;
+      userStopped.current = true;
+      if (rec) {
+        try {
+          // abort 立即切断（stop 会等当前语句说完才停）；旧浏览器没有 abort 时退回 stop
+          if (rec.abort) rec.abort();
+          else rec.stop();
+        } catch {
+          /* 忽略 */
+        }
+      }
+      if (activeRecognition === rec) activeRecognition = null;
+      recRef.current = null;
+    };
+  }, []);
 
   return { supported, listening, interim, error, start, stop };
 }

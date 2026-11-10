@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Plus, Sparkles, Trash2, ClipboardCheck, BarChart3, MessageSquareText } from 'lucide-react';
 import { api } from '../api/client';
@@ -44,15 +44,20 @@ export default function Observations() {
     refreshReplyMetrics();
   }, []);
 
+  // 请求序号：切筛选时旧响应可能后到，序号不匹配就丢弃（防列表回显旧筛选结果）
+  const loadSeq = useRef(0);
+
   const load = async (lessonType?: string) => {
+    const seq = ++loadSeq.current;
     try {
       const qs = lessonType ? '?lessonType=' + encodeURIComponent(lessonType) : '';
       const res = await api.get('/observations' + qs);
+      if (seq !== loadSeq.current) return;
       setItems(res.observations || []);
     } catch (err: any) {
       toast.error('加载听评课失败：' + err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
       refreshReplyMetrics();
     }
   };

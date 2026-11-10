@@ -189,21 +189,24 @@ function migrateSettingsPerUser(): void {
 
   try {
     const rows = db.prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[];
-    if (rows.length > 0) {
-      const users = db.prepare('SELECT id FROM users').all() as { id: number }[];
-      const insert = db.prepare(
-        `INSERT OR IGNORE INTO settings_user (user_id, key, value, updated_at)
-         VALUES (?, ?, ?, datetime('now', '+8 hours'))`
-      );
-      const copy = db.transaction(() => {
+    // 整个迁移包进一个事务：拷贝 + RENAME 必须原子完成。
+    // 之前只 try/catch：中途失败（RENAME 后 INSERT 失败等）会留下半迁移状态，
+    // hasLegacy 幂等检测也随之失效，下次启动行为取决于半途形态。
+    const migrate = db.transaction(() => {
+      if (rows.length > 0) {
+        const users = db.prepare('SELECT id FROM users').all() as { id: number }[];
+        const insert = db.prepare(
+          `INSERT OR IGNORE INTO settings_user (user_id, key, value, updated_at)
+           VALUES (?, ?, ?, datetime('now', '+8 hours'))`
+        );
         for (const u of users) {
           for (const r of rows) insert.run(u.id, r.key, r.value);
         }
-      });
-      copy();
-    }
-    // 留档 + 幂等标记：改名后上面的 hasLegacy 检测不再命中
-    db.exec('ALTER TABLE settings RENAME TO settings_global_backup');
+      }
+      // 留档 + 幂等标记：改名后上面的 hasLegacy 检测不再命中
+      db.exec('ALTER TABLE settings RENAME TO settings_global_backup');
+    });
+    migrate();
   } catch (err: any) {
     console.warn('[MIGRATE] settings → settings_user 迁移失败: ' + err.message);
   }
@@ -510,6 +513,9 @@ export async function initDatabase() {
   // ========== 增量迁移 ==========
   // CREATE TABLE IF NOT EXISTS 不会给已存在的表补字段，因此需要显式检查。
   ensureColumn('users', 'preferences', "TEXT NOT NULL DEFAULT '{}'");
+  // 改密码时间戳（秒）：JWT 无状态、改密后旧 token（默认 7 天）仍有效，
+  // 被盗 token 无法止损。authMiddleware 用它把「签发早于改密」的令牌判过期。
+  ensureColumn('users', 'token_valid_after', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn('followups', 'session_count', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn('followups', 'course_type', "TEXT NOT NULL DEFAULT 'one_on_one'");
   // 流程打卡类型（常规类 / 非常规类）；存量记录归到「课堂总结」

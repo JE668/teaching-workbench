@@ -56,7 +56,9 @@ function blockHeight(ctx: CanvasRenderingContext2D, block: { items: { value: str
   let h = BLOCK_HEADING_H;
   for (const item of block.items) {
     h += ITEM_LABEL_H;
-    h += wrapText(ctx, item.value, maxWidth, ITEM_BODY_FONT).length * ITEM_BODY_LINE;
+    // 测高与绘制的折行宽度必须一致（绘制处是 maxWidth - 10），
+    // 否则绘制行数可能多于测量行数，卡片总高不足、末行/页脚被裁。
+    h += wrapText(ctx, item.value, maxWidth - 10, ITEM_BODY_FONT).length * ITEM_BODY_LINE;
     h += ITEM_GAP;
   }
   return h + (block.items.length ? -ITEM_GAP + BLOCK_GAP : 0);

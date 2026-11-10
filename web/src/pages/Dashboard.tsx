@@ -192,7 +192,7 @@ export default function Dashboard() {
                   className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-slate-50"
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-50 text-xs font-semibold text-amber-600">
-                    {s.name.slice(0, 1)}
+                    {(s.name || '?').slice(0, 1)}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-slate-700">{s.name}</span>

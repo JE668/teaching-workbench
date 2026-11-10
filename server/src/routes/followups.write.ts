@@ -210,6 +210,17 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
       return res.status(404).json({ error: '回访记录不存在' });
     }
 
+    // 改绑学生时校验归属：FK 只要求"全局存在"，不查 owner —— 不校验的话
+    // A 可以把回访挂到 B 的学生上，还能用「FK 报错 vs 成功」枚举全局学生 ID。
+    if (studentId != null && studentId !== existing.student_id) {
+      const owned = db
+        .prepare('SELECT id FROM students WHERE id = ? AND user_id = ?')
+        .get(studentId, userId) as { id: number } | undefined;
+      if (!owned) {
+        return res.status(400).json({ error: '关联的学生不存在或无权访问' });
+      }
+    }
+
     const wordCount = countWords(content ?? existing.content);
     // 编辑时新增的暂存图同样要提交；已有正式路径原样保留
     const committedImages = commitImages(userId, images ?? parseImages(existing.images));
@@ -254,7 +265,7 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
     }
 
     db.prepare(
-      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','+8 hours') WHERE id=?`
+      `UPDATE followups SET student_id=?, student_name=?, grade=?, subject=?, topic=?, performance=?, mastery=?, session_count=?, course_type=?, images=?, content=?, word_count=?, updated_at=datetime('now','+8 hours') WHERE id=? AND user_id=?`
     ).run(
       studentId ?? existing.student_id,
       studentName ?? existing.student_name,
@@ -268,7 +279,8 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
       imagesJson,
       content ?? existing.content,
       wordCount,
-      followupId
+      followupId,
+      userId
     );
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(followupId);
@@ -338,7 +350,8 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res: Response) =>
       const newPerformance = copyPerformance ? source.performance : cur.performance;
       const newContent = copyContent ? source.content : cur.content;
       const newMastery = copyMastery ? source.mastery : cur.mastery;
-      const wordCount = copyContent ? String(newContent || '').length : String(cur.content || '').length;
+      // 与全库口径一致：用 countWords（去空白标点），不用 String().length（列表字数会虚高）
+      const wordCount = copyContent ? countWords(newContent || '') : countWords(cur.content || '');
       updateOne.run(newTopic, newPerformance, newContent, newMastery, wordCount, t.id, userId);
       updated++;
     }

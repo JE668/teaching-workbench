@@ -42,12 +42,19 @@ export function useGroupManagement(): UseGroupManagementResult {
 
   // 分组预设（小组课用）
   useEffect(() => {
+    let cancelled = false;
     api
       .get('/groups')
-      .then((r) => setGroups(r.groups || []))
+      .then((r) => {
+        if (!cancelled) setGroups(r.groups || []);
+      })
       .catch(() => {
         /* 分组只是便利功能，失败静默 */
       });
+    // 卸载守卫：多个组件同时挂载（或弹窗快速开关）时，卸载后的 setState 是浪费的请求
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /** 应用分组：默认全选，老师再手动取消请假的 */

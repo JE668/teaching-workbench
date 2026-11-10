@@ -70,7 +70,12 @@ router.get('/:id/draft', (req: AuthenticatedRequest, res: Response) => {
 
   const row = db.prepare('SELECT payload FROM observation_drafts WHERE user_id = ? AND observation_id = ?').get(userId, observationId) as { payload: string } | undefined;
   if (row) {
-    return res.json({ draft: JSON.parse(row.payload) });
+    // 脏 payload 按「没有草稿」处理，不让单条数据把 GET 打成 500
+    try {
+      return res.json({ draft: JSON.parse(row.payload) });
+    } catch {
+      return res.json({ draft: null });
+    }
   }
   res.json({ draft: null });
 });
@@ -191,7 +196,15 @@ router.get('/:id/draft/stream', (req: AuthenticatedRequest, res: Response) => {
 
   // 发送初始状态
   const row = db.prepare('SELECT payload FROM observation_drafts WHERE user_id = ? AND observation_id = ?').get(userId, observationId) as { payload: string } | undefined;
-  const draft = row ? JSON.parse(row.payload) : null;
+  // 脏 payload 按「没有草稿」处理：这条在 SSE 建流段，裸抛会让请求永挂
+  let draft: unknown = null;
+  if (row) {
+    try {
+      draft = JSON.parse(row.payload);
+    } catch {
+      draft = null;
+    }
+  }
   const initialData = {
     clientId,
     draft,

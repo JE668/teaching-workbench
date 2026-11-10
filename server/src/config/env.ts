@@ -86,8 +86,13 @@ function resolveReasoningEffort(): string {
 
 const DEFAULT_ADMIN_PASS = process.env.DEFAULT_ADMIN_PASS || '123456';
 
-// 弱口令告警
+// 弱口令：开发/测试只告警；生产（NODE_ENV=production）拒绝启动 ——
+// 默认弱口令等于公网裸奔（可被外部直接登录），宁可不启动也不能带着它上线。
 if (['123456', 'password', 'admin', ''].includes(DEFAULT_ADMIN_PASS)) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[SECURITY] 生产环境禁止使用默认弱口令：请在 .env 中设置 DEFAULT_ADMIN_PASS（openssl rand -hex 16）后重启');
+    process.exit(1);
+  }
   console.warn('[SECURITY] 管理员密码仍为弱口令，请尽快在 .env 中修改 DEFAULT_ADMIN_PASS');
 }
 

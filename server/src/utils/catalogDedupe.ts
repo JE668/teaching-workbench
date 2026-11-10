@@ -59,16 +59,18 @@ export function dedupeCourseCatalog(options: { force?: boolean } = {}): { groups
     return { groups: 0, removed: 0, removedCourses: 0, reassigned: 0, importsRemoved: 0, fresh: false };
   }
 
-  // 找出重复组：按去重键分组，每组保留 1 条（优先保留 is_builtin=1 的导入）
+  // 找出重复组：按去重键分组，每组保留 1 条（优先保留 is_builtin=1 的导入）。
+  // 必须用 LEFT JOIN：import_id 是 ON DELETE SET NULL，删掉空导入批次后这些课程行
+  // 的 import_id 为 NULL —— INNER JOIN 会让这批行永远进不了去重组，重复永久残留。
   const duplicateGroups = db.prepare(`
-    SELECT 
+    SELECT
       cc.band, cc.grade, cc.subject, cc.track, cc.term, cc.seq, TRIM(cc.content) AS content,
       GROUP_CONCAT(cc.id) AS ids,
       COUNT(*) AS cnt,
       MAX(CASE WHEN ci.is_builtin = 1 THEN 1 ELSE 0 END) AS has_builtin,
       SUM(CASE WHEN ci.is_builtin = 1 THEN 1 ELSE 0 END) AS builtin_count
     FROM course_catalog cc
-    JOIN catalog_imports ci ON ci.id = cc.import_id
+    LEFT JOIN catalog_imports ci ON ci.id = cc.import_id
     WHERE cc.content IS NOT NULL AND TRIM(cc.content) != ''
     GROUP BY cc.band, cc.grade, cc.subject, cc.track, cc.term, cc.seq, TRIM(cc.content)
     HAVING COUNT(*) > 1
@@ -231,15 +233,16 @@ export async function resetCatalogToBuiltIn(): Promise<{ removed: number; import
     const importPlaceholders = nonBuiltinIds.map(() => '?').join(',');
     importsRemoved = db.prepare(`DELETE FROM catalog_imports WHERE id IN (${importPlaceholders})`).run(...nonBuiltinIds).changes;
 
-    // 再跑一轮去重，清理内置目录内部的历史重复
+    // 再跑一轮去重，清理内置目录内部的历史重复。
+    // LEFT JOIN 同主去重：import_id 为 NULL 的行（导入批次被删后 SET NULL）也要进组。
     const duplicateGroups = db.prepare(`
-      SELECT 
+      SELECT
         cc.band, cc.grade, cc.subject, cc.track, cc.term, cc.seq, TRIM(cc.content) AS content,
         GROUP_CONCAT(cc.id) AS ids,
         COUNT(*) AS cnt,
         MAX(CASE WHEN ci.is_builtin = 1 THEN 1 ELSE 0 END) AS has_builtin
       FROM course_catalog cc
-      JOIN catalog_imports ci ON ci.id = cc.import_id
+      LEFT JOIN catalog_imports ci ON ci.id = cc.import_id
       WHERE cc.content IS NOT NULL AND TRIM(cc.content) != ''
       GROUP BY cc.band, cc.grade, cc.subject, cc.track, cc.term, cc.seq, TRIM(cc.content)
       HAVING COUNT(*) > 1

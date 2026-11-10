@@ -17,15 +17,17 @@ const migration = {
     }
 
     // 找出重复组：按去重键分组，每组保留 1 条（优先保留 is_builtin=1 的导入）
+    // LEFT JOIN：import_id 为 NULL 的行（导入批次被删后 ON DELETE SET NULL）也要进去重组，
+    // INNER JOIN 会让这批重复永久残留（且本迁移一次性，错过就再也不扫）。
     const duplicateGroups = db.prepare(`
-      SELECT 
+      SELECT
         cc.band, cc.grade, cc.subject, cc.track, cc.term, cc.seq, TRIM(cc.content) AS content,
         GROUP_CONCAT(cc.id) AS ids,
         COUNT(*) AS cnt,
         MAX(CASE WHEN ci.is_builtin = 1 THEN 1 ELSE 0 END) AS has_builtin,
         SUM(CASE WHEN ci.is_builtin = 1 THEN 1 ELSE 0 END) AS builtin_count
       FROM course_catalog cc
-      JOIN catalog_imports ci ON ci.id = cc.import_id
+      LEFT JOIN catalog_imports ci ON ci.id = cc.import_id
       WHERE cc.content IS NOT NULL AND TRIM(cc.content) != ''
       GROUP BY cc.band, cc.grade, cc.subject, cc.track, cc.term, cc.seq, TRIM(cc.content)
       HAVING COUNT(*) > 1
@@ -77,12 +79,13 @@ const migration = {
         WHERE ci.is_builtin = 0 AND cc.id IS NULL
       `).all() as { id: number }[];
       
-      let importsRemoved = 0;
+      let importsRemovedThisPass = 0;
       if (emptyImports.length > 0) {
         const importIds = emptyImports.map((r: any) => r.id);
         const placeholders = importIds.map(() => '?').join(',');
-        importsRemoved = db.prepare(`DELETE FROM catalog_imports WHERE id IN (${placeholders})`).run(...importIds).changes;
+        importsRemovedThisPass = db.prepare(`DELETE FROM catalog_imports WHERE id IN (${placeholders})`).run(...importIds).changes;
       }
+      importsRemoved += importsRemovedThisPass;
 
       db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, datetime(\'now\', \'+8 hours\'))').run('catalog_dedupe_v1');
       console.log(`目录去重：合并 ${duplicateGroups.length} 组重复，删除 ${removed} 条课程，重新指向 ${reassigned} 处引用，清理 ${importsRemoved} 条空导入记录`);
@@ -90,10 +93,8 @@ const migration = {
 
   },
 
-  down: (db: any) => {
-    // 去重操作不可逆：丢失了重复记录的原始数据
-    console.warn('目录去重不可逆：无法恢复被合并的重复记录');
-  },
+  // 去重不可逆：不给 down（irreversible: true，migrateDown 会先拦住）。
+  // 旧版定义了一个只会 console.warn 的假 down —— 假装可回滚比明确不可回滚更危险。
   irreversible: true,
 };
 

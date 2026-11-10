@@ -91,13 +91,22 @@ router.get('/history', (req: any, res) => {
        LIMIT ?`
     ).all(userId, limit) as DraftHistoryRow[];
 
-    const history = rows.map(row => ({
-      id: row.id,
-      payload: JSON.parse(row.payload),
-      createdAt: row.created_at,
-      source: row.source,
-      clientId: row.client_id,
-    }));
+    // 单条脏 payload 不该炸掉整个历史列表（看不了也删不掉，功能被一条数据卡死）：
+    // 解析失败的行跳过。同文件 restore 处的裸 parse 由外层 try 兜底为 404/500，可接受。
+    const history: Array<Record<string, unknown>> = [];
+    for (const row of rows) {
+      try {
+        history.push({
+          id: row.id,
+          payload: JSON.parse(row.payload),
+          createdAt: row.created_at,
+          source: row.source,
+          clientId: row.client_id,
+        });
+      } catch {
+        /* 脏数据行跳过 */
+      }
+    }
 
     res.json({ history });
   } catch (error: any) {

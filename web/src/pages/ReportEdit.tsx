@@ -32,6 +32,7 @@ import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { cn, saveBlob } from '../lib/utils';
 import { downloadReportCard, type ReportCardBlock, type ReportCardInput } from '../lib/reportCard';
 import { getSummaryPlaceholder, getPlanPlaceholder } from '../shared/reportTemplate';
@@ -143,8 +144,12 @@ function CellInput({
 }) {
   const original = String(value ?? '');
   const [draft, setDraft] = useState(original);
+  const focusedRef = useRef(false);
 
+  // 聚焦（正在输入）时不接受远端值：跨设备草稿同步 / 后台 reload 推来新值
+  // 若无条件覆盖，会把用户正打的字顶掉。失焦后由 onBlur 的 commit 走正常流程。
   useEffect(() => {
+    if (focusedRef.current) return;
     setDraft(original);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [original]);
@@ -158,7 +163,9 @@ function CellInput({
       aria-label={ariaLabel}
       list={list ? `list-${list.join()}` : undefined}
       onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => { focusedRef.current = true; }}
       onBlur={() => {
+        focusedRef.current = false;
         if (draft !== original) onCommit(draft);
       }}
     />
@@ -190,7 +197,7 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 
 export default function ReportEdit() {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -200,6 +207,8 @@ export default function ReportEdit() {
   const [savingText, setSavingText] = useState(false);
   const [aiField, setAiField] = useState<'summary' | 'plan' | null>(null);
   const aiAbort = useRef<AbortController | null>(null);
+  // 未保存改动离开守卫：正文保存中 / AI 正在写时刷新或关标签会真丢内容
+  useUnsavedGuard(savingText || aiField !== null);
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
   const [showImportLastMonth, setShowImportLastMonth] = useState(false);
   const [importingLastMonth, setImportingLastMonth] = useState(false);
@@ -228,18 +237,23 @@ export default function ReportEdit() {
   const [draftHistory, setDraftHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // 请求序号：切换报告 id 时旧响应可能后到，必须丢弃（否则 B 页显示 A 的内容）
+  const reloadSeq = useRef(0);
+
   const reload = useCallback(
     async (silent = true) => {
       if (!id) return;
+      const seq = ++reloadSeq.current;
       if (!silent) setLoading(true);
       try {
         const data = await api.request<{ report: MonthlyReport; items: ReportItem[] }>(`/reports/${id}`);
+        if (seq !== reloadSeq.current) return;
         setReport(data.report);
         setItems(data.items);
       } catch (e) {
-        if (!silent) toast.error(e instanceof Error ? e.message : '加载失败');
+        if (seq === reloadSeq.current && !silent) toast.error(e instanceof Error ? e.message : '加载失败');
       } finally {
-        setLoading(false);
+        if (seq === reloadSeq.current) setLoading(false);
       }
     },
     [id]
@@ -272,13 +286,22 @@ export default function ReportEdit() {
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
 
   // URL 参数触发 AI 生成：?aiGenerate=summary 或 ?aiGenerate=plan
+  // 触发后立即从地址栏清除该参数：否则明细条数一变 effect 就重跑，
+  // 与 AI 无关的加行/删行操作也会反复自动触发生成（有 confirm 兜底但烦人且烧 token）。
   useEffect(() => {
     const aiGenerate = searchParams.get('aiGenerate');
+    if (aiGenerate !== 'summary' && aiGenerate !== 'plan') return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('aiGenerate');
+      return next;
+    }, { replace: true });
     if (aiGenerate === 'summary' && report?.summary_enabled && summaryItems.length > 0) {
       void runAi('summary');
     } else if (aiGenerate === 'plan' && report?.plan_enabled && planItems.length > 0) {
       void runAi('plan');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report?.summary_enabled, report?.plan_enabled, summaryItems.length, planItems.length, searchParams]);
 
   /** 当前要挑课的面板里已经加过、还连着目录 id 的课——弹窗里灰掉，不允许重复加 */
@@ -418,7 +441,8 @@ export default function ReportEdit() {
         `/reports?studentId=${report.student_id}`
       );
       // 按时间排序，找到当前报告的前一个月
-      const sorted = res.reports.sort((a, b) => a.year_month.localeCompare(b.year_month));
+      // 不就地 sort 响应数组，也不假设 reports 一定存在（网关 502/字段改名会让这里崩页）
+      const sorted = [...(res.reports || [])].sort((a, b) => a.year_month.localeCompare(b.year_month));
       const currentIndex = sorted.findIndex((r) => r.id === report.id);
       if (currentIndex === -1 || currentIndex === 0) {
         toast.error('没有找到上月的报告');

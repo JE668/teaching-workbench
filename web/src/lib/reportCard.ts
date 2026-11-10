@@ -117,8 +117,8 @@ function drawParas(ctx: CanvasRenderingContext2D, paras: Para[], cy: number, max
     ctx.textBaseline = 'top';
     for (const line of p.lines) {
       ctx.fillText(line, PAD + p.indent, cy, maxWidth - p.indent);
+      cy += LINE_H; // 每行都要推进 y：漏了这行整段折行会叠画在同一行
     }
-    cy += p.lines.length * LINE_H;
     if (i < paras.length - 1) cy += PARA_GAP;
   }
   return cy;

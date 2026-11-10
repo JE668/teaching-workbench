@@ -62,7 +62,7 @@ export function toMarkdown(
   lines.push('');
 
   if (student.notes) {
-    lines.push('> **学生备注**：' + student.notes);
+    lines.push('> **学生备注**：' + mdCell(student.notes));
     lines.push('');
   }
 
@@ -80,7 +80,7 @@ export function toMarkdown(
   }
 
   followups.forEach((f, i) => {
-    lines.push('## ' + (i + 1) + '. ' + (f.topic || '未命名课程'));
+    lines.push('## ' + (i + 1) + '. ' + mdCell(f.topic || '未命名课程'));
     lines.push('');
     lines.push(
       '- **日期**：' + formatDateCN(f.createdAt) +
@@ -90,10 +90,10 @@ export function toMarkdown(
       '　**掌握程度**：' + masteryLabel(f.mastery)
     );
     if (f.performance) {
-      lines.push('- **课堂表现**：' + f.performance);
+      lines.push('- **课堂表现**：' + mdCell(f.performance));
     }
     lines.push('');
-    lines.push(f.content);
+    lines.push(mdCell(f.content));
     lines.push('');
 
     if (f.images.length > 0 && options.imageMode !== 'none') {
@@ -112,13 +112,19 @@ export function toMarkdown(
   return lines.join('\n');
 }
 
+/** Markdown 单元格转义：竖线会切断表格列，换行会断行 */
+function mdCell(value: unknown): string {
+  return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
 /** CSV 单元格转义 */
 function csvCell(value: unknown): string {
   const s = value === null || value === undefined ? '' : String(value);
   // 以 = + - @ 开头会被 Excel / WPS 当成公式执行（CSV 公式注入）。
   // 回访正文是 AI 生成 + 老师手填的文本，学生姓名也可能以这些符号开头，
   // 前置一个制表符让整格按文本处理，跨软件表现一致。
-  const safe = s.length > 1 && /^[ \t]*[=+\-@]/.test(s) ? '\t' + s : s;
+  // 长度条件去掉：单个 '='/'-'/'+'/'@' 也是可执行的公式形态，同样要转义
+  const safe = /^[ \t]*[=+\-@]/.test(s) ? '\t' + s : s;
   // 含逗号/引号/换行时用双引号包裹，内部引号翻倍
   if (/[",\n\r]/.test(safe)) {
     return '"' + safe.replace(/"/g, '""') + '"';

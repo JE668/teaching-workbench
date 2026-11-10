@@ -380,13 +380,15 @@ router.get('/:id/next-courses', (req: AuthenticatedRequest, res) => {
       .all(userId, report.student_id, term) as { course_id: number }[];
     const takenCourseIds = takenRows.map((r) => Number(r.course_id));
 
-    // 匹配年级/学科/学期的目录，取排课推算需要的字段
+    // 匹配年级/学科/学期的目录，取排课推算需要的字段。
+    // 目录是全局共享的（见 catalogList.ts courseFilter 的口径），不能按 user_id 圈范围：
+    // 种子目录挂在播种管理员名下，按 user_id 过滤会让其他老师的续课推荐恒为空。
     const catalogRows = db
       .prepare(
         `SELECT id, track, seq, content, type, difficulty FROM course_catalog
-         WHERE user_id = ? AND grade = ? AND subject = ? AND term = ?`
+         WHERE grade = ? AND subject = ? AND term = ?`
       )
-      .all(userId, grade, subject, term) as ReportRow[];
+      .all(grade, subject, term) as ReportRow[];
 
     const catalog = catalogRows.map((r) => ({
       id: Number(r.id),
@@ -834,8 +836,9 @@ router.patch('/:id/items/:itemId', (req: AuthenticatedRequest, res) => {
     if (!sets.length) return res.status(400).json({ error: '没有可更新的字段' });
 
     sets.push("updated_at = datetime('now', '+8 hours')");
-    params.push(itemId);
-    db.prepare(`UPDATE report_items SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    params.push(itemId, userId);
+    // WHERE 带 user_id 双保险：归属虽有前置 SELECT 校验，写路径本身再圈一次（与 observations.ts PUT 一致）
+    db.prepare(`UPDATE report_items SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
     db.prepare("UPDATE monthly_reports SET updated_at = datetime('now', '+8 hours') WHERE id = ?").run(reportId);
 
     res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(itemId) as ReportItemRow | undefined) });

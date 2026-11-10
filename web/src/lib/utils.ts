@@ -70,7 +70,12 @@ export function formatDate(dateStr?: string | null): string {
 /** 相对时间：刚刚 / 3小时前 / 2天前 */
 export function relativeTime(dateStr?: string | null): string {
   if (!dateStr) return '-';
-  const then = new Date(dateStr.replace(' ', 'T')).getTime();
+  // 后端存的是北京时间挂钟串（datetime('now','+8 hours')），不带时区后缀。
+  // 'YYYY-MM-DD HH:mm:ss' 直接给 Date 会按【浏览器本地时区】解析 ——
+  // 跨时区出差 / VPN 时偏差数小时，所以显式补 +08:00。
+  const naive = dateStr.replace(' ', 'T');
+  const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(naive) ? naive : naive + '+08:00';
+  const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return dateStr;
   const diff = Date.now() - then;
   const min = Math.floor(diff / 60000);

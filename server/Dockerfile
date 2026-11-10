@@ -11,8 +11,9 @@ RUN npm ci
 
 # 复制源码并编译 TypeScript
 COPY . .
-# 复制 shared 模块到 src/shared，供 TypeScript 导入解析
-RUN cp -r ../shared ./src/shared 2>/dev/null || true
+# shared 模块由 CI 预拷贝（docker-publish.yml 在构建前 cp -r shared server/src/shared）；
+# 本地构建依赖仓库里已跟踪的 server/src/shared 副本。此前的 `cp -r ../shared || true` 
+# 在 build context=server 下永远失败，是掩盖配置漂移的死代码，已删。
 RUN npm run build
 
 # 移除 devDependencies，但保留 build 阶段编译出的 better-sqlite3.node，
@@ -53,11 +54,17 @@ COPY --from=build /app/templates ./templates
 # 内置课程目录（随镜像发版的机构级参考数据），启动时由 seedBuiltInCatalog 灌库。
 # 同样必须在 dist 之外单独 COPY，路径口径见 seed/builtinCatalog.ts 的 seedDir()。
 COPY --from=build /app/seed ./seed
+# OCR 语言数据。必须随镜像分发：生产环境不联网，TESSDATA_PREFIX 缺语言包时
+# worker 创建失败被 catch 吞掉 → OCR 静默无结果（AI 上下文缺料但一切"看起来正常"）。
+COPY --from=build /app/chi_sim.traineddata /app/eng.traineddata /app/tessdata/
+ENV TESSDATA_PREFIX=/app/tessdata
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 
 # 创建数据目录
 RUN mkdir -p data/uploads && chown -R nodejs:nodejs /app
+# OCR 语言数据目录归非 root 用户可读（COPY 默认 root:root，读取只需 r 权限，保持只读更安全）
+RUN chmod -R a+r /app/tessdata
 
 # 切换到非 root 用户
 USER nodejs

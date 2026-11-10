@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useToast } from '../components/ui/Toast';
 import { prepareImageForUpload, formatBytes } from '../lib/image';
@@ -37,6 +37,17 @@ export function useImageUpload(): UseImageUploadResult {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  /** 进行中互斥：拖拽与点击并发时两条上传序列会共享 setUploading，
+   *  先完成的一方提前熄灭 loading，用户会以为还没传完的图丢了 */
+  const busyRef = useRef(false);
+  /** 卸载守卫：卸载后不再 setImages / setUploading（React 18 无害，但属无谓状态写） */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const uploadFiles = async (files: FileList | File[], source: 'drop' | 'paste' | 'picker' = 'picker') => {
     const list = Array.from(files);
@@ -50,6 +61,11 @@ export function useImageUpload(): UseImageUploadResult {
       );
       return;
     }
+
+    // 进行中互斥：拖拽/粘贴/点击并发触发时忽略后到的一次，
+    // 否则两条序列共享 uploading 状态，先完成的一方提前熄灭 loading
+    if (busyRef.current) return;
+    busyRef.current = true;
 
     setUploading(true);
     try {
@@ -81,9 +97,10 @@ export function useImageUpload(): UseImageUploadResult {
         toast.success('已上传 ' + added + ' 张图片' + suffix);
       }
     } catch (err: any) {
-      toast.error('图片上传失败：' + err.message);
+      toast.error('图片上传失败：' + (err instanceof Error ? err.message : String(err)));
     } finally {
-      setUploading(false);
+      busyRef.current = false;
+      if (mountedRef.current) setUploading(false);
     }
   };
 

@@ -49,10 +49,13 @@ export function usePreferences() {
     };
   }, []);
 
-  /** 乐观更新：先改界面，再落库；失败则回滚 */
+  /** 乐观更新：先改界面，再落库；失败则只回滚本次改动的键。
+   *  不能整体 setPreferences(previous)：连续快速改 A、B 两项时，
+   *  A 的失败回滚会把 B 的乐观值（甚至 B 的成功响应）一并吞掉。 */
   const update = useCallback(
     async (partial: Partial<Preferences>) => {
-      const previous = preferences;
+      const keys = Object.keys(partial) as (keyof Preferences)[];
+      const previousKeys = Object.fromEntries(keys.map((k) => [k, preferences[k]]));
       const next = { ...preferences, ...partial };
       setPreferences(next);
 
@@ -60,7 +63,7 @@ export function usePreferences() {
         const r = await api.put('/auth/preferences', next);
         if (r?.preferences) setPreferences({ ...DEFAULTS, ...r.preferences });
       } catch {
-        setPreferences(previous);
+        setPreferences((cur) => ({ ...cur, ...previousKeys }));
       }
     },
     [preferences]

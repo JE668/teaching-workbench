@@ -111,6 +111,17 @@ before(async () => {
     .lastInsertRowid as number;
 });
 
+/** 目录维护端点已收敛到首启管理员（DEFAULT_ADMIN_USER），拿它的会话调用 */
+async function adminToken(): Promise<string> {
+  const { req: doReq } = await import('./helpers.js');
+  const pass = process.env.DEFAULT_ADMIN_PASS || '';
+  const res = await doReq('POST', '/api/auth/login', {
+    body: { username: 'admin', password: pass },
+  });
+  if (res.status !== 200) throw new Error('管理员登录失败: ' + JSON.stringify(res.body));
+  return res.body.token as string;
+}
+
 after(async () => {
   await stopServer();
 });
@@ -264,7 +275,7 @@ describe('POST /api/catalog/reset-to-builtin', () => {
     addCourse(builtin, { seq: 6, content: '力的合成' });
     addCourse(builtin, { seq: 7, content: '力的分解' });
 
-    const res = await req('POST', '/api/catalog/reset-to-builtin', { token });
+    const res = await req('POST', '/api/catalog/reset-to-builtin', { token: await adminToken() });
     assert.equal(res.status, 200);
     // 字段名沿用 ResetReport 口径：removed / importsRemoved（设置页 toast 与 e2e 依赖）
     assert.equal(res.body.removed, 1);

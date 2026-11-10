@@ -11,9 +11,27 @@ import {
   discardStagedImage,
   STAGING_DIR_NAME,
 } from '../services/imageLifecycle.js';
-import { ocrImages, saveOcrResults } from '../services/ocr.js';
+import { ocrImages, saveOcrResults, ocrImage } from '../services/ocr.js';
+import { resolveOwnedUploadRelPath } from '../services/ai/utils.js';
 
 const router = Router();
+
+/**
+ * 对一张【按相对路径定位的上传图】做 OCR。
+ * 统一处理：归属校验（防跨租户读文件）→ resolve 到绝对路径 → 识别。
+ * 归属不符/文件不存在/识别失败一律返回空串（不阻塞上传主流程）。
+ */
+export async function ocrUploadedImage(relPath: string, userId: number): Promise<string> {
+  let absPath: string;
+  try {
+    const owned = resolveOwnedUploadRelPath(relPath, userId);
+    absPath = path.resolve(env.UPLOAD_DIR, owned);
+  } catch {
+    return '';
+  }
+  if (!fs.existsSync(absPath)) return '';
+  return ocrImage(absPath);
+}
 
 // 支持的类型（与 AI 多模态输入能力对齐）
 const ALLOWED_EXT = ['.jpg', '.jpeg', '.png', '.webp'];
@@ -142,11 +160,19 @@ router.post('/upload', (req: AuthenticatedRequest, res) => {
       });
     }
 
-    // 异步 OCR 识别，不阻塞上传响应
-    const absolutePaths = paths.map((p) => path.resolve(env.UPLOAD_DIR, p.replace(/^_staging\//, '')));
+    // 异步 OCR 识别，不阻塞上传响应。
+    // 传【原始相对路径】（含 _staging 前缀）：
+    // ① 路径解析（resolve + 归属校验）统一由 ocrImage 内部完成，不再在这里剥前缀——
+    //    上传刚完成时文件就在暂存区，剥掉前缀的路径不存在，OCR 恒为空；
+    // ② 入库键与读取键（getOcrText 用 params.images 的相对路径查询）保持同形态。
+    const relPaths = paths.map((p) => p.replace(/\\/g, '/'));
     setImmediate(async () => {
       try {
-        const results = await ocrImages(absolutePaths);
+        const results: Array<{ path: string; text: string }> = [];
+        for (const rel of relPaths) {
+          const text = await ocrUploadedImage(rel, userId);
+          results.push({ path: rel, text });
+        }
         await saveOcrResults(userId, results);
       } catch (e: any) {
         log.warn({ err: e.message }, '后台 OCR 失败');

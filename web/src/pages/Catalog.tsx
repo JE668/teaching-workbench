@@ -411,13 +411,23 @@ export default function Catalog() {
   const [deduping, setDeduping] = useState(false);
 
   /** 拉一次使用情况。studentId 非空时只拉这个学生的（进度模式）。 */
+  // 请求序号：快速切换学生时旧的学生 usage 晚到会覆盖新的（使用统计张冠李戴）
+  const usageSeq = useRef(0);
+
   const loadUsage = useCallback((studentId: string) => {
+    const seq = ++usageSeq.current;
     void api
       .request<{ usage: Record<string, CourseUsage> }>(
         '/catalog/usage' + (studentId ? '?student_id=' + encodeURIComponent(studentId) : '')
       )
-      .then((r) => setUsage(r.usage))
-      .catch(() => setUsage({}));
+      .then((r) => {
+        if (seq !== usageSeq.current) return;
+        setUsage(r.usage);
+      })
+      .catch(() => {
+        if (seq !== usageSeq.current) return;
+        setUsage({});
+      });
   }, []);
 
   const reload = useCallback(async () => {
@@ -631,7 +641,9 @@ export default function Catalog() {
   const [exporting, setExporting] = useState(false);
   const [printing, setPrinting] = useState(false);
 
-  /** 导出当前筛选范围。筛选条件跟页面同源（都在地址栏里），导出的就是屏幕上的那一屏 */
+  /** 导出当前筛选范围。筛选条件跟页面同源（都在地址栏里），导出的就是屏幕上的那一屏。
+   *  「只看未使用」是本地 state，不在 URL 里 —— 必须显式透传给服务端（unused=1），
+   *  否则屏幕筛了、导出的却是全量；toast 计数也要用导出后的实际数量。 */
   async function downloadExcel() {
     const keep = ['grade', 'subject', 'term', 'type', 'track', 'textbook', 'q'];
     const qs = new URLSearchParams();
@@ -639,6 +651,7 @@ export default function Catalog() {
       const v = params.get(k);
       if (v) qs.set(k, v);
     }
+    if (onlyUnused) qs.set('unused', '1');
     const suffix = qs.toString() ? '?' + qs.toString() : '';
     setExporting(true);
     try {

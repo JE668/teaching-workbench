@@ -397,7 +397,8 @@ export function reportWordRange(field: ReportAiField, courseCount?: number): { m
   const base = REPORT_WORD_RANGE[field];
   if (field === 'plan' && courseCount && courseCount > 3) {
     // 每超 3 门课，上限放宽 15 字（下限不变，保证精炼）
-    const extra = Math.floor((courseCount - 1) / 3) * 15;
+    // 「每超 3 门放宽 15 字」：超出部分 = courseCount - 3，每满 3 门 +15
+    const extra = Math.floor((courseCount - 3) / 3) * 15;
     return { min: base.min, max: base.max + extra };
   }
   return base;

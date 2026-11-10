@@ -1,23 +1,62 @@
 import sharp from 'sharp';
 import { env } from '../../config/env.js';
+import { db } from '../../config/database.js';
 import path from 'path';
 import fs from 'fs';
 import { log } from '../../utils/logger.js';
+import { STAGING_DIR_NAME } from '../imageLifecycle.js';
 
 /** 中文字符计数（不含标点与空白），用于字数门禁 */
 export function countWords(text: string): number {
   return (text || '').replace(/[\s\p{P}]/gu, '').length;
 }
 
-/** 图片转 Base64 Data URL（供 OpenAI vision 输入） */
-export async function imageToBase64DataUrl(relPath: string): Promise<string> {
-  const cleanRel = relPath.replace(/^_staging\//, '');
-  
+/**
+ * 校验「相对路径」属于指定用户，返回归一化后的相对路径（/ 分隔）。
+ *
+ * 上传返回的路径形如 `_staging/<账户名>/xx.jpg`（暂存）或 `<账户名>/xx.jpg`（已归档），
+ * 首段目录就是归属者：数字 userId（历史）或账户名。归属不符直接拒绝——
+ * 否则 A 传 `B名/xxx.jpg` 就能让服务端读 B 的文件（路径里只有 `_staging` 是合法前缀）。
+ */
+export function resolveOwnedUploadRelPath(relPath: string, userId: number): string {
+  const cleanRel = relPath.replace(/\\/g, '/').trim();
+
   // 路径穿越保护
   if (cleanRel.includes('..') || path.isAbsolute(cleanRel)) {
     throw new Error('非法的图片路径');
   }
-  
+
+  // 剥掉合法的暂存前缀，剩余部分首段必须是自己的目录
+  const stripped = cleanRel.startsWith(STAGING_DIR_NAME + '/')
+    ? cleanRel.slice(STAGING_DIR_NAME.length + 1)
+    : cleanRel;
+
+  const firstSeg = stripped.split('/')[0] || '';
+  if (!firstSeg) {
+    throw new Error('非法的图片路径');
+  }
+  const me = db.prepare('SELECT username FROM users WHERE id = ?').get(userId) as
+    | { username: string }
+    | undefined;
+  const myUsername = me ? String(me.username || '') : '';
+  // 注意不能只写 Number(firstSeg) === userId：账户名会得到 NaN，
+  // NaN 比较为 false 会把归属校验整个跳过 —— 等于对用户名目录不设防。
+  const mine = firstSeg === String(userId) || (myUsername !== '' && firstSeg === myUsername);
+  if (!mine) {
+    throw new Error('无权访问该图片');
+  }
+
+  return cleanRel;
+}
+
+/** 图片转 Base64 Data URL（供 OpenAI vision 输入）。relPath 需归属 userId。 */
+export async function imageToBase64DataUrl(relPath: string, userId?: number): Promise<string> {
+  // 归属校验（userId 缺省时退回旧口径：仅穿越保护——内部调用方应始终传 userId）
+  const cleanRel = userId !== undefined ? resolveOwnedUploadRelPath(relPath, userId) : relPath.replace(/\\/g, '/').trim();
+  if (cleanRel.includes('..') || path.isAbsolute(cleanRel)) {
+    throw new Error('非法的图片路径');
+  }
+
   const absPath = path.resolve(env.UPLOAD_DIR, cleanRel);
   
   // 文件必须存在

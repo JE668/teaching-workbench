@@ -46,6 +46,11 @@ export function loadDraft(): Omit<FollowUpDraft, 'savedAt'> | null {
 }
 
 export function saveDraft(data: Omit<FollowUpDraft, 'savedAt'>): void {
+  // 入参校验放在 try 之外：调用方传缺字段的对象是【代码错误】，
+  // 被 catch 静默吞掉会让草稿悄悄不落盘、且无任何提示（用户以为已保存）。
+  if (!data || !Array.isArray(data.images) || !Array.isArray(data.selectedIds)) {
+    throw new TypeError('saveDraft: images / selectedIds 必须是数组');
+  }
   try {
     // 什么都没填就不写，避免占位
     const empty =

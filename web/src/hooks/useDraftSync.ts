@@ -156,7 +156,10 @@ export function useDraftSync({ state, applyRemote, onRemoteCleared, paused }: Op
         await api.streamGet(
           '/draft/stream?clientId=' + clientId,
           {
-            onOpen: () => setConnected(true),
+            onOpen: () => {
+              setConnected(true);
+              retryCount = 0; // 连上了就复位退避，下次断线从 2.5s 重新开始
+            },
             onEvent: (event, data) => {
               const { applyRemote, onRemoteCleared, computeSkipFields } = handlersRef.current;
 
@@ -202,12 +205,18 @@ export function useDraftSync({ state, applyRemote, onRemoteCleared, paused }: Op
 
       setConnected(false);
 
-      // 断线自动重连（nginx 重启、手机切回前台等都会断）
+      // 断线自动重连（nginx 重启、手机切回前台等都会断）。
+      // 指数退避 + 抖动：固定 2.5s 在服务器故障期间会让 N 个标签页以恒定频率
+      // 持续打连接，退避到 60s 封顶把故障期打点压到可忽略。
       if (!controller.signal.aborted) {
-        retryTimer = setTimeout(connect, RECONNECT_MS);
+        const backoff = Math.min(RECONNECT_MS * Math.pow(2, retryCount), 60_000);
+        const jitter = Math.random() * backoff * 0.3;
+        retryCount += 1;
+        retryTimer = setTimeout(connect, backoff + jitter);
       }
     };
 
+    let retryCount = 0;
     connect();
 
     return () => {

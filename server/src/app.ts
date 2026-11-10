@@ -30,9 +30,10 @@ import aiMetricsRoutes from './routes/aiMetrics.js';
  * 拆出来是为了让测试可以直接对 app 发请求，无需占用端口。
  * 注：组件测试直接渲染页面（不经由这里），不受懒加载影响。
  */
-export function createApp() {
-  // 同步初始化数据库（在测试中会自动初始化）
-  initDatabase();
+export async function createApp() {
+  // 等数据库初始化完成再挂路由：initDatabase 内部有 await 让出点（migrateUp），
+  // 不 await 的话首批请求可能落在迁移/索引重建/RENAME 完成之前，撞进半初始化的库。
+  await initDatabase();
 
   const app = express();
 

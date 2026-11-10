@@ -141,6 +141,15 @@ router.put('/password', authMiddleware, validateBody(changePasswordSchema), (req
       user.id
     );
 
+    // 改密即吊销：记录改密时刻（秒），authMiddleware 会拒签发时间早于它的令牌。
+    // 当前请求自带的令牌也是旧的 —— 前端收到 401 后统一走重新登录。
+    db.prepare('UPDATE users SET token_valid_after = ? WHERE id = ?').run(
+      Math.floor(Date.now() / 1000),
+      user.id
+    );
+
+    clearMediaCookie(res);
+
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: '修改密码失败', message: error.message });

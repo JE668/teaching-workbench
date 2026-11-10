@@ -64,7 +64,8 @@ export function wrapText(
         line += token;
         col += w;
       }
-      if (ch === ' ') col += ctx.measureText(' ').width;
+      // 空格宽度已含在 w 里（token=ch=' '）；再补一次会让连续空格场景列宽翻倍、提前换行
+
     }
     lines.push(line);
   }

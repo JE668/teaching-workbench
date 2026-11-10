@@ -107,7 +107,9 @@ describe('数据不足与脏数据', () => {
 
   it('脏值夹杂在中间不影响其余分值的计算', () => {
     const p = buildProgression([fu(30, 'needs_improvement'), fu(15, '脏值'), fu(5, 'excellent')]);
-    expect(p.scored).toBe(3);
+    // scored 的口径是「参与计算（分值不为空）的点数量」—— 脏值那条不计入，
+    // 否则均值分母被拉大、UI 的 N 次记录也会虚高
+    expect(p.scored).toBe(2);
     expect(p.firstAvg).toBe(1);
     expect(p.lastAvg).toBe(4);
     expect(p.trend).toBe('up_strong');

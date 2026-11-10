@@ -58,7 +58,9 @@ export function extractInlineImageDataUrls(html: string): string[] {
 
 /** data: URL → File（便于复用同一个上传通道） */
 export function dataUrlToFile(dataUrl: string, name = 'dropped-image.png'): File | null {
-  const m = /^data:(image\/[^;]+);base64,(.+)$/i.exec(dataUrl);
+  // MIME 后允许带参数（如 image/png;charset=utf-8;base64,...）：
+  // 旧正则只认 ';base64' 紧跟 MIME，带 charset 的 data URL 会被静默丢弃、图凭空消失。
+  const m = /^data:(image\/[^;,]+)(?:;[^,]*)?;base64,(.+)$/i.exec(dataUrl);
   if (!m) return null;
 
   try {

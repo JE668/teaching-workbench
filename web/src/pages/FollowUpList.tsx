@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   History,
@@ -104,19 +104,24 @@ export default function FollowUpList() {
     }
   }, [editing?.id, detail?.id]);
 
+  // 请求序号：快速切筛选/翻页时旧响应可能后到，丢弃它（防列表回显旧页）
+  const loadSeq = useRef(0);
+
   const load = async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       const params: string[] = ['page=' + page, 'pageSize=20'];
       if (subject) params.push('subject=' + encodeURIComponent(subject));
       if (grade) params.push('grade=' + encodeURIComponent(grade));
       const res = await api.get('/followups?' + params.join('&'));
+      if (seq !== loadSeq.current) return;
       setItems(res.followups || []);
       if (res.pagination) setPagination(res.pagination);
     } catch (err: any) {
       toast.error('加载失败：' + err.message);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 

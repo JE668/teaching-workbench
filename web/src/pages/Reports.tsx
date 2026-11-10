@@ -89,7 +89,7 @@ export default function Reports() {
     // 接口返回的是 { reports: [...] } 包一层 —— 直接当数组用会让
     // reports.map 抛错，整页渲染崩成白屏
     const res = await api.request<{ reports: MonthlyReport[] }>('/reports' + query);
-    setReports(res.reports);
+    setReports(res.reports || []);
   }, []);
 
   useEffect(() => {
@@ -216,7 +216,7 @@ export default function Reports() {
       </header>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatTile icon={<CalendarRange className="h-4 w-4" />} label="月度报告" value={reports.length} />
+        <StatTile icon={<CalendarRange className="h-4 w-4" />} label="月度报告" value={filtered.length} />
         <StatTile
           icon={<Users className="h-4 w-4" />}
           label="覆盖学生"

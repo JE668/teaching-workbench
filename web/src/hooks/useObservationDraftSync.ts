@@ -119,12 +119,19 @@ export function useObservationDraftSync({ state, observationId, applyRemote, onR
     if (json === lastSynced.current) return;
 
     const timer = setTimeout(() => {
+      const prevSynced = lastSynced.current;
       lastSynced.current = json;
       api
         .put('/observations/' + observationId + '/draft', { clientId, payload: stateRef.current })
         .then(() => setConnected(true))
         .catch(() => {
-          /* 网络中断由订阅侧的重连逻辑兜底 */
+          // 推送失败（网络抖动 / 切后台）：把同步基准回滚到推送前的值。
+          // 不回滚的话 lastSynced 与本地一致，重连时 ready 会判定
+          // 「本地没有未上报改动」，用服务端的旧草稿覆盖本地——
+          // 刚生成的内容或编辑到一半的字就丢在这。
+          // 回滚后 hasPendingLocalChanges 为真，ready 不覆盖；下次 state 变化会重推全量。
+          // （与 useDraftSync.ts 的推送失败处理保持同一语义。）
+          if (lastSynced.current === json) lastSynced.current = prevSynced;
         });
     }, PUSH_DEBOUNCE_MS);
 
@@ -149,7 +156,10 @@ export function useObservationDraftSync({ state, observationId, applyRemote, onR
         await api.streamGet(
           '/observations/' + observationId + '/draft/stream?clientId=' + clientId,
           {
-            onOpen: () => setConnected(true),
+            onOpen: () => {
+              setConnected(true);
+              retryCount = 0; // 连上了就复位退避，下次断线从 2.5s 重新开始
+            },
             onEvent: (event, data) => {
               const { applyRemote, onRemoteCleared, computeSkipFields } = handlersRef.current;
 
@@ -195,12 +205,18 @@ export function useObservationDraftSync({ state, observationId, applyRemote, onR
 
       setConnected(false);
 
-      // 断线自动重连（nginx 重启、手机切回前台等都会断）
+      // 断线自动重连（nginx 重启、手机切回前台等都会断）。
+      // 指数退避 + 抖动：固定 2.5s 在服务器故障期间会让 N 个标签页以恒定频率
+      // 持续打连接，退避到 60s 封顶把故障期打点压到可忽略。
       if (!controller.signal.aborted) {
-        retryTimer = setTimeout(connect, RECONNECT_MS);
+        const backoff = Math.min(RECONNECT_MS * Math.pow(2, retryCount), 60_000);
+        const jitter = Math.random() * backoff * 0.3;
+        retryCount += 1;
+        retryTimer = setTimeout(connect, backoff + jitter);
       }
     };
 
+    let retryCount = 0;
     connect();
 
     return () => {

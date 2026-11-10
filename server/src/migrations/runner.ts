@@ -56,8 +56,14 @@ async function loadMigrations(): Promise<Migration[]> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   
+  // 生产（node dist）目录里是编译后的 .js，开发/测试（tsx）里是 .ts —— 两种都要加载。
+  // 只过滤 .ts 的旧行为会让生产环境静默加载 0 个迁移（user_version 恒 0、migrateUp 空转）。
   const files = readdirSync(__dirname)
-    .filter((f: string) => f.endsWith('.ts') && f !== 'runner.ts')
+    .filter((f: string) => {
+      if (f === 'runner.ts' || f === 'runner.js') return false;
+      return f.endsWith('.ts') || f.endsWith('.js');
+    })
+    .filter((f: string) => !f.endsWith('.d.ts'))
     .sort(); // 按版本号排序（文件名以时间戳开头）
   
   const migrations: Migration[] = [];

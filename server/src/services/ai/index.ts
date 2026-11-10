@@ -152,9 +152,10 @@ async function buildUserContent(
 
   for (const imagePath of params.images) {
     try {
+      // 传 userId 做归属校验：只允许读自己暂存/归档目录里的图
       userContent.push({
         type: 'image_url',
-        image_url: { url: await imageToBase64DataUrl(imagePath) },
+        image_url: { url: await imageToBase64DataUrl(imagePath, userId) },
       });
     } catch (error: any) {
       log.warn({ image: imagePath, err: error.message }, '图片加载失败');

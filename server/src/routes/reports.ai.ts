@@ -11,6 +11,8 @@ import {
   type ReportAiField,
 } from '../services/reportAi.js';
 import { openSse } from '../utils/sse.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { parseImages } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { z } from 'zod';
 
@@ -73,7 +75,7 @@ const reportAiSchema = z.object({
   nickname: z.string().max(20).optional(),
 });
 
-router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/ai/stream', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
 
@@ -177,7 +179,8 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
     yearMonth: ym,
     summaryCourses: pick('summary'),
     planCourses: pick('plan'),
-    followUps: followUps.map(f => ({ topic: f.topic, content: f.content, images: f.images ? JSON.parse(f.images) : [] })),
+    // parseImages 容错解析：try 块之外裸 JSON.parse 会让脏数据把整个 SSE 请求打成 unhandledRejection（Express 4 不接 async 异常，请求永挂）
+    followUps: followUps.map(f => ({ topic: f.topic, content: f.content, images: parseImages(f.images) })),
     prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
     recentSummaries: recentRows.map((r) => ({ yearMonth: String(r.year_month || ''), text: String(r.summary_intro || '') })),
     // ③ 观察记录素材：当月听评课记录，供总结/规划参考课堂细节
@@ -260,6 +263,6 @@ router.post('/:id/ai/stream', async (req: AuthenticatedRequest, res: Response) =
   } finally {
     sse.end();
   }
-});
+}));
 
 export default router;

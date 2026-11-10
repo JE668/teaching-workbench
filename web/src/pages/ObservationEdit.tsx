@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useObservationDraftSync, ObservationDraftPayload } from '../hooks/useObservationDraftSync';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import {
   Observation,
   Teacher,
@@ -165,7 +166,10 @@ const GRADE_HINTS: Record<string, string> = {
 
 export default function ObservationEdit() {
   const { id } = useParams();
-  const recordId = id ? parseInt(id, 10) : null;
+  // parseInt 对非数字路由返回 NaN；NaN 是 number 会通过所有 truthy 检查，
+  // 最终拼出 PATCH /observations/NaN 这种不可读的 404。非数字一律当新建处理。
+  const parsedId = id ? parseInt(id, 10) : NaN;
+  const recordId = Number.isFinite(parsedId) ? parsedId : null;
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -187,6 +191,8 @@ export default function ObservationEdit() {
   const [savingReport, setSavingReport] = useState(false);
   /** 生成中标记：别把手中的半成品报告存进数据库 */
   const generatingRef = useRef(false);
+  // 未保存改动离开守卫：保存中 / 正在流式生成时刷新或关标签会真丢内容
+  useUnsavedGuard(saving || savingReport || generating);
   /** 刚因「记录建好了」而跳转过来的那一次加载：跳过，否则拉回的空报告会盖掉流式内容 */
   const skipLoadRef = useRef(false);
 
@@ -387,14 +393,17 @@ export default function ObservationEdit() {
   ];
 
   /** 把当前报告正文存进数据库。Word 是后端按库里那份渲染的，导出前先存一次 */
-  const persistReport = async (): Promise<void> => {
+  const persistReport = async (): Promise<boolean> => {
     const targetId = recordId ?? localId;
-    if (!targetId || !report.trim() || generatingRef.current) return;
-    if (report.trim() === savedReport.trim()) return;
+    // 返回布尔：调用方据此决定 toast 文案。静默 return 时若照弹"已保存"，
+    // 正好在流式生成中点保存的用户会以为已落库（实际一个字都没存）。
+    if (!targetId || !report.trim() || generatingRef.current) return false;
+    if (report.trim() === savedReport.trim()) return true; // 无改动也算"已保存"
     setSavingReport(true);
     try {
       const r = await api.patch('/observations/' + targetId + '/report', { report });
       setSavedReport(r.report ?? report);
+      return true;
     } finally {
       setSavingReport(false);
     }
@@ -402,8 +411,11 @@ export default function ObservationEdit() {
 
   const handleSaveReport = async () => {
     try {
-      await persistReport();
-      toast.success('评课报告已保存');
+      const saved = await persistReport();
+      if (saved) toast.success('评课报告已保存');
+      // 静默未保存：空正文 / 生成中。按真实原因提示，别谎报成功。
+      else if (generatingRef.current) toast.info('正在生成中，完成后会自动保存');
+      else toast.error('报告还是空的，没有可保存的内容');
     } catch (err: any) {
       toast.error('保存报告失败：' + err.message);
     }

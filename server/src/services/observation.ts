@@ -1,4 +1,4 @@
-import { getSharedClient, withAiSlot, acquireAiSlot, releaseAiSlot, describeAiError } from './ai/index.js';
+import { getSharedClient, withAiSlot, acquireAiSlot, releaseAiSlot, describeAiError, startStreamWatchdog } from './ai/index.js';
 import { getAiConfig } from '../config/settings.js';
 import { OVERALL_GRADE_LABELS } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
@@ -231,6 +231,10 @@ export async function* streamObservationGeneration(
 ): AsyncGenerator<string> {
   // 占位直到流读完：一次评课生成可持续几十秒
   await acquireAiSlot();
+  // 空闲看门狗：上游中途挂住（不发 chunk 也不关连接）时 for await 会永久挂起、
+  // finally 不执行、并发槽永久占用 —— 挂两次（MAX_CONCURRENT_AI=2）全部 AI 排队超时。
+  // 回访/通用通道都接了 startStreamWatchdog，评课这条此前漏了。
+  const watchdog = startStreamWatchdog();
   try {
     const ai = getSharedClient(userId);
     const config = getAiConfig(userId);
@@ -248,12 +252,16 @@ export async function* streamObservationGeneration(
       reasoning_effort: config.reasoningEffort,
       stream: true,
     };
-    const stream = (await ai.chat.completions.create(body)) as unknown as AsyncIterable<ChatStreamChunk>;
+    const stream = (await ai.chat.completions.create(body, {
+      signal: watchdog.signal,
+    })) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
+      watchdog.kick();
       const delta = chunk?.choices?.[0]?.delta?.content;
       if (delta) yield delta as string;
     }
   } finally {
+    watchdog.done();
     releaseAiSlot();
   }
 }

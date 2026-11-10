@@ -45,6 +45,8 @@ export default function Students() {
   // 搜索防抖。
   // 注意：必须跳过首轮执行 —— 否则挂载 300ms 后会再拉一次列表，
   // 既产生一次多余请求，又会把期间的新增/编辑结果覆盖掉。
+  // 请求序号：响应回来时若已有更新的请求发出，则丢弃这次结果（防旧关键词覆盖新结果）
+  const searchSeq = useRef(0);
   const skipInitialSearch = useRef(true);
   useEffect(() => {
     if (skipInitialSearch.current) {
@@ -52,27 +54,31 @@ export default function Students() {
       return;
     }
 
+    const seq = ++searchSeq.current;
     const t = setTimeout(() => {
-      if (keyword.trim()) search(keyword.trim());
-      else load();
+      if (keyword.trim()) search(keyword.trim(), seq);
+      else load(seq);
     }, 300);
     return () => clearTimeout(t);
   }, [keyword]);
 
-  const load = async () => {
+
+  const load = async (seq?: number) => {
     try {
       const res = await api.get('/students');
+      if (seq !== undefined && seq !== searchSeq.current) return;
       setStudents(res.students || []);
     } catch (err: any) {
       toast.error('加载学生失败：' + err.message);
     } finally {
-      setLoading(false);
+      if (seq === undefined || seq === searchSeq.current) setLoading(false);
     }
   };
 
-  const search = async (kw: string) => {
+  const search = async (kw: string, seq?: number) => {
     try {
       const res = await api.get('/students/search?keyword=' + encodeURIComponent(kw));
+      if (seq !== undefined && seq !== searchSeq.current) return;
       setStudents(res.students || []);
     } catch (err: any) {
       toast.error('搜索失败：' + err.message);

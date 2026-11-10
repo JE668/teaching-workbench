@@ -48,7 +48,19 @@ class ApiClient {
 
   setTokenFromStorage() {
     this.token = localStorage.getItem('token');
-    this.user = localStorage.getItem('user') ? JSON.parse(localStorage.getItem('user')!) : null;
+    // localStorage 可能被外部写坏（旧版本残留、其他脚本、手工改）：
+    // 裸 parse 抛错会让应用在启动阶段白屏，而不是降级到未登录。
+    const raw = localStorage.getItem('user');
+    if (!raw) {
+      this.user = null;
+      return;
+    }
+    try {
+      this.user = JSON.parse(raw);
+    } catch {
+      this.user = null;
+      localStorage.removeItem('user');
+    }
   }
 
   getUser() {
@@ -98,6 +110,11 @@ class ApiClient {
       throw new Error(errorData.error || '请求失败');
     }
 
+    // 204 / 无 Content-Length 的成功响应没有 JSON body，
+    // 一律 response.json() 会抛 "Unexpected end of JSON input" 而不是拿到成功。
+    if (response.status === 204) return undefined as T;
+    const len = response.headers.get('content-length');
+    if (len === '0') return undefined as T;
     return response.json();
   }
 

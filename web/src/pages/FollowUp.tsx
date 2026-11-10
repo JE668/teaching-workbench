@@ -54,6 +54,7 @@ import {
   appendPhrase,
 } from '../lib/draft';
 import { useDraftSync, DraftPayload } from '../hooks/useDraftSync';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useImageUpload } from '../hooks/useImageUpload';
 import { useGroupManagement } from '../hooks/useGroupManagement';
 import { usePreferences } from '../hooks/usePreferences';
@@ -191,6 +192,8 @@ export default function FollowUp() {
   const [regenerating, setRegenerating] = useState(false);
   const [generationError, setGenerationError] = useState<{ status?: number; detail?: any; message: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** 保存成功后延时跳转的定时器：卸载要清理，否则用户在 1.2s 内点了别的链接仍会被拽回学生页 */
+  const redirectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [content, setContent] = useState(() => restored?.content || '');
   const [savedFollowupId, setSavedFollowupId] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
@@ -272,6 +275,8 @@ export default function FollowUp() {
 
   // applyRemote 是空依赖的 useCallback，读 generating 要走 ref
   const generatingRef = useRef(false);
+  // 未保存改动离开守卫：保存中 / 正在流式生成时刷新或关标签会真丢内容
+  useUnsavedGuard(saving || generating);
   useEffect(() => {
     generatingRef.current = generating;
   }, [generating]);
@@ -401,6 +406,16 @@ export default function FollowUp() {
     const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(timer);
   }, [generating]);
+
+  // 卸载时清掉待执行的跳转定时器（1.2s 窗口内用户可能已经去了别的页面）
+  useEffect(() => {
+    return () => {
+      if (redirectTimer.current) {
+        clearTimeout(redirectTimer.current);
+        redirectTimer.current = null;
+      }
+    };
+  }, []);
 
   // URL 预选学生
   useEffect(() => {
@@ -609,7 +624,7 @@ export default function FollowUp() {
       // 跳转：小组课去第一个学生档案，1对1 去对应学生档案
       const targetId = isGroup ? selectedIds[0] : form.studentId || res?.followup?.studentId;
       if (targetId) {
-        setTimeout(() => navigate('/students/' + targetId), 1200);
+        redirectTimer.current = setTimeout(() => navigate('/students/' + targetId), 1200);
       }
     } catch (err: any) {
       toast.error('保存失败：' + err.message);

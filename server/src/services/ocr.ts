@@ -30,7 +30,12 @@ async function getWorker() {
         langPath: langPath, // 关键：显式指定语言数据目录
       });
       return worker;
-    })();
+    })().catch((err) => {
+      // 创建失败（语言数据缺失/网络抖动）不能永久毒化单例：
+      // 置回 null 让下一次调用重新尝试，而不是进程存活期内 OCR 永不恢复。
+      workerPromise = null;
+      throw err;
+    });
   }
   return workerPromise;
 }
@@ -67,6 +72,10 @@ export async function ocrImages(imagePaths: string[]): Promise<Array<{ path: str
 /**
  * 将 OCR 结果写入数据库（关联图片相对路径）。
  * 供上传路由在保存暂存图后调用。
+ *
+ * 写入键统一为【相对路径】（调用方传入的 path 原样入库）；
+ * 读取端 getOcrText 用同一形态的相对路径查询 —— 两端键形态必须一致，
+ * 否则（历史 bug）写绝对路径、查相对路径，OCR 文本永远查不中。
  */
 export async function saveOcrResults(userId: number, results: Array<{ path: string; text: string }>): Promise<void> {
   if (!results.length) return;

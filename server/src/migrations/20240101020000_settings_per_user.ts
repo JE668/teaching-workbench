@@ -60,22 +60,31 @@ const migration = {
     // 回滚：从 settings_user 恢复到 settings（取第一个用户的数据）
     const firstUser = db.prepare('SELECT user_id FROM settings_user LIMIT 1').get() as { user_id: number } | undefined;
     if (firstUser) {
-      const settings = db.prepare('SELECT key, value FROM settings_user WHERE user_id = ?').all(firstUser.user_id);
+      const backupExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='settings_global_backup'").get();
       const tx = db.transaction(() => {
-        db.exec('DROP TABLE IF EXISTS settings');
-        db.exec(`
-          CREATE TABLE settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
-          )
-        `);
-        const stmt = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
-        for (const s of settings) {
-          stmt.run(s.key, s.value);
+        if (backupExists) {
+          // 有留档：直接恢复留档（里面就是迁移前的原始数据）。
+          // 不能既 DROP/CREATE settings 又 RENAME backup → settings：目标已存在必报错。
+          db.exec('DROP TABLE IF EXISTS settings');
+          db.exec('DROP TABLE settings_user');
+          db.exec('ALTER TABLE settings_global_backup RENAME TO settings');
+        } else {
+          // 没有留档（异常形态）：用第一个用户的副本重建全局表
+          const settings = db.prepare('SELECT key, value FROM settings_user WHERE user_id = ?').all(firstUser.user_id);
+          db.exec('DROP TABLE IF EXISTS settings');
+          db.exec(`
+            CREATE TABLE settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
+            )
+          `);
+          const stmt = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+          for (const s of settings) {
+            stmt.run(s.key, s.value);
+          }
+          db.exec('DROP TABLE settings_user');
         }
-        db.exec('DROP TABLE settings_user');
-        db.exec('ALTER TABLE settings_global_backup RENAME TO settings');
       });
       tx();
     }

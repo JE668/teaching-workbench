@@ -7,7 +7,7 @@ let baseUrl = '';
 
 /** 启动被测服务（随机端口，不污染 3000） */
 export async function startServer(): Promise<string> {
-  const app = createApp();
+  const app = await createApp();
   server = http.createServer(app);
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
