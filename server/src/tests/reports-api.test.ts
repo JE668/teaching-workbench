@@ -756,6 +756,31 @@ describe('目录智能排课 · 按轨道推荐下月该上什么', () => {
     assert.ok(!tracks.includes('错学期'));
   });
 
+  // 回归：目录是【全局共享】的（catalogList.ts courseFilter 写明不按 user_id 圈范围），
+  // /next-courses 曾经抄了 `WHERE user_id = ?` —— 只有种子目录的播种管理员账号能得到推荐，
+  // 其余老师全部恒空。这条用例专门把"属于别人的目录课"喂进来，旧代码必红。
+  test('别的账号导入的同年级同学科目录课，也应进入推荐（目录全局共享）', async () => {
+    const other = db
+      .prepare("INSERT INTO users (username, password) VALUES ('nc-other-teacher', 'x')")
+      .run().lastInsertRowid as number;
+    const foreign = seedCourse({
+      user_id: other,
+      track: '他账号轨道',
+      seq: 1,
+      content: '别的老师导入的课',
+    });
+
+    const r = await ncReport('2027-02');
+    const res = await req('GET', `/api/reports/${r.id}/next-courses`, { token });
+    assert.equal(res.status, 200);
+
+    const hit = res.body.suggestions.find((x: any) => x.track === '他账号轨道');
+    assert.ok(hit, '目录全局共享：他人导入的同年级同学科课程也应出现在推荐里');
+    assert.equal(hit.takenCount, 0);
+    assert.equal(hit.course.id, foreign);
+    assert.equal(hit.course.content, '别的老师导入的课');
+  });
+
   test('已上课跨月累积：上个月报告上过的课，这个月不再推荐', async () => {
     const h1 = seedCourse({ track: '热学', seq: 1, content: '温度' });
     const h2 = seedCourse({ track: '热学', seq: 2, content: '内能' });

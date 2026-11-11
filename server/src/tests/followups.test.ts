@@ -274,3 +274,42 @@ describe('回访数据隔离', () => {
     assert.equal(del.status, 404);
   });
 });
+
+/**
+ * 回归：PUT /followups/:id 改绑 studentId 必须校验归属。
+ *
+ * followups.student_id 的外键是 ON DELETE SET NULL，只保证"这个 id 在 students
+ * 表里存在"，不看 user_id。曾经 PUT 直接拿请求体的 studentId 落库，于是：
+ *   1) A 可以把回访挂到 B 的学生上（跨租户引用）；
+ *   2) 更能拿"FK 报错(500) vs 成功(200)"当预言机，枚举全局有哪些学生 id。
+ */
+describe('改绑学生 · 必须校验归属', () => {
+  test('不能把自己的回访改绑到别人的学生上', async () => {
+    const mine = await createUser('rebind-owner');
+    const other = await createUser('rebind-victim');
+    const myStudent = await createStudent(mine, { name: '我的学生' });
+    const victimStudent = await createStudent(other, { name: '别人的学生' });
+    const fu = await createFollowUp(mine, { studentId: myStudent.id });
+
+    const res = await req('PUT', '/api/followups/' + fu.id, {
+      token: mine,
+      body: { studentId: victimStudent.id },
+    });
+    assert.equal(res.status, 400, '跨租户改绑应被拒绝: ' + JSON.stringify(res.body));
+    assert.match(String(res.body.error), /不存在或无权访问/);
+  });
+
+  test('不能通过"不存在的学生 id"区分成 404/500（避免枚举预言机）', async () => {
+    const mine = await createUser('rebind-probe');
+    const myStudent = await createStudent(mine, { name: '我的学生2' });
+    const fu = await createFollowUp(mine, { studentId: myStudent.id });
+
+    const missing = await req('PUT', '/api/followups/' + fu.id, {
+      token: mine,
+      body: { studentId: 99999999 },
+    });
+    // 归属校验在落库之前，任何"不是你的学生"都走同一条 400，不泄漏库内是否存在
+    assert.equal(missing.status, 400, JSON.stringify(missing.body));
+    assert.match(String(missing.body.error), /不存在或无权访问/);
+  });
+});
