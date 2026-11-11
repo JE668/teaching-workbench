@@ -297,3 +297,31 @@ describe('POST /api/catalog/reset-to-builtin', () => {
     assert.equal((await req('POST', '/api/catalog/reset-to-builtin')).status, 401);
   });
 });
+/**
+ * 回归：目录维护端点已收敛到「首启管理员」。
+ *
+ * 这两个 POST 会重写/清空【全局共享】的 course_catalog 与 catalog_imports，
+ * 并 repoint 所有人的 report_items —— 影响面是全机构 TC。没有 admin 角色体系，
+ * 故按最小侵入口径只认 DEFAULT_ADMIN_USER 那个账号。
+ * 之前对任何登录账号开放，等于把全库目录的一键清空权发给了每个老师。
+ */
+describe('目录维护端点 · 普通账号必须 403', () => {
+  test('dedupe：普通账号 403，且不修改任何数据', async () => {
+    const teacher = await createUser('maint-non-admin');
+    const before = count('SELECT COUNT(*) AS n FROM course_catalog');
+
+    const res = await req('POST', '/api/catalog/dedupe', { token: teacher });
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.match(String(res.body.error), /管理员/);
+    assert.equal(count('SELECT COUNT(*) AS n FROM course_catalog'), before, '被拒后不应改动目录');
+  });
+
+  test('reset-to-builtin：普通账号 403，且不删除任何导入', async () => {
+    const teacher = await createUser('maint-non-admin-2');
+    const before = count('SELECT COUNT(*) AS n FROM catalog_imports');
+
+    const res = await req('POST', '/api/catalog/reset-to-builtin', { token: teacher });
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.equal(count('SELECT COUNT(*) AS n FROM catalog_imports'), before, '被拒后不应清空导入');
+  });
+});
