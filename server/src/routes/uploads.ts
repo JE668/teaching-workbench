@@ -11,7 +11,7 @@ import {
   discardStagedImage,
   STAGING_DIR_NAME,
 } from '../services/imageLifecycle.js';
-import { ocrImages, saveOcrResults, ocrImage } from '../services/ocr.js';
+import { saveOcrResults, ocrImage } from '../services/ocr.js';
 import { resolveOwnedUploadRelPath } from '../services/ai/utils.js';
 
 const router = Router();

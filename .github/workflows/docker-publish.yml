@@ -126,6 +126,13 @@ jobs:
       - name: 部署资产与运行时守护
         run: bash scripts/check-deploy-assets.sh
 
+      # 检查部署/备份/恢复脚本自身的逻辑没退步。
+      # 真实执行需要 docker（见脚本末尾清单），这里跑的是不依赖 docker 的部分：
+      # 语法、弱口令识别、cron 时间格式、gitignore 覆盖、backup 快照语义、
+      # restore 属主、以及 deploy.sh/backup.sh 关键守绝不丢。
+      - name: 部署脚本自检（无需 docker）
+        run: bash scripts/verify/verify-deploy-scripts.sh
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

@@ -1,4 +1,4 @@
-import { getAiConfig, getSetting, AiConfig } from '../../config/settings.js';
+import { getAiConfig, AiConfig } from '../../config/settings.js';
 import { getClient, getSharedClient } from './client.js';
 import { buildPrompt, FollowUpGenerateParams, followUpWordRangeForParams, isWordCountOk, MODULE_GUIDANCE } from './prompt.js';
 import { getOcrText } from '../ocr.js';

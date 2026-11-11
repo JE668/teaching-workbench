@@ -81,15 +81,6 @@ interface StudentRow {
   subject: string | null;
 }
 
-interface ClassmateRow {
-  id: number;
-  student_id: number;
-  student_name: string;
-  year_month: string;
-  has_summary: number;
-  has_plan: number;
-}
-
 const router = Router();
 
 const KINDS = new Set(['summary', 'plan', 'exam']);
@@ -506,8 +497,6 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res) => {
 
     let updated = 0;
     if (targets.length > 0) {
-      const ids = targets.map(t => t.id);
-      const placeholders = ids.map(() => '?').join(',');
       
       // 使用单条 SQL 批量更新，避免 N+1 查询
       // 使用 CASE WHEN 保持未选字段的原值
@@ -519,7 +508,7 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res) => {
         values.push(summaryText);
       } else {
         // 保留原值：CASE id WHEN ? THEN (SELECT summary_intro FROM monthly_reports WHERE id = ?) ...
-        const caseParts = targets.map((t, i) => 'WHEN ? THEN (SELECT summary_intro FROM monthly_reports WHERE id = ?)').join(' ');
+        const caseParts = targets.map(() => 'WHEN ? THEN (SELECT summary_intro FROM monthly_reports WHERE id = ?)').join(' ');
         const caseValues = targets.flatMap(t => [t.id, t.id]);
         setClauses.push('summary_intro = CASE id ' + caseParts + ' ELSE summary_intro END');
         values.push(...caseValues);

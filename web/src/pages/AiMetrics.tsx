@@ -1,17 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
-  DollarSign,
   Clock,
   AlertTriangle,
   TrendingUp,
   TrendingDown,
   RefreshCw,
-  Download,
   Filter,
-  Calendar,
   Zap,
-  ExternalLink,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -19,7 +15,7 @@ import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
-import { Select, Input } from '../components/ui/Field';
+import { Select } from '../components/ui/Field';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import { cn } from '../lib/utils';

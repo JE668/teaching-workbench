@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState, useMemo } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider, useToast } from './components/ui/Toast';
@@ -9,20 +9,11 @@ import { CommandPalette } from './components/ui/CommandPalette';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import {
   BookOpenCheck,
-  CalendarRange,
-  CheckCircle2,
   Copy,
   FilePlus2,
-  GraduationCap,
-  ListTodo,
   Plus,
-  RefreshCw,
-  Trash2,
-  TrendingUp,
   Users,
   Sparkles,
-  Loader2,
-  X,
   Eye,
   SettingsIcon,
   FileSpreadsheet,
@@ -123,9 +114,11 @@ function AppRoutes() {
 /** 应用级快捷键与命令面板提供者 */
 function ShortcutsProvider({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const toast = useToast();
+  // useToast / usePreferences 本身带副作用（提供 toast 实例、拉取并同步偏好），
+  // 这里的返回值不参与渲染，解构出来只会变成死变量。
+  useToast();
+  usePreferences();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const { preferences } = usePreferences();
 
   // 页面级动作（需要根据当前路由动态注册）
   const navigate = useNavigate();

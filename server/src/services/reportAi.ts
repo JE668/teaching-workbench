@@ -411,7 +411,7 @@ export function isWordCountOk(n: number, min: number, max: number): boolean {
 /** 流式产出总结 / 规划的正文增量 */
 export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncGenerator<string> {
   const endpoint = p.field === 'plan' ? 'report_plan_stream' : 'report_summary_stream';
-  const { getAiConfig, getClient, countWords } = await import('./ai/index.js');
+  const { getAiConfig, countWords } = await import('./ai/index.js');
   const config = getAiConfig(userId);
   const start = Date.now();
   let fullContent = '';

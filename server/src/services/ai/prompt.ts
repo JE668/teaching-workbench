@@ -1,9 +1,6 @@
-import { normalizeFollowUpModule, FOLLOWUP_MODULES } from '../../utils/mappers.js';
 import type { FollowUpModule } from '../../types/index.js';
-import { COMMON_RULES, MODULE_GUIDANCE, REPORT_PROMPT_VERSION } from '../../shared/promptTemplates.js';
-import { getOcrText } from '../ocr.js';
-import { getSetting, getAiConfig } from '../../config/settings.js';
-import { countWords } from './utils.js';
+import { MODULE_GUIDANCE } from '../../shared/promptTemplates.js';
+import { getSetting } from '../../config/settings.js';
 import { log } from '../../utils/logger.js';
 
 // ========== 常量 ==========

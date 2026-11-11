@@ -152,7 +152,7 @@ export function CommandPalette({ isOpen, onClose, items }: CommandPaletteProps) 
                     <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
                       {groupName}
                     </div>
-                    {groupItems.map((item, idx) => (
+                    {groupItems.map((item) => (
                       <button
                         key={item.id}
                         data-index={filteredItems.indexOf(item)}
