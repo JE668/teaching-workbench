@@ -14,8 +14,6 @@ import {
   TrendingUp,
   Users,
   Sparkles,
-  Loader2,
-  X,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { Student } from '../types';
@@ -31,7 +29,6 @@ import { cn } from '../lib/utils';
 import { computeTrajectory, summarizeTrajectory, type MonthTrajectory } from '../lib/reportProgress';
 import { MonthlyReport, ReportItem, TERM_OPTIONS, formatYearMonth } from '../types/reports';
 
-const selectCls = 'w-full';
 
 function StatTile({
   icon,
@@ -81,8 +78,6 @@ export default function Reports() {
   /** 跨月进度弹窗当前看的学生 */
   const [progressStudent, setProgressStudent] = useState<{ id: number; name: string } | null>(null);
   /** 正在生成总结/规划的报告 ID 集合，用于按钮 loading 态 */
-  const [generatingSummaryIds, setGeneratingSummaryIds] = useState<Set<number>>(new Set());
-  const [generatingPlanIds, setGeneratingPlanIds] = useState<Set<number>>(new Set());
 
   const loadReports = useCallback(async (stu = '') => {
     const query = stu ? '?studentId=' + encodeURIComponent(stu) : '';
@@ -350,19 +345,9 @@ export default function Reports() {
                               size="icon"
                               title="AI 生成本月总结"
                               aria-label="AI 生成总结"
-                              onClick={async () => {
-                                const modal = await import('./ReportEdit').then(m => m.default);
-                                // 这里需要在列表页直接调用 AI 生成，不跳转编辑页
-                                // 简化：先跳转到编辑页，由编辑页处理生成
-                                navigate(`/reports/${r.id}?aiGenerate=summary`);
-                              }}
-                              disabled={generatingSummaryIds.has(r.id)}
+                              onClick={() => navigate(`/reports/${r.id}?aiGenerate=summary`)}
                             >
-                              {generatingSummaryIds.has(r.id) ? (
-                                <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
-                              ) : (
-                                <Sparkles className="h-4 w-4 text-emerald-500" />
-                              )}
+                              <Sparkles className="h-4 w-4 text-emerald-500" />
                             </Button>
                           )}
                           {/* AI 生成规划按钮 */}
@@ -373,13 +358,8 @@ export default function Reports() {
                               title="AI 生成本月规划"
                               aria-label="AI 生成规划"
                               onClick={() => navigate(`/reports/${r.id}?aiGenerate=plan`)}
-                              disabled={generatingPlanIds.has(r.id)}
                             >
-                              {generatingPlanIds.has(r.id) ? (
-                                <Loader2 className="h-4 w-4 animate-spin text-brand-500" />
-                              ) : (
-                                <Sparkles className="h-4 w-4 text-brand-500" />
-                              )}
+                              <Sparkles className="h-4 w-4 text-brand-500" />
                             </Button>
                           )}
                           <Button

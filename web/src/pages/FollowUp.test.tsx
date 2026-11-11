@@ -695,14 +695,6 @@ describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => 
   });
 });
 
-async function generateOnce(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText(/学生姓名/), '李小明');
-  await user.type(screen.getByLabelText(/课程主题/), '分数加减法运算');
-  await user.type(screen.getByLabelText(/课堂表现/), '专注度较高');
-  await user.click(screen.getByRole('button', { name: /生成课后回访内容/ }));
-  await screen.findByTestId('generated-content');
-}
-
 describe('课后回访 · 流程打卡新规达标线', () => {
   // 学校新规：打卡文字约 150 字、课堂照片不少于 3 张。
   // 这里只锁 UI 上的达标提示，提示词的约束由服务端 course-type.test.ts 锁。

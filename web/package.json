@@ -17,7 +17,8 @@
     "e2e": "npm run e2e:kill && playwright test",
     "e2e:full": "npm run e2e:kill && npm run e2e:prepare && playwright test",
     "e2e:kill": "lsof -tiTCP:3111,3999,4173 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true",
-    "test:e2e:local": "npm run e2e:full"
+    "test:e2e:local": "npm run e2e:full",
+    "typecheck:strict": "bash scripts/check-dead-code.sh"
   },
   "dependencies": {
     "clsx": "^2.1.1",

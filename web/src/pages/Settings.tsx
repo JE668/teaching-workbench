@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Sliders, KeyRound, Save, ShieldCheck, Sparkles, AlertCircle, PenLine, BookOpen, Trash2, Keyboard } from 'lucide-react';
 import { api } from '../api/client';
 import { Card, CardHeader } from '../components/ui/Card';
@@ -56,7 +56,6 @@ export default function Settings() {
   const [defaults, setDefaults] = useState<Record<string, string>>({});
   // 后端回的有效值原样快照（含可能是对象类型的密钥字段）。保存时要靠它判断
   // 「这个键后端到底给没给值」——没给值又不是自定义项，就说明前端对它没意见。
-  const [effective, setEffective] = useState<Record<string, any>>({});
 
   const [apiKeyMasked, setApiKeyMasked] = useState('');
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
@@ -195,7 +194,6 @@ export default function Settings() {
       setApiKeyConfigured(!!s[keys.apiKey]?.configured);
       setOverridden(r.overridden || []);
       setDefaults(r.meta?.defaults || {});
-      setEffective(s);
       if (r.meta?.effortLevels?.length) setEffortLevels(r.meta.effortLevels);
 
       await loadModels(s['ai.reasoningEffort'] || 'low');
@@ -238,7 +236,6 @@ export default function Settings() {
         // 后端没回这个键、也不是自定义项 → 前端对它没有意见，不要提交空串
         // （否则等于把「我不知道」伪装成「请清空」）
         // 修复：只有当值等于出厂值且未被覆盖时才跳过；新值（≠出厂值）必须进入 dirty 检查
-        const effectiveValue = String(effective[key] ?? '');
         const defaultValue = String(defaults[key] ?? '');
         const isDefaultValue = value === defaultValue;
         const isOverridden = overridden.includes(key);
@@ -375,7 +372,6 @@ export default function Settings() {
     }
   };
 
-  const isOverridden = (key: string) => overridden.includes(key);
 
   if (loading) {
     return (

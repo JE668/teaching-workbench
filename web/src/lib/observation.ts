@@ -107,7 +107,7 @@ function findNextLabel(hay: string, from: number, labels: readonly string[]): nu
  * 取 text 里"标签名之后的冒号"到 end 之间的值。
  * end 传 -1 表示取到文本末尾；冒号越界时退化为直接取原文。
  */
-function sliceValue(text: string, label: string, after: number, end: number): string {
+function sliceValue(text: string, _label: string, after: number, end: number): string {
   const stop = end >= 0 ? end : text.length;
   const cFull = text.indexOf('：', after);
   const cHalf = text.indexOf(':', after);

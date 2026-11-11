@@ -123,7 +123,8 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
   // 页面级动作（需要根据当前路由动态注册）
   const navigate = useNavigate();
 
-  const shortcuts = useKeyboardShortcuts([
+  // useKeyboardShortcuts 负责注册全局快捷键（副作用），返回值不用
+  useKeyboardShortcuts([
     {
       key: 'mod+k',
       description: '打开命令面板',

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Plus,
@@ -22,7 +22,7 @@ import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
-import { formatDate, cn } from '../lib/utils';
+import { formatDate } from '../lib/utils';
 
 const emptyForm = { name: '', grade: '小学一年级', subject: '数学', phone: '', notes: '' };
 

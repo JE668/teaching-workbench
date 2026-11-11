@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Plus, Sparkles, Trash2, ClipboardCheck, BarChart3, MessageSquareText } from 'lucide-react';
 import { api } from '../api/client';

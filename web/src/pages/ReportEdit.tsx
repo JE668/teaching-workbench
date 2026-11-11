@@ -13,7 +13,6 @@ import {
   ListPlus,
   PencilLine,
   Plus,
-  Search,
   Sparkles,
   Trash2,
   AlertCircle,
@@ -21,7 +20,6 @@ import {
   Archive,
   RotateCcw,
   Loader2,
-  Clock,
   Users,
 } from 'lucide-react';
 import { api } from '../api/client';

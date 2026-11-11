@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { WifiOff } from 'lucide-react';
 import { getOnline, listenOnlineState } from '../lib/network';
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Mic, Square } from 'lucide-react';
 import { useVoiceInput } from '../../hooks/useVoiceInput';
 import { cn } from '../../lib/utils';

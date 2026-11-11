@@ -483,7 +483,7 @@ describe('月度报告编辑器', () => {
     await user.click(within(trOf('第二课')).getByLabelText('上移'));
 
     await waitFor(() => {
-      const call = request.mock.calls.find(([p, init]) => p === `/reports/${REPORT_ID}/items/move`);
+      const call = request.mock.calls.find(([p]) => p === `/reports/${REPORT_ID}/items/move`);
       expect(JSON.parse(call![1].body)).toMatchObject({ dir: 'up' });
     });
     await waitFor(() => {

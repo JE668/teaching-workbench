@@ -113,6 +113,13 @@ jobs:
         timeout-minutes: 5
         run: npm run typecheck
 
+      # 死代码门禁：前端生产代码不许留未使用的变量/函数/类型。
+      # 与后端同名步骤一致，单开一步让失败原因在 CI 界面上一目了然。
+      - name: 死代码门禁（未使用声明）
+        working-directory: web
+        timeout-minutes: 5
+        run: npm run typecheck:strict
+
       - name: Run test suite
         working-directory: web
         timeout-minutes: 10

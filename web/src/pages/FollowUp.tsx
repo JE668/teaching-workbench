@@ -36,8 +36,6 @@ import {
   FOLLOWUP_MODULE_GROUPS,
   FOLLOWUP_MODULES,
   FOLLOWUP_MODULE_LABELS,
-  FOLLOWUP_MODULE_GROUPS_BY_VALUE,
-  DEFAULT_FOLLOWUP_MODULE,
   DEFAULT_FOLLOWUP_MODULES,
   FOLLOWUP_MIN_BLOCKS,
   sortFollowUpModules,
@@ -65,9 +63,8 @@ import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import Modal from '../components/ui/Modal';
-import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { countWords, copyText, cn, relativeTime } from '../lib/utils';
-import { Loader2, Trash2, Clock, ArrowLeft, Archive } from 'lucide-react';
+import { Loader2, Trash2, Archive } from 'lucide-react';
 import { extractDroppedImages } from '../lib/dropFiles';
 import { VoiceButton } from '../components/ui/VoiceButton';
 
@@ -206,7 +203,7 @@ export default function FollowUp() {
   // ① 回访文案班级批量复用
   const [showApplyClass, setShowApplyClass] = useState(false);
   const [classmates, setClassmates] = useState<FollowUpClassmate[]>([]);
-  const [loadingClassmates, setLoadingClassmates] = useState(false);
+  const [loadingClassmates] = useState(false);
   const [copyTopic, setCopyTopic] = useState(true);
   const [copyPerformance, setCopyPerformance] = useState(true);
   const [copyContent, setCopyContent] = useState(true);

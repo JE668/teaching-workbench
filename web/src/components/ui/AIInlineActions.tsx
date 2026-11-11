@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Sparkles,
   Type,
   Minus,
   Plus,
@@ -9,7 +8,6 @@ import {
   X,
   Check,
   Copy,
-  MessageSquare,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useToast } from '../ui/Toast';
@@ -266,6 +264,8 @@ export function AIInlineActions({
 
 // 便捷 Hook：在任何编辑器中使用 AI 内联动作
 export function useAIInlineActions(editorRef: React.RefObject<HTMLTextAreaElement | null>, context?: Record<string, any>) {
+  // 预留扩展参数（调用方可按编辑器上下文定制动作），当前实现不读取
+  void context;
   const [selectedText, setSelectedText] = useState('');
 
   useEffect(() => {

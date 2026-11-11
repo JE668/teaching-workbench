@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Users, CalendarDays, Target, PartyPopper } from 'lucide-react';
 import { api } from '../api/client';

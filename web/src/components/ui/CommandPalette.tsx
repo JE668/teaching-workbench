@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, ChevronRight, Keyboard, X } from 'lucide-react';
+import { Search, Keyboard, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface CommandItem {
