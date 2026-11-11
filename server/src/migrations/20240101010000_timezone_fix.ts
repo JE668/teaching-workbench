@@ -10,7 +10,6 @@
  * 现在与 config/database.ts 的 latestUtcSkewMs() 同源：用 SQLite 自己的
  * `datetime('now','+8 hours')` 与库内时间戳做差，判定窗口取 [4h, 12h)。
  */
-import type { Migration } from './runner.js';
 
 const SERVER_GENERATED_TIMES: [string, string][] = [
   ['users', 'created_at'],

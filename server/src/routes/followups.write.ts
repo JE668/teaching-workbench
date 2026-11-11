@@ -7,7 +7,6 @@ import {
   parseImages,
   normalizeSessionCount,
   normalizeCourseType,
-  normalizeFollowUpModule,
   normalizeFollowUpModules,
   serializeFollowUpModules,
 } from '../utils/mappers.js';

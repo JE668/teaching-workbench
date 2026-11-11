@@ -1,6 +1,6 @@
 import { getAiConfig, AiConfig } from '../../config/settings.js';
 import { getClient, getSharedClient } from './client.js';
-import { buildPrompt, FollowUpGenerateParams, followUpWordRangeForParams, isWordCountOk, MODULE_GUIDANCE } from './prompt.js';
+import { buildPrompt, FollowUpGenerateParams } from './prompt.js';
 import { getOcrText } from '../ocr.js';
 import { imageToBase64DataUrl, countWords } from './utils.js';
 import { recordAiMetrics } from '../aiMetrics.js';

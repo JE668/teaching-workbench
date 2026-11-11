@@ -1,0 +1,18 @@
+{
+  // 死代码门禁：只查生产代码里「未使用的局部变量/函数/类型」。
+  //
+  // 为什么单独一份而不直接改 tsconfig.json：
+  // 1) 现有 typecheck 要把测试一起查；测试里有大量「解构出来只为触发逻辑」的
+  //    变量，打开严格检查会一次爆上百条噪声，真问题反而被埋；
+  // 2) 这个门禁的语义是「生产代码不许留死代码」，测试代码不该受约束。
+  //
+  // noUnusedParameters 刻意不开：Express / multer / 迁移文件里存在大量
+  // 「按签名占位但用不到」的形参（req、next…），开了全是误报。
+  // 真用不到的形参用 _ 前缀标记即可（TSmn 对 _ 开头自带豁免）。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUnusedLocals": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/tests/**/*"]
+}

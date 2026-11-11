@@ -1,6 +1,5 @@
 import OpenAI from 'openai';
 import { getAiConfig, getConfigVersion, AiConfig } from '../../config/settings.js';
-import { log } from '../../utils/logger.js';
 
 // ============ SenseNova 客户端（OpenAI 兼容） ============
 // 配置可在前端设置页修改，因此客户端要能按版本号重建，

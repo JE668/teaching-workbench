@@ -1,7 +1,6 @@
 import type { FollowUpModule } from '../../types/index.js';
 import { MODULE_GUIDANCE } from '../../shared/promptTemplates.js';
 import { getSetting } from '../../config/settings.js';
-import { log } from '../../utils/logger.js';
 
 // ========== 常量 ==========
 
@@ -177,7 +176,7 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
           '- 历史记录里出现但本次课信息里没有再次出现的具体题目、数字、细节，一律不要写',
           '',
           ...history.map(
-            (h, i) =>
+            (h) =>
               '【' + h.when + (h.topic ? ' · ' + h.topic : '') + '】\n' + h.content.trim()
           ),
         ].join('\n'),

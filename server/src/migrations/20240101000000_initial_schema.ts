@@ -20,7 +20,6 @@
  * - ai_metrics: AI 指标
  * - schema_migrations: 迁移记录
  */
-import type { Migration } from './runner.js';
 
 const migration = {
   version: '20240101000000',

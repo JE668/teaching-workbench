@@ -12,7 +12,6 @@ import {
   getAiConfig,
   readRaw,
 } from '../config/settings.js';
-import { log } from '../utils/logger.js';
 
 const router = Router();
 

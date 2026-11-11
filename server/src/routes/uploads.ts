@@ -76,14 +76,14 @@ export function sniffImageType(filePath: string): { ext: string; mime: string } 
 // 没保存的暂存图由 GC 定期清理 —— 避免放弃的草稿在磁盘上留下孤儿文件。
 // 仍先写临时名，校验通过后再按真实类型改名。
 const storage = multer.diskStorage({
-  destination: (req: AuthenticatedRequest, file, cb) => {
+  destination: (req: AuthenticatedRequest, _file, cb) => {
     const uploadPath = stagingDirFor(req.userId || 0);
     if (!fs.existsSync(uploadPath)) {
       fs.mkdirSync(uploadPath, { recursive: true });
     }
     cb(null, uploadPath);
   },
-  filename: (req: AuthenticatedRequest, file, cb) => {
+  filename: (req: AuthenticatedRequest, _file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     // 临时扩展名，稍后依据文件内容改成真实类型，避免用户文件名带来的注入风险
     cb(null, uniqueSuffix + '.upload');

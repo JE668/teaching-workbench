@@ -5,7 +5,6 @@
  * 首次启动将旧值复制给每一个已有账号
  * 拷贝完成后旧表重命名为 settings_global_backup 留档
  */
-import type { Migration } from './runner.js';
 
 const migration = {
   version: '20240101020000',

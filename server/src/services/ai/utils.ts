@@ -3,7 +3,6 @@ import { env } from '../../config/env.js';
 import { db } from '../../config/database.js';
 import path from 'path';
 import fs from 'fs';
-import { log } from '../../utils/logger.js';
 import { STAGING_DIR_NAME } from '../imageLifecycle.js';
 
 /** 中文字符计数（不含标点与空白），用于字数门禁 */

@@ -4,7 +4,6 @@
  * 合并同一门课（band/grade/subject/term/track/seq/content 完全相同）的重复记录
  * 优先保留系统内置记录，其他重复记录合并并更新关联表
  */
-import type { Migration } from './runner.js';
 
 const migration = {
   version: '20240101030000',
@@ -37,7 +36,7 @@ const migration = {
     let reassigned = 0;
     let importsRemoved = 0;
 
-    const tx = db.transaction(() => {
+    db.transaction(() => {
       for (const group of duplicateGroups) {
         const ids = group.ids.split(',').map((s: string) => parseInt(s, 10));
         

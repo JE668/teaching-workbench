@@ -63,6 +63,14 @@ jobs:
         timeout-minutes: 5
         run: npm run build
 
+      # 死代码门禁：生产代码不许留未使用的变量/函数/类型。
+      # 单开一步而不是并进 build，是为了让失败原因在 CI 界面上一目了然
+      # （build 挂了可能是一万个原因，这一步挂了就是"有死代码"）。
+      - name: 死代码门禁（未使用声明）
+        working-directory: server
+        timeout-minutes: 5
+        run: npm run typecheck:strict
+
       - name: Run test suite
         working-directory: server
         timeout-minutes: 15

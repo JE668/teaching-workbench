@@ -80,7 +80,7 @@ export function dedupeCourseCatalog(options: { force?: boolean } = {}): { groups
   let reassigned = 0;
   let importsRemoved = 0;
 
-  const tx = db.transaction(() => {
+  db.transaction(() => {
     for (const group of duplicateGroups) {
       const ids = group.ids.split(',').map((s: string) => parseInt(s, 10));
       
@@ -200,7 +200,7 @@ export async function resetCatalogToBuiltIn(): Promise<{ removed: number; import
 
   const affectedIds = affectedCourses.map(r => r.id);
 
-  const tx = db.transaction(() => {
+  db.transaction(() => {
     // 先重新指向：把引用改指向内置同名课
     for (const removeId of affectedIds) {
       // 找内置同名课
