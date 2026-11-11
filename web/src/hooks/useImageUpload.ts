@@ -37,9 +37,15 @@ export function useImageUpload(): UseImageUploadResult {
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  /** 进行中互斥：拖拽与点击并发时两条上传序列会共享 setUploading，
-   *  先完成的一方提前熄灭 loading，用户会以为还没传完的图丢了 */
-  const busyRef = useRef(false);
+  /** 串行队列：拖拽与点击并发时排队执行，两批都要上传成功。
+   *  不能直接并发——两批会共享 uploading，先完成的一方提前熄灭 loading，
+   *  用户会以为没传完的图丢了；也不能丢弃后到的一批（那就是丢图）。
+   *  排队 = 都成功 + loading 直到队列清空才熄灭。 */
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  /** 在跑/排队中的批次数。loading 只在归零时熄灭——
+   *  若每批各自熄灭，Promise.all 在第一批返回时就 resolve，
+   *  此时第二批还在排队，loading 会提前消失。 */
+  const inflightRef = useRef(0);
   /** 卸载守卫：卸载后不再 setImages / setUploading（React 18 无害，但属无谓状态写） */
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -62,46 +68,55 @@ export function useImageUpload(): UseImageUploadResult {
       return;
     }
 
-    // 进行中互斥：拖拽/粘贴/点击并发触发时忽略后到的一次，
-    // 否则两条序列共享 uploading 状态，先完成的一方提前熄灭 loading
-    if (busyRef.current) return;
-    busyRef.current = true;
-
+    // 串行排队：本批接在上一批之后跑，两批的图都会上传成功。
+    // 返回的 Promise 在【本批】结束时 resolve —— 调用方 await uploadFiles 仍然等的是自己这批。
+    inflightRef.current++;
     setUploading(true);
-    try {
+
+    const run = async () => {
       let added = 0;
       let compressedCount = 0;
       let savedBytes = 0;
 
-      for (const file of list) {
-        // 手机照片动辄 20-40MB：先在浏览器里缩到 2048px，
-        // 上传更快、不撞体积限制，而 AI 看到的内容完全一样。
-        const prepared = await prepareImageForUpload(file);
-        if (prepared.compressed) {
-          compressedCount++;
-          savedBytes += prepared.originalSize - prepared.finalSize;
+      try {
+        for (const file of list) {
+          // 手机照片动辄 20-40MB：先在浏览器里缩到 2048px，
+          // 上传更快、不撞体积限制，而 AI 看到的内容完全一样。
+          const prepared = await prepareImageForUpload(file);
+          if (prepared.compressed) {
+            compressedCount++;
+            savedBytes += prepared.originalSize - prepared.finalSize;
+          }
+
+          const fd = new FormData();
+          fd.append('images', prepared.file);
+
+          const res = await api.upload('/upload', fd);
+          if (res.paths?.length) {
+            if (mountedRef.current) setImages((prev) => [...prev, ...res.paths]);
+            added += res.paths.length;
+          }
         }
 
-        const fd = new FormData();
-        fd.append('images', prepared.file);
-
-        const res = await api.upload('/upload', fd);
-        if (res.paths?.length) {
-          setImages((prev) => [...prev, ...res.paths]);
-          added += res.paths.length;
+        if (added) {
+          const suffix = compressedCount > 0 ? '（已压缩 ' + formatBytes(savedBytes) + '）' : '';
+          toast.success('已上传 ' + added + ' 张图片' + suffix);
         }
+      } catch (err: any) {
+        toast.error('图片上传失败：' + (err instanceof Error ? err.message : String(err)));
+      } finally {
+        inflightRef.current--;
+        // 只有队列中【所有】批次都跑完才熄灭 loading：
+        // 若每批各自熄灭，Promise.all 在第一批返回时就 resolve，
+        // 此时第二批还在排队，loading 会提前消失。
+        if (inflightRef.current === 0 && mountedRef.current) setUploading(false);
       }
+    };
 
-      if (added) {
-        const suffix = compressedCount > 0 ? '（已压缩 ' + formatBytes(savedBytes) + '）' : '';
-        toast.success('已上传 ' + added + ' 张图片' + suffix);
-      }
-    } catch (err: any) {
-      toast.error('图片上传失败：' + (err instanceof Error ? err.message : String(err)));
-    } finally {
-      busyRef.current = false;
-      if (mountedRef.current) setUploading(false);
-    }
+    const task = queueRef.current.then(run, run);
+    // 队列尾巴用 catch 兜住，防止某一批异常拖累后续批次不执行
+    queueRef.current = task.catch(() => undefined);
+    return task;
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
