@@ -390,15 +390,6 @@ const migration = {
     db.exec("CREATE INDEX IF NOT EXISTS idx_catalog_imports_sha ON catalog_imports(user_id, file_sha256)");
     db.exec("CREATE INDEX IF NOT EXISTS idx_course_catalog_dedupe ON course_catalog(band, grade, subject, track, term, seq, content)");
 
-    // 创建默认管理员账号
-    const adminExists = db.prepare("SELECT id FROM users WHERE username = ?").get("admin");
-    if (!adminExists) {
-      const bcrypt = require("bcryptjs");
-      const hashedPassword = bcrypt.hashSync("123456", 10);
-      db.prepare("INSERT INTO users (username, password) VALUES (?, ?)").run("admin", hashedPassword);
-      console.log("默认管理员已创建（弱口令，请尽快在 .env 中修改 DEFAULT_ADMIN_PASS）");
-    }
-
     // 进行中的回访草稿（跨设备实时同步的服务端副本，每人一份）
     db.exec(
       "CREATE TABLE IF NOT EXISTS drafts (" +

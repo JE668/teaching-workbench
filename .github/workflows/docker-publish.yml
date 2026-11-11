@@ -76,6 +76,16 @@ jobs:
         timeout-minutes: 15
         run: npm test -- --test-concurrency=4
 
+      # 生产形态冒烟：单测全部用 tsx 跑 .ts，与容器里 `node dist/index.js` 是两种形态。
+      # 真实事故：迁移 runner 只认 .ts → 生产 0 迁移执行；再改成认 .js 后，
+      # 某个迁移里的 require('bcryptjs') 在 ESM 下直接崩，容器 unhealthy、
+      # 前端因 depends_on 起不来 —— 而 700+ 单测与 CI 全绿。
+      # 本步骤用编译产物启动服务并校验迁移真的落库，补上"测试通过≠能启动"的缺口。
+      - name: 生产产物冒烟（node dist + /health）
+        working-directory: server
+        timeout-minutes: 5
+        run: npm run smoke:dist
+
   test-web:
     name: Frontend Tests
     runs-on: ubuntu-latest
