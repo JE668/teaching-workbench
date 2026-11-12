@@ -141,7 +141,18 @@ if (tess) {
     console.log("ok    OCR 语言包 -> " + tess + "（" + need.join(", ") + "）");
   }
 } else {
-  console.log("skip  TESSDATA_PREFIX 未设置（本地开发形态），跳过 OCR 语言包校验");
+  // 未设置时不能静默放过：CI 里没人设 → 这段永远不执行，等于假门禁。
+  // 用一个可在 CI 里提供的探测根目录（repo 内 server/），按 Dockerfile 的
+  // COPY 源逐个断言"镜像需要的文件在构建上下文里确实存在"。
+  const root = process.cwd();
+  const need = ["chi_sim.traineddata", "eng.traineddata"];
+  const missing = need.filter((f) => !fs.existsSync(path.join(root, f)));
+  if (missing.length) {
+    console.error("::error::OCR 语言包不存在于构建上下文：" + missing.join(", ") + "（cwd=" + root + "）");
+    bad++;
+  } else {
+    console.log("ok    OCR 语言包（构建上下文源）-> " + root + "（" + need.join(", ") + "）");
+  }
 }
 
 process.exit(bad ? 1 : 0);
