@@ -125,6 +125,25 @@ try {
   bad++;
 }
 
+// ④ OCR 语言包：镜像里若缺 chi_sim/eng.traineddata，OCR worker 创建失败会被
+//    catch 吞掉 → 上传的图片永远没有识别文本，AI 上下文缺料却"看起来一切正常"。
+//    这条只在生产暴露（本地开发机 data/tessdata 下有自己下载的包）。
+//    注意：生产镜像靠 Dockerfile 的 ENV TESSDATA_PREFIX=/app/tessdata 指定，
+//    这里同步校验该环境变量与文件是否一致。
+const tess = process.env.TESSDATA_PREFIX;
+if (tess) {
+  const need = ["chi_sim.traineddata", "eng.traineddata"];
+  const missing = need.filter((f) => !fs.existsSync(path.join(tess, f)));
+  if (missing.length) {
+    console.error("::error::OCR 语言包缺失：" + missing.join(", ") + "（TESSDATA_PREFIX=" + tess + "）");
+    bad++;
+  } else {
+    console.log("ok    OCR 语言包 -> " + tess + "（" + need.join(", ") + "）");
+  }
+} else {
+  console.log("skip  TESSDATA_PREFIX 未设置（本地开发形态），跳过 OCR 语言包校验");
+}
+
 process.exit(bad ? 1 : 0);
 ' || fail "镜像缺少启动期必需的文件（templates / seed / data）"
 
