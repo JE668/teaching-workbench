@@ -70,4 +70,62 @@ if (!marks.includes('tz_fix_v1')) { console.error('::error::缺失 tz_fix_v1 留
 console.log('user_version=' + v + ' tables=' + tables + ' marks=' + marks.join(','));
 " || fail "生产形态下迁移未正确执行"
 
+# 启动期依赖的【文件路径】必须能从 dist 里推出来。
+# 这些路径都是用 __dirname 相对推导的（dist/utils -> ../../templates），
+# 而 Dockerfile 只 COPY 了部分目录 —— 漏拷 templates 曾经导致线上 Word 导出 500，
+# 本地和测试全绿。这里按同样的推导方式逐个断言，把"镜像缺文件"提前到冒烟阶段暴露。
+echo "==> 复核：启动期依赖的模板/种子目录可从 dist 定位"
+DATA_DIR="$DATA" node --input-type=module -e '
+import fs from "fs";
+import path from "path";
+
+const docx = await import("./dist/utils/observationDocx.js");
+const seed = await import("./dist/seed/builtinCatalog.js");
+const envMod = await import("./dist/config/env.js");
+
+let bad = 0;
+
+// ① Word 模板：真的生成一份 docx（模板存在 + 能读 + 能产出，一次全验证）
+try {
+  const buf = await docx.buildObservationDocx({
+    teacher: "冒烟老师", time: "2026-11-12", topic: "冒烟课",
+    type: "一对一", evals: ["一", "二", "三", "四", "五", "六", "七", "八"],
+    highlight: "亮点", optimize: "待优化", suggest: "建议",
+    grade: "good", signature: "冒烟",
+  });
+  if (!buf || buf.length < 1000) throw new Error("产出过小: " + (buf ? buf.length : 0));
+  console.log("ok    Word 模板可渲染，产出 " + buf.length + " bytes");
+} catch (e) {
+  console.error("::error::Word 模板不可用（templates/ 未进镜像？）：" + e.message);
+  bad++;
+}
+
+// ② 内置课程目录：目录存在且至少有一个 xlsx
+const sdir = seed.seedDir();
+let xlsxCount = 0;
+try {
+  xlsxCount = fs.readdirSync(sdir).filter((f) => f.endsWith(".xlsx")).length;
+} catch {}
+if (xlsxCount === 0) {
+  console.error("::error::内置课程目录缺失或为空：" + sdir);
+  bad++;
+} else {
+  console.log("ok    seed/catalog -> " + sdir + "（" + xlsxCount + " 个 xlsx）");
+}
+
+// ③ 数据目录：UPLOAD_DIR 的父目录必须可建可写（否则首次启动写库失败）
+const uploads = envMod.env.UPLOAD_DIR;
+const dataParent = path.dirname(uploads);
+try {
+  fs.mkdirSync(dataParent, { recursive: true });
+  fs.accessSync(dataParent, fs.constants.W_OK);
+  console.log("ok    DATA_DIR 可写 -> " + dataParent);
+} catch (e) {
+  console.error("::error::DATA_DIR 不可写：" + dataParent + "（" + e.message + "）");
+  bad++;
+}
+
+process.exit(bad ? 1 : 0);
+' || fail "镜像缺少启动期必需的文件（templates / seed / data）"
+
 echo "✅ 冒烟通过"
