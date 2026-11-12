@@ -56,6 +56,7 @@ import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { useImageUpload } from '../hooks/useImageUpload';
 import { useGroupManagement } from '../hooks/useGroupManagement';
 import { usePreferences } from '../hooks/usePreferences';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardHeader } from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
@@ -141,8 +142,11 @@ export default function FollowUp() {
   const navigate = useNavigate();
   const toast = useToast();
 
-  // 从本地草稿恢复（切到微信再回来不会白填一场）
-  const restored = useMemo(() => loadDraft(), []);
+  // 从本地草稿恢复（切到微信再回来不会白填一场）。
+  // 必须带当前用户 id：草稿里有学生姓名与未发出的评语，换账号后绝不能恢复成上一个人的。
+  const { user } = useAuth();
+  const ownerId = user?.id ?? null;
+  const restored = useMemo(() => loadDraft(ownerId), [ownerId]);
 
   const [students, setStudents] = useState<Student[]>([]);
   const [form, setForm] = useState<FormState>(() => ({
@@ -169,7 +173,7 @@ export default function FollowUp() {
     cameraRef,
     uploadFiles,
     onPaste,
-  } = useImageUpload();
+  } = useImageUpload(ownerId);
   const {
     groups,
     selectedIds,
@@ -182,7 +186,7 @@ export default function FollowUp() {
     saveGroup,
     deleteGroup,
     toggleStudent,
-  } = useGroupManagement();
+  } = useGroupManagement(ownerId);
 
   const [generating, setGenerating] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -333,10 +337,10 @@ export default function FollowUp() {
   // 草稿持久化：切到微信再回来（甚至标签页被重载）都能续上
   useEffect(() => {
     const timer = setTimeout(() => {
-      saveDraft({ form, images, selectedIds, content, draft });
+      saveDraft({ form, images, selectedIds, content, draft }, ownerId);
     }, 300); // 防抖，避免每次按键都写
     return () => clearTimeout(timer);
-  }, [form, images, selectedIds, content, draft]);
+  }, [form, images, selectedIds, content, draft, ownerId]);
 
   // 恢复过草稿就告诉用户一声，避免"我明明没填怎么有内容"的困惑
   const restoredNotified = useRef(false);

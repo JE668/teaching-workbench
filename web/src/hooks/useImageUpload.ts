@@ -29,10 +29,11 @@ export interface UseImageUploadResult {
  *  - `images` 用于拼 AI 生成请求
  *  - `clearImages()` 在保存成功后重置
  */
-export function useImageUpload(): UseImageUploadResult {
+export function useImageUpload(ownerId: number | null): UseImageUploadResult {
   const toast = useToast();
-  // 首帧从本地草稿恢复图片（切到微信再回来不会白填一场），与主组件同一数据源
-  const [images, setImages] = useState<string[]>(() => loadDraft()?.images || []);
+  // 首帧从本地草稿恢复图片（切到微信再回来不会白填一场），与主组件同一数据源。
+  // 必须带 ownerId：恢复出来的是【上一个账号学生的课堂照片】，换账号后绝不能带过来。
+  const [images, setImages] = useState<string[]>(() => loadDraft(ownerId)?.images || []);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);

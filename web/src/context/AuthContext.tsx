@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { api } from '../api/client';
 import { useToast } from '../components/ui/Toast';
 import { User } from '../types/index';
+import { clearDraft } from '../lib/draft';
 
 /**
  * 同步读取本地登录态。
@@ -108,6 +109,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // 不等待结果：登出必须立刻生效，不能因为网络问题卡住界面。
     // 共用设备上若不收回，登出后仍可直接打开图片 URL。
     api.post('/auth/logout', {}).catch(() => {});
+
+    // 清掉本地的回访草稿。
+    // 草稿里是学生姓名、课堂表现原文和还没发出去的评语 —— 共用设备上
+    // 登出不清，下一个账号一进「课后回访」就会直接看到上一个人的内容。
+    // 只清属于当前用户的（若存的是别人的草稿，不该被这次登出误删）。
+    clearDraft(user?.id ?? null);
 
     api.clearAuth();
     setToken(null);

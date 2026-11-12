@@ -57,7 +57,7 @@ describe('useImageUpload 并发上传', () => {
 
   it('两批并发都上传成功，不丢任何一批', async () => {
     const { useImageUpload } = await import('./useImageUpload');
-    const { result } = renderHook(() => useImageUpload());
+    const { result } = renderHook(() => useImageUpload(1));
 
     await act(async () => {
       await Promise.all([
@@ -77,7 +77,7 @@ describe('useImageUpload 并发上传', () => {
 
   it('首批失败不影响后续批次执行', async () => {
     const { useImageUpload } = await import('./useImageUpload');
-    const { result } = renderHook(() => useImageUpload());
+    const { result } = renderHook(() => useImageUpload(1));
 
     // 让名字含 boom 的那次失败
     uploadMock.mockImplementationOnce(async () => {

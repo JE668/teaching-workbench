@@ -3,6 +3,10 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FollowUp from './FollowUp';
 import { renderWithProviders } from '../test/test-utils';
+import { render } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { ToastProvider } from '../components/ui/Toast';
+import { AuthProvider } from '../context/AuthContext';
 import { api } from '../api/client';
 
 vi.mock('../api/client', () => ({
@@ -14,6 +18,15 @@ vi.mock('../api/client', () => ({
     download: vi.fn(),
     streamPost: vi.fn(),
     getToken: vi.fn(() => 'test-token'),
+    // AuthProvider 挂载时会注册「登录态失效」回调并同步登录态，
+    // 挂真实 Provider 的用例需要这些方法存在（不挂的用例用不到）
+    setUnauthorizedHandler: vi.fn(),
+    setToken: vi.fn(),
+    setUser: vi.fn(),
+    getUser: vi.fn(() => null),
+    setTokenFromStorage: vi.fn(),
+    clearAuth: vi.fn(),
+    request: vi.fn(),
   },
 }));
 
@@ -627,11 +640,36 @@ describe('课后回访 · 课堂表现快捷短语', () => {
   });
 });
 
+
+/**
+ * 以【已登录指定用户】的姿态渲染课后回访页。
+ *
+ * 为什么草稿用例需要它：草稿按用户隔离，不挂 AuthProvider 时 useAuth() 拿不到
+ * user，ownerId 为空，草稿一律不恢复 —— 用例就测不到「恢复」这条路径。
+ * 这里挂真实 AuthProvider（它从 localStorage 的 user 同步读取），
+ * 顺带把退出登录清草稿的行为也纳入真实链路。
+ */
+function renderFollowUpAs(userId: number) {
+  localStorage.setItem('user', JSON.stringify({ id: userId, username: 'u' + userId, createdAt: '' }));
+  localStorage.setItem('token', 'test-token');
+  return render(
+    <ToastProvider>
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/']}>
+          <FollowUp />
+        </MemoryRouter>
+      </AuthProvider>
+    </ToastProvider>
+  );
+}
+
 describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => {
   it('重新进入页面时恢复上次未保存的表单与文案', async () => {
+    // 草稿必须带 ownerId，且与登录用户一致才会被恢复（见下方跨账号用例）
     localStorage.setItem(
       'tw:followup-draft:v1',
       JSON.stringify({
+        ownerId: 1,
         savedAt: Date.now(),
         form: { studentName: '李一一', topic: '分数加减法', performance: '专注度高' },
         images: [],
@@ -641,7 +679,7 @@ describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => 
       })
     );
 
-    renderWithProviders(<FollowUp />);
+    renderFollowUpAs(1);
 
     expect(screen.getByLabelText(/学生姓名/)).toHaveValue('李一一');
     expect(screen.getByLabelText(/课程主题/)).toHaveValue('分数加减法');
@@ -653,6 +691,7 @@ describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => 
     localStorage.setItem(
       'tw:followup-draft:v1',
       JSON.stringify({
+        ownerId: 1,
         savedAt: Date.now(),
         form: { studentName: '李一一', topic: 'x', performance: 'y' },
         images: [],
@@ -662,9 +701,34 @@ describe('课后回访 · 草稿恢复（切微信回来不丢数据）', () => 
       })
     );
 
-    renderWithProviders(<FollowUp />);
+    renderFollowUpAs(1);
 
     expect(await screen.findByText('已恢复上次未保存的内容')).toBeInTheDocument();
+  });
+
+  it('【跨账号】换人登录后看不到上一个账号的草稿', async () => {
+    // 共用设备场景：A 填了学生姓名/表现/未发出的评语，没保存就退出（或标签页被重载）
+    localStorage.setItem(
+      'tw:followup-draft:v1',
+      JSON.stringify({
+        ownerId: 1,
+        savedAt: Date.now(),
+        form: { studentName: 'A的学生', topic: 'A的主题', performance: 'A的表现' },
+        images: [],
+        selectedIds: [],
+        content: '【课堂内容】A还没发给家长的评语。',
+        draft: '',
+      })
+    );
+
+    // B 登录（不同 user id）
+    renderFollowUpAs(2);
+
+    expect(screen.getByLabelText(/学生姓名/)).toHaveValue('');
+    expect(screen.getByLabelText(/课程主题/)).toHaveValue('');
+    expect(screen.queryByText('A的学生')).not.toBeInTheDocument();
+    expect(screen.queryByText(/A还没发给家长的评语/)).not.toBeInTheDocument();
+    expect(screen.queryByText('已恢复上次未保存的内容')).not.toBeInTheDocument();
   });
 
   it('没有草稿时不提示', async () => {

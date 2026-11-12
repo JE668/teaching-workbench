@@ -33,10 +33,11 @@ export interface UseGroupManagementResult {
  *
  * 抽出来后主组件少 4 个 state、4 个方法、1 个 useEffect（分组拉取）。
  */
-export function useGroupManagement(): UseGroupManagementResult {
+export function useGroupManagement(ownerId: number | null): UseGroupManagementResult {
   const toast = useToast();
   const [groups, setGroups] = useState<GroupPreset[]>([]);
-  const [selectedIds, setSelectedIds] = useState<number[]>(() => loadDraft()?.selectedIds || []);
+  // 同样按用户隔离：选中名单属于上一个人的课堂分组
+  const [selectedIds, setSelectedIds] = useState<number[]>(() => loadDraft(ownerId)?.selectedIds || []);
   const [showGroupSave, setShowGroupSave] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
 
