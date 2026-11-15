@@ -41,9 +41,13 @@ export default {
         '3xl': '1.25rem',
       },
       keyframes: {
+        // 入场动画的 100% 帧刻意不写 transform：配合 fill-mode 'both'，动画结束后
+        // transform 会回落到元素基值 none，不残留 translateY(0)/scale(1)。
+        // 残留的非 none transform 会把元素变成 containing block，劫持内部
+        // position:fixed 后代（弹窗、抽屉、侧栏）随内容滚动、定位错乱。
         'fade-up': {
           '0%': { opacity: '0', transform: 'translateY(8px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
+          '100%': { opacity: '1' },
         },
         'fade-in': {
           '0%': { opacity: '0' },
@@ -51,7 +55,7 @@ export default {
         },
         'scale-in': {
           '0%': { opacity: '0', transform: 'scale(0.96)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
+          '100%': { opacity: '1' },
         },
         shimmer: {
           '100%': { transform: 'translateX(100%)' },
