@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Sparkles,
@@ -808,15 +809,17 @@ export default function FollowUp() {
       </div>
 
       {/* 草稿历史侧边面板 */}
-      {showHistoryPanel && (
-        <div
-          className="fixed inset-0 z-50 lg:hidden"
-          onClick={() => setShowHistoryPanel(false)}
-          aria-hidden="true"
-        >
-          <div className="absolute inset-0 bg-black/30" />
-        </div>
-      )}
+      {showHistoryPanel &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 lg:hidden"
+            onClick={() => setShowHistoryPanel(false)}
+            aria-hidden="true"
+          >
+            <div className="absolute inset-0 bg-black/30" />
+          </div>,
+          document.body
+        )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ===== 左侧：信息录入 ===== */}
@@ -1956,15 +1959,17 @@ export default function FollowUp() {
       </Modal>
 
       {/* 移动端抽屉遮罩 */}
-      {showHistoryPanel && (
-        <div
-          className="fixed inset-0 z-50 lg:hidden"
-          onClick={() => setShowHistoryPanel(false)}
-          aria-hidden="true"
-        >
-          <div className="absolute inset-0 bg-black/30" />
-        </div>
-      )}
+      {showHistoryPanel &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 lg:hidden"
+            onClick={() => setShowHistoryPanel(false)}
+            aria-hidden="true"
+          >
+            <div className="absolute inset-0 bg-black/30" />
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
