@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -100,7 +101,10 @@ export default function Modal({
   const hasHeader = !!(title || description);
   const style = offset ? { transform: `translate(${offset.x}px, ${offset.y}px)` } : undefined;
 
-  return (
+  // 用 Portal 渲染到 document.body，避免祖先元素的 transform（如 animate-fade-up
+  // 结束后残留的 translateY(0)）把 position:fixed 的定位基准从视口劫持为祖先元素，
+  // 导致弹窗随内容滚动、不居中。
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-fade-in"
@@ -146,6 +150,7 @@ export default function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

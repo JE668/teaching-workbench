@@ -117,9 +117,10 @@ describe('Modal', () => {
 
   it('点击遮罩触发 onClose', () => {
     const onClose = vi.fn();
-    const { container } = render(<Modal open onClose={onClose} title="标题">正文</Modal>);
+    render(<Modal open onClose={onClose} title="标题">正文</Modal>);
 
-    const backdrop = container.querySelector('.backdrop-blur-sm');
+    // Modal 通过 createPortal 渲染到 document.body，不在 RTL 默认 container 里
+    const backdrop = document.querySelector('.backdrop-blur-sm');
     expect(backdrop).not.toBeNull();
     fireEvent.click(backdrop!);
     expect(onClose).toHaveBeenCalled();
