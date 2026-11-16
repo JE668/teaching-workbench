@@ -1,0 +1,61 @@
+# 依赖更新的自动化入口。
+#
+# 为什么需要：这个项目的手术点位全在第三方库上（better-sqlite3 的原生编译、
+# vite/vitest 的大版本、express 的安全补丁）。靠人盯 release note 一定会漏，
+# 漏掉的代价从「构建失败」到「线上 CVE」不等。Dependabot 把这件事变成每周一次的
+# PR：CI 会替我们跑完 784 个后端用例 + 441 个前端用例，绿了才需要人看。
+#
+# 策略：补丁与小版本合并成一个 PR（噪音低、可一次看完），大版本单独开 PR
+# （必须人工评估破坏性变更，参照 docs/REFACTOR-PLAN.md 的「升级」章节）。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      server-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # 原生模块：升级要同步改 Docker 构建与 engines 下限，人工评估
+      - dependency-name: better-sqlite3
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      web-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # 大版本升级影响面大（Tailwind 4 需要整套配置迁移、React Router 7 的 data API
+      # 会改写数据加载方式），必须开专项分支做视觉/交互回归，不看自动化 PR
+      - dependency-name: tailwindcss
+        update-types: [version-update:semver-major]
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+      - dependency-name: react-router-dom
+        update-types: [version-update:semver-major]
+      - dependency-name: vite
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: docker
+    directory: /server
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2

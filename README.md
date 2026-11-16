@@ -87,7 +87,7 @@
 
 | 层级 | 技术 |
 |------|------|
-| 前端 | React 18 + Vite + TypeScript + TailwindCSS |
+| 前端 | React 19 + Vite + TypeScript + TailwindCSS |
 | 后端 | Node.js + Express + TypeScript |
 | 数据库 | SQLite (better-sqlite3) |
 | AI | SenseNova sensenova-6.8-flash-lite (OpenAI兼容) |
@@ -154,6 +154,9 @@ cp .env .env
 
 ```bash
 # 后端
+> 仓库根目录也有一套便捷脚本（无依赖，纯转发）：
+> `npm run sync:shared` 把根 `shared/` 同步到两个包的 `src/shared`（`check:shared` 只校验，漂移即失败）；
+> `npm run check:assets` 跑部署资产自检；`npm test` 依次跑前后端单测。
 cd server && npm install && npm run dev
 # 前端
 cd web && npm install && npm run dev
@@ -329,9 +332,9 @@ Internet → 域名 → Lucky (反代+SSL)
 
 | 层级 | 技术 | 用例数 | 命令 |
 |------|------|--------|------|
-| 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 728 | `cd server && npm test` |
-| 前端 | Vitest + Testing Library + jsdom | 422 | `cd web && npm test` |
-| 端到端 | Playwright（复用系统 Chrome，串行执行） | 66 | `cd web && npm run e2e:full` |
+| 后端 | Node 内置 test runner + 原生 fetch（零额外依赖） | 784 | `cd server && npm test` |
+| 前端 | Vitest + Testing Library + jsdom | 447 | `cd web && npm test` |
+| 端到端 | Playwright（复用系统 Chrome，串行执行） | 67 | `cd web && npm run e2e:full` |
 
 > CI 顺序：后端测试 + 前端测试 → E2E → 构建镜像。
 > **任一环节失败都不会发布镜像。**
@@ -341,7 +344,7 @@ Internet → 域名 → Lucky (反代+SSL)
 ### E2E 本地一键跑法
 
 ```bash
-# 一键：清空 e2e 专用库 → typecheck → 构建前后端 → 跑全部 66 个用例
+# 一键：清空 e2e 专用库 → typecheck → 构建前后端 → 跑全部 E2E 用例
 cd web && npm run test:e2e:local   # 即 e2e:full 的别名
 ```
 
@@ -598,7 +601,7 @@ docker compose up -d
 | 登录限流 | 同 IP 15 分钟内最多 20 次尝试，防暴力破解 |
 | 越权防护 | 所有查询按 user_id 隔离；关联学生时校验归属 |
 | 路径穿越防护 | 图片读取限定在上传目录内 |
-| 上传校验 | 仅允许 JPG/PNG/WebP，单张最大 10MB |
+| 上传校验 | 仅允许 JPG/PNG/WebP，单张最大 40MB（前端超过上限直接跳过并提示，不发起注定 413 的请求） |
 | 密钥隔离 | API Key 只存在 `.env`，不进入镜像与仓库 |
 | 生产提示 | 默认账号提示仅在开发环境显示 |
 

@@ -44,3 +44,6 @@ tw-migrate-*/
 
 # TypeScript 增量构建产物
 *.tsbuildinfo
+
+# 覆盖率产物（本地 npm run test:coverage 生成）
+coverage/
