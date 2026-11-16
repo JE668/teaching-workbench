@@ -25,6 +25,7 @@ import Modal from '../components/ui/Modal';
 import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
+import { useAppCommand } from '../hooks/useAppCommand';
 import { cn } from '../lib/utils';
 import { computeTrajectory, summarizeTrajectory, type MonthTrajectory } from '../lib/reportProgress';
 import { MonthlyReport, ReportItem, TERM_OPTIONS, formatYearMonth } from '../types/reports';
@@ -71,6 +72,9 @@ export default function Reports() {
   const [term, setTerm] = useState('');
 
   const [showNew, setShowNew] = useState(false);
+
+  // 命令面板「新建月度报告」的落点
+  useAppCommand('newReport', () => setShowNew(true));
   const [showClone, setShowClone] = useState<MonthlyReport | null>(null);
   const [cloning, setCloning] = useState(false);
   const [toDelete, setToDelete] = useState<MonthlyReport | null>(null);

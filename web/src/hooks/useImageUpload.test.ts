@@ -75,6 +75,24 @@ describe('useImageUpload 并发上传', () => {
     expect([...result.current.images].sort()).toEqual(['u/x/a.png', 'u/x/b.png']);
   });
 
+  it('超过单张上限的文件直接跳过，不发起注定失败的请求', async () => {
+    const { useImageUpload } = await import('./useImageUpload');
+    const { result } = renderHook(() => useImageUpload(1));
+
+    // 前端拦的是「原始体积」：压缩兜不住（HEIC 解不开）时才会走到这里。
+    // 用 defineProperty 造体积，避免真的分配 41MB 内存。
+    const huge = file('huge.png');
+    Object.defineProperty(huge, 'size', { value: 41 * 1024 * 1024 });
+
+    await act(async () => {
+      await result.current.uploadFiles([huge, file('small.png')], 'picker');
+    });
+
+    await waitFor(() => expect(result.current.uploading).toBe(false));
+    expect(uploadCalls).toEqual(['small.png']);
+    expect(result.current.images).toEqual(['u/x/small.png']);
+  });
+
   it('首批失败不影响后续批次执行', async () => {
     const { useImageUpload } = await import('./useImageUpload');
     const { result } = renderHook(() => useImageUpload(1));

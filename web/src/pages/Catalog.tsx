@@ -333,6 +333,8 @@ function CourseGroupCard({
 export default function Catalog() {
   const toast = useToast();
   const [courses, setCourses] = useState<CatalogCourse[]>([]);
+  /** 目录超过服务端上限被截断（只拿到前几千条） */
+  const [catalogTruncated, setCatalogTruncated] = useState(false);
   const [facets, setFacets] = useState<Facets>({ grades: [], subjects: [], terms: [], types: [], tracks: [], textbooks: [] });
   const [imports, setImports] = useState<CatalogImport[]>([]);
   // 目录 ↔ 报告打通：course_id → 已上/计划次数
@@ -435,11 +437,14 @@ export default function Catalog() {
     try {
       const [f, cs, im] = await Promise.all([
         api.request<Facets>('/catalog/facets'),
-        api.request<{ courses: CatalogCourse[]; total: number }>('/catalog/courses?limit=20000'),
+        api.request<{ courses: CatalogCourse[]; total: number; rows: number }>('/catalog/courses'),
         api.request<{ imports: CatalogImport[] }>('/catalog/imports'),
       ]);
       setFacets(f);
       setCourses(cs.courses);
+      // total 是未截断的匹配数（服务端默认最多返 5000 条），
+      // 两者不一致时页面必须说清楚「只加载了前 N 条」，不能假装全都在。
+      setCatalogTruncated(cs.rows < cs.total);
       setImports(im.imports);
       void api
         .request<{ students: { id: number; name: string }[] }>('/students')
@@ -872,6 +877,9 @@ export default function Catalog() {
           <div className="print-hide px-1">
             <p className="text-xs text-slate-400">
               共 {filtered.length} 条
+              {catalogTruncated ? (
+                <span className="ml-1 text-amber-600">（目录超大，仅加载前 {courses.length} 条，未全量加载）</span>
+              ) : null}
               {progressCounts ? (
                 <span className="ml-1">
                   ·{' '}

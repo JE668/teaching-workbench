@@ -21,6 +21,7 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
 import { PageSkeleton } from '../components/ui/Skeleton';
+import { useToast } from '../components/ui/Toast';
 import { relativeTime, formatDate } from '../lib/utils';
 
 const masteryTone: Record<string, 'success' | 'info' | 'warning' | 'danger'> = {
@@ -46,6 +47,8 @@ export default function Dashboard() {
   /** 超过 N 天没回访的学生（含从未回访过的） */
   const [pending, setPending] = useState<any[]>([]);
   const { preferences, update: updatePreferences } = usePreferences();
+  // 失败提示统一走 toast：生产环境不能只 console.error，用户看不到任何反馈
+  const toast = useToast();
   /** 待回访天数取用户偏好（服务端保存，两端一致） */
   const pendingDays = preferences.pendingDays;
   const [loading, setLoading] = useState(true);
@@ -70,8 +73,8 @@ export default function Dashboard() {
         totalImages: st.totalImages || 0,
       });
       setRecent(st.recent || []);
-    } catch (err) {
-      console.error('加载失败', err);
+    } catch (err: any) {
+      toast.error('加载看板数据失败：' + (err?.message || '未知错误'));
     } finally {
       setLoading(false);
     }

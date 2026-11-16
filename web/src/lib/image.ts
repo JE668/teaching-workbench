@@ -15,6 +15,11 @@
 export const MAX_EDGE = 2048;
 /** 小于这个体积且尺寸不超标，就完全不折腾 */
 export const SMALL_BYTES = 1.5 * 1024 * 1024;
+/**
+ * 单张上限，必须和后端 multer 的 fileSize 保持一致（server/src/routes/uploads.ts）。
+ * 前端提前拦一刀：等浏览器把 50MB 传完再收到 413，用户白等还看不到原因。
+ */
+export const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;
 const JPEG_QUALITY = 0.72;
 /** 解码兜底的超时上限：宁可跳过压缩，也不能让上传卡住 */
 export const DECODE_TIMEOUT_MS = 10000;

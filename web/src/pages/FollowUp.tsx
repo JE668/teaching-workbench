@@ -27,6 +27,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAppCommand } from '../hooks/useAppCommand';
 import {
   Student,
   GRADES,
@@ -739,6 +740,13 @@ export default function FollowUp() {
     !!form.performance.trim() &&
     (isGroup ? selectedIds.length > 0 : !!form.studentName.trim());
 
+  // 命令面板 / 全局快捷键的落点：此前 App.tsx 只 dispatch 事件、没人监听，这些命令点了毫无反应
+  useAppCommand('save', () => { void save(); });
+  useAppCommand('generate', () => { void generate(); }, canGenerate);
+  useAppCommand('copy', () => { void handleCopy(); });
+  useAppCommand('applyLast', applyLast);
+
+
   const gradeOptions = GRADES.map((g) => ({ value: g, label: g }));
   const subjectOptions = SUBJECTS.map((s) => ({ value: s, label: s }));
 
@@ -1363,11 +1371,7 @@ export default function FollowUp() {
                   setDragging(false);
 
                   // 必须在事件内同步提取：事件结束后 dataTransfer 会被清空
-                  const { files, debug } = extractDroppedImages(e.dataTransfer);
-
-                  if (import.meta.env.DEV) {
-                    console.debug('[drop]', debug);
-                  }
+                  const { files } = extractDroppedImages(e.dataTransfer);
 
                   uploadFiles(files, 'drop');
                 }}

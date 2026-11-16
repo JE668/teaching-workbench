@@ -45,6 +45,16 @@ services:
     volumes:
       - ${DATA_PATH:-./data}:/app/data
     restart: unless-stopped
+    # 【资源上限】NAS 上通常还跑着别的服务。不设上限时，一个卡死的生成/OCR 可以把
+    # 整机内存吃光，表现是「工作台和 NAS 一起失去响应」。设了上限只会 OOM 掉本容器，
+    # 由 restart 策略自动拉回，其他服务不受影响。
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    cpus: ${BACKEND_CPUS:-2.0}
+    # 停止前留出收尾时间：SQLite 事务、流式生成、日志 flush 都需要（默认 10s 会被硬杀）
+    stop_grace_period: 30s
+    # 容器内进程不允许提权（防线之一，配合非 root 用户运行）
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 30s
@@ -69,6 +79,12 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    # 静态站点很轻：256m/1 核足够，设上限防异常流量把 NAS 内存吃光
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
+    cpus: ${FRONTEND_CPUS:-1.0}
+    stop_grace_period: 10s
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options:

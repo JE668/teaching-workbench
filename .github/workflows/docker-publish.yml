@@ -71,10 +71,12 @@ jobs:
         timeout-minutes: 5
         run: npm run typecheck:strict
 
-      - name: Run test suite
+      # 覆盖率门槛直接挂在这条命令上（Node 内置 --experimental-test-coverage，
+      # 零额外依赖）：门槛设在当前实测值下方一档，只防倒退不刷数字。
+      - name: Run test suite (with coverage gate)
         working-directory: server
         timeout-minutes: 15
-        run: npm test -- --test-concurrency=4
+        run: npm run test:coverage -- --test-concurrency=4
 
       # 生产形态冒烟：单测全部用 tsx 跑 .ts，与容器里 `node dist/index.js` 是两种形态。
       # 真实事故：迁移 runner 只认 .ts → 生产 0 迁移执行；再改成认 .js 后，
@@ -130,10 +132,11 @@ jobs:
         timeout-minutes: 5
         run: npm run typecheck:strict
 
-      - name: Run test suite
+      # 门槛写在 web/vitest.config.ts 的 coverage.thresholds 里（v8 provider）
+      - name: Run test suite (with coverage gate)
         working-directory: web
         timeout-minutes: 10
-        run: npm test -- --pool=forks
+        run: npm run test:coverage -- --pool=forks
 
   # ===== 部署资产检查 =====
   # 事故：Dockerfile 曾只 COPY dist/，漏了 templates/ ——

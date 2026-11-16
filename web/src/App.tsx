@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider, useToast } from './components/ui/Toast';
 import { usePreferences } from './hooks/usePreferences';
 import { onAppUpdated } from './lib/serviceWorker';
+import { emitAppCommand } from './lib/appEvents';
 import Layout from './components/Layout';
 import { CommandPalette } from './components/ui/CommandPalette';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -138,7 +139,7 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
       disableInInput: true,
       onTrigger: () => {
         // 触发当前页面的保存逻辑 - 通过自定义事件
-        window.dispatchEvent(new CustomEvent('app:save'));
+        emitAppCommand('save');
       },
     },
     {
@@ -147,7 +148,7 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
       group: '全局',
       disableInInput: true,
       onTrigger: () => {
-        window.dispatchEvent(new CustomEvent('app:generate'));
+        emitAppCommand('generate');
       },
     },
     {
@@ -202,7 +203,7 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
     // 动作组
     { id: 'action-new-report', label: '新建月度报告', description: '创建新的月份总结/规划', group: '动作', icon: <Plus className="h-4 w-4" />, onSelect: () => {
       // 触发报告页的新建模态框
-      window.dispatchEvent(new CustomEvent('app:new-report'));
+      emitAppCommand('newReport');
     }, keywords: ['新建', '创建', '报告', '月份'] },
     { id: 'action-new-followup', label: '新建回访', description: '开始写新的课后回访', group: '动作', icon: <MessageSquareText className="h-4 w-4" />, onSelect: () => {
       navigate('/followups');
@@ -210,22 +211,22 @@ function ShortcutsProvider({ children }: { children: React.ReactNode }) {
 
     // 当前页面相关动作（根据路由动态显示）
     ...(location.pathname.startsWith('/reports') && !location.pathname.match(/\/reports\/\d+/) ? [
-      { id: 'report-new', label: '新建月份报告', description: '为学生创建新的月份报告', group: '当前页', shortcut: 'N', icon: <FilePlus2 className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:new-report')), keywords: ['新建', '报告'] },
+      { id: 'report-new', label: '新建月份报告', description: '为学生创建新的月份报告', group: '当前页', shortcut: 'N', icon: <FilePlus2 className="h-4 w-4" />, onSelect: () => emitAppCommand('newReport'), keywords: ['新建', '报告'] },
     ] : []),
 
     ...(location.pathname.match(/\/reports\/\d+/) ? [
-      { id: 'report-ai-summary', label: 'AI 生成总结', description: '根据课程明细生成本月总结', group: '当前页', shortcut: '⌘Enter', icon: <Sparkles className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:ai-summary')), keywords: ['AI', '总结', '生成'] },
-      { id: 'report-ai-plan', label: 'AI 生成规划', description: '根据上月总结生成本月规划', group: '当前页', shortcut: '⌘Shift+Enter', icon: <Sparkles className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:ai-plan')), keywords: ['AI', '规划', '生成'] },
-      { id: 'report-import-last', label: '从上月导入', description: '把上月规划导入本月总结', group: '当前页', icon: <CalendarDays className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:import-last-month')), keywords: ['导入', '上月', '规划'] },
-      { id: 'report-export-excel', label: '导出 Excel', description: '导出标准格式 Excel', group: '当前页', shortcut: '⌘E', icon: <FileSpreadsheet className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:export-excel')), keywords: ['导出', 'Excel', '下载'] },
-      { id: 'report-export-card', label: '导出图片卡片', description: '生成分享卡片图片', group: '当前页', icon: <FileImage className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:export-card')), keywords: ['导出', '图片', '卡片', '分享'] },
+      { id: 'report-ai-summary', label: 'AI 生成总结', description: '根据课程明细生成本月总结', group: '当前页', shortcut: '⌘Enter', icon: <Sparkles className="h-4 w-4" />, onSelect: () => emitAppCommand('aiSummary'), keywords: ['AI', '总结', '生成'] },
+      { id: 'report-ai-plan', label: 'AI 生成规划', description: '根据上月总结生成本月规划', group: '当前页', shortcut: '⌘Shift+Enter', icon: <Sparkles className="h-4 w-4" />, onSelect: () => emitAppCommand('aiPlan'), keywords: ['AI', '规划', '生成'] },
+      { id: 'report-import-last', label: '从上月导入', description: '把上月规划导入本月总结', group: '当前页', icon: <CalendarDays className="h-4 w-4" />, onSelect: () => emitAppCommand('importLastMonth'), keywords: ['导入', '上月', '规划'] },
+      { id: 'report-export-excel', label: '导出 Excel', description: '导出标准格式 Excel', group: '当前页', shortcut: '⌘E', icon: <FileSpreadsheet className="h-4 w-4" />, onSelect: () => emitAppCommand('exportExcel'), keywords: ['导出', 'Excel', '下载'] },
+      { id: 'report-export-card', label: '导出图片卡片', description: '生成分享卡片图片', group: '当前页', icon: <FileImage className="h-4 w-4" />, onSelect: () => emitAppCommand('exportCard'), keywords: ['导出', '图片', '卡片', '分享'] },
     ] : []),
 
     ...(location.pathname === '/followups' ? [
-      { id: 'followup-generate', label: 'AI 生成回访', description: '根据填写信息生成回访文案', group: '当前页', shortcut: '⌘Enter', icon: <Sparkles className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:generate')), keywords: ['生成', 'AI', '回访'] },
-      { id: 'followup-save', label: '保存并归档', description: '保存回访到学生档案', group: '当前页', shortcut: '⌘S', icon: <Save className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:save')), keywords: ['保存', '归档'] },
-      { id: 'followup-copy', label: '复制内容', description: '复制生成的回访文案', group: '当前页', shortcut: '⌘C', icon: <Copy className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:copy')), keywords: ['复制', '文案'] },
-      { id: 'followup-apply-last', label: '带入上次内容', description: '把上次回访的主题/表现带入', group: '当前页', icon: <History className="h-4 w-4" />, onSelect: () => window.dispatchEvent(new CustomEvent('app:apply-last')), keywords: ['带入', '上次', '历史'] },
+      { id: 'followup-generate', label: 'AI 生成回访', description: '根据填写信息生成回访文案', group: '当前页', shortcut: '⌘Enter', icon: <Sparkles className="h-4 w-4" />, onSelect: () => emitAppCommand('generate'), keywords: ['生成', 'AI', '回访'] },
+      { id: 'followup-save', label: '保存并归档', description: '保存回访到学生档案', group: '当前页', shortcut: '⌘S', icon: <Save className="h-4 w-4" />, onSelect: () => emitAppCommand('save'), keywords: ['保存', '归档'] },
+      { id: 'followup-copy', label: '复制内容', description: '复制生成的回访文案', group: '当前页', shortcut: '⌘C', icon: <Copy className="h-4 w-4" />, onSelect: () => emitAppCommand('copy'), keywords: ['复制', '文案'] },
+      { id: 'followup-apply-last', label: '带入上次内容', description: '把上次回访的主题/表现带入', group: '当前页', icon: <History className="h-4 w-4" />, onSelect: () => emitAppCommand('applyLast'), keywords: ['带入', '上次', '历史'] },
     ] : []),
   ], [location.pathname, navigate]);
 

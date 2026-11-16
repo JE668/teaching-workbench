@@ -18,11 +18,16 @@ import {
   describeAiError,
 } from '../services/observation.js';
 import { parseObservationReport, buildObservationDocx, buildDocxFilename } from '../utils/observationDocx.js';
-import { readPreferences } from './auth.js';
+import { readPreferences } from '../services/preferences.js';
 import { log } from '../utils/logger.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = Router();
+
+/** 列表默认分页大小 */
+const DEFAULT_PAGE_SIZE = 20;
+/** 列表单页上限：一次返回太多既慢又费内存 */
+const MAX_PAGE_SIZE = 100;
 
 /** observations 表完整行结构（SELECT * 返回的形状） */
 interface ObservationRow {
@@ -182,25 +187,45 @@ router.get('/', (req: AuthenticatedRequest, res: Response) => {
       params.push(req.query.subject);
     }
     if (typeof req.query.from === 'string' && req.query.from) {
-      clauses.push('date(o.observed_at) >= date(?)');
+      // 不套 date()：observed_at 存的是 YYYY-MM-DD 字面量（用户手填日期），
+      // 直接比较字符串就能命中索引；套函数会让 (user_id, observed_at) 索引失效，
+      // 变成每次列表请求都全表扫。
+      clauses.push('o.observed_at >= ?');
       params.push(req.query.from);
     }
     if (typeof req.query.to === 'string' && req.query.to) {
-      clauses.push('date(o.observed_at) <= date(?)');
+      // 用「小于次日」表达 <= 当天，兼容历史上存成 datetime 的脏数据，且仍是范围条件
+      clauses.push("o.observed_at < date(?, '+1 day')");
       params.push(req.query.to);
     }
+
+    const where = clauses.join(' AND ');
+
+    // 分页：不传 page/pageSize 时仍是第 1 页（默认 20 条），
+    // 老调用方拿不到全量也不会崩 —— 但前端必须配合「加载更多」。
+    // 上限 100：一次返回太多会让手机端首屏解析变慢，也让服务端内存峰值随行数线性涨。
+    const p = Math.max(1, parseInt(String(req.query.page ?? ''), 10) || 1);
+    const ps = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(String(req.query.pageSize ?? ''), 10) || DEFAULT_PAGE_SIZE));
+    const offset = (p - 1) * ps;
+
+    const total = (db.prepare(`SELECT COUNT(*) AS n FROM observations o WHERE ${where}`).get(...params) as { n: number }).n;
+    const totalPages = Math.max(1, Math.ceil(total / ps));
 
     const rows = db
       .prepare(
         `SELECT o.*, t.name AS teacher_name
            FROM observations o
            LEFT JOIN teachers t ON t.id = o.teacher_id
-          WHERE ${clauses.join(' AND ')}
-          ORDER BY o.observed_at IS NULL, date(o.observed_at) DESC, o.id DESC`
+          WHERE ${where}
+          ORDER BY o.observed_at DESC, o.id DESC
+          LIMIT ? OFFSET ?`
       )
-      .all(...params) as ObservationWithTeacherRow[];
+      .all(...params, ps, offset) as ObservationWithTeacherRow[];
 
-    res.json({ observations: mapObservations(rows) });
+    res.json({
+      observations: mapObservations(rows),
+      pagination: { page: p, pageSize: ps, total, totalPages },
+    });
   } catch (error: any) {
     res.status(500).json({ error: '获取听评课列表失败', message: error.message });
   }
