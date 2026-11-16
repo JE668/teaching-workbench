@@ -24,6 +24,15 @@ updates:
       - dependency-name: better-sqlite3
         update-types: [version-update:semver-major]
 
+      # SDK 大版本：请求/响应形状与工具调用协议都可能改，需单开分支对接
+      - dependency-name: openai
+        update-types: [version-update:semver-major]
+      # 认证链路：哈希格式与异步 API 变更需全量回归登录/改密
+      - dependency-name: bcryptjs
+        update-types: [version-update:semver-major]
+      # 配置加载：大版本会改解析顺序与 quiet 行为，影响多环境启动
+      - dependency-name: dotenv
+        update-types: [version-update:semver-major]
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -46,6 +55,19 @@ updates:
       - dependency-name: react-router-dom
         update-types: [version-update:semver-major]
       - dependency-name: vite
+        update-types: [version-update:semver-major]
+      # 编译器：7.x 是重写版，与现有 tsconfig/类型守卫兼容性需专项验证
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # 测试环境：jsdom 与 jest-dom 跨大版本会改 DOM 语义与断言 API
+      - dependency-name: jsdom
+        update-types: [version-update:semver-major]
+      - dependency-name: "@testing-library/jest-dom"
+        update-types: [version-update:semver-major]
+      # 覆盖率插件与 vitest 主版本必须同步升级，分批来会直接报错
+      - dependency-name: vitest
+        update-types: [version-update:semver-major]
+      - dependency-name: "@vitest/coverage-v8"
         update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
