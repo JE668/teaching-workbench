@@ -27,7 +27,7 @@
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
-    "openai": "^6.49.0",
+    "openai": "^7.57.0",
     "pino": "^9.14.0",
     "pizzip": "^3.3.0",
     "sharp": "^0.35.5",
