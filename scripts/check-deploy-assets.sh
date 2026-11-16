@@ -68,9 +68,11 @@ echo "✅ .env.production.example 覆盖 compose 全部变量"
 for f in server/package.json web/package.json; do
   grep -q '"engines"' "$f" || fail "$f 缺 engines 字段"
   grep -q '"node":' "$f" || fail "$f 的 engines 缺 node"
-  grep -qE '"node": *">=22\.12\.0"' "$f" || fail "$f 的 node engines 应为 >=22.12.0（better-sqlite3@13 / vitest@5 的实际要求）"
+  # .nvmrc 与 engines 下限必须一致，避免「本地 nvm use 的版本跑不了」
+  grep -qE '"node": *">=22\.12\.0 <27"' "$f" || fail "$f 的 node engines 应为 >=22.12.0 <27（下限是 better-sqlite3@13 / vitest@5 的实际要求，上限防 Node 27 未知变更）"
 done
-echo "✅ engines 声明齐全（node >=22.12.0）"
+test -f .nvmrc || fail "缺 .nvmrc（nvm/fnm 用户应能一键切到受支持版本）"
+echo "✅ engines 声明齐全（node >=22.12.0 <27）"
 
 # ===== 5. shared 三处副本必须一致 =====
 # 根目录 shared/ 是唯一事实源；CI 的 cp -r shared 会盖副本，本地副本漂移
@@ -94,9 +96,19 @@ BRACE_STATE=$(grep -vE '^\s*#' web/nginx.conf | awk '
     } }
   END { if (!done && n != 0) print "unbalanced"; else if (n == 0) print "balanced" }' | sort -u | tr '\n' ' ')
 [ "$BRACE_STATE" = "balanced " ] || fail "web/nginx.conf 大括号不配对"
-for h in X-Frame-Options X-Content-Type-Options Referrer-Policy Permissions-Policy Content-Security-Policy-Report-Only; do
-  grep -q "add_header $h" web/nginx.conf || fail "web/nginx.conf 丢了安全头 $h"
+SEC_HEADERS_FILE=web/security-headers.conf
+[ -f "$SEC_HEADERS_FILE" ] || fail "缺少 $SEC_HEADERS_FILE（nginx 安全头的唯一真源）"
+grep -q 'include /etc/nginx/security-headers.conf;' web/nginx.conf \
+  || fail "web/nginx.conf 未 include 安全头 snippet"
+for h in X-Frame-Options X-Content-Type-Options Referrer-Policy Permissions-Policy Content-Security-Policy; do
+  grep -q "add_header $h" "$SEC_HEADERS_FILE" || fail "安全头 $h 从 $SEC_HEADERS_FILE 丢失"
 done
+# CSP 必须是强制模式：Report-Only 只是观察，不拦截任何内联脚本执行
+grep -q 'Content-Security-Policy-Report-Only' "$SEC_HEADERS_FILE" \
+  && fail "CSP 退回了 Report-Only 模式"
+# 安全头 snippet 必须被拷进前端镜像，否则 include 会在 nginx 启动时报 ENOENT
+grep -q 'COPY security-headers.conf /etc/nginx/security-headers.conf' web/Dockerfile \
+  || fail "web/Dockerfile 未把 security-headers.conf 拷进镜像"
 echo "✅ nginx 配置粗校验通过"
 
 echo "✅ 部署资产守护全部通过"

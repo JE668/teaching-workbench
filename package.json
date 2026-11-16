@@ -1,0 +1,17 @@
+{
+  "name": "teaching-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cross-package scripts only. Backend lives in server/, frontend in web/.",
+  "engines": {
+    "node": ">=22.12.0 <27"
+  },
+  "scripts": {
+    "sync:shared": "bash scripts/sync-shared.sh",
+    "check:shared": "bash scripts/sync-shared.sh --check",
+    "check:assets": "bash scripts/check-deploy-assets.sh",
+    "test": "npm --prefix server test && npm --prefix web test",
+    "test:coverage": "npm --prefix server run test:coverage && npm --prefix web run test:coverage",
+    "typecheck": "npm --prefix server run typecheck && npm --prefix web run typecheck"
+  }
+}
