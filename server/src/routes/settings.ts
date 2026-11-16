@@ -12,6 +12,7 @@ import {
   getAiConfig,
   readRaw,
 } from '../config/settings.js';
+import { assertSafeOutboundUrl } from '../utils/outboundUrl.js';
 
 const router = Router();
 
@@ -263,9 +264,13 @@ async function fetchAvailableModels(userId: number): Promise<{
     const timer = setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
     try {
+      // 二次校验：设置可能在修复前就已写入，或 DNS 后来被改指向内网。
+      // 真正发请求前再核一遍，且不跟随重定向（302 到内网同样是 SSRF）。
+      await assertSafeOutboundUrl(config.baseUrl);
       const res = await fetch(config.baseUrl.replace(/\/$/, '') + '/models', {
         headers: { Authorization: 'Bearer ' + config.apiKey },
         signal: controller.signal,
+        redirect: 'manual',
       });
 
       if (res.ok) {
@@ -372,7 +377,7 @@ router.get('/', (req: any, res) => {
 });
 
 /** 更新设置（只接受白名单键） */
-router.put('/', (req: any, res) => {
+router.put('/', async (req: any, res) => {
   try {
     const body = req.body || {};
     const patch: Record<string, string> = {};
@@ -402,11 +407,17 @@ router.put('/', (req: any, res) => {
           return res.status(400).json({ error: '超时时间需在 5-300 秒之间' });
         }
       }
-      if (key === 'ai.baseUrl' && value && !/^https?:\/\//.test(value)) {
-        return res.status(400).json({ error: '接口地址需以 http(s):// 开头' });
-      }
-      if (key === 'ai.geminiProxy.baseUrl' && value && !/^https?:\/\//.test(value)) {
-        return res.status(400).json({ error: '接口地址需以 http(s):// 开头' });
+      // baseUrl 会被服务端真实请求（探测模型列表、转发对话内容），因此必须防 SSRF。
+      // 只校验 "以 http(s):// 开头" 挡不住 http://127.0.0.1:3000、
+      // http://169.254.169.254/（云元数据）、以及解析到内网的域名 —— 服务端会替
+      // 填写者把这些请求原样发出去。
+      if ((key === 'ai.baseUrl' || key === 'ai.geminiProxy.baseUrl') && value) {
+        try {
+          await assertSafeOutboundUrl(value);
+        } catch (err: any) {
+          if (err?.name === 'UnsafeUrlError') return res.status(400).json({ error: err.message });
+          throw err;
+        }
       }
       if ((key === 'ai.model' || key === 'ai.geminiProxy.model') && value.length > 100) {
         return res.status(400).json({ error: '模型名过长' });
