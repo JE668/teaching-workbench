@@ -31,6 +31,7 @@ import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
+import { useAppCommand } from '../hooks/useAppCommand';
 import { cn, saveBlob } from '../lib/utils';
 import { downloadReportCard, type ReportCardBlock, type ReportCardInput } from '../lib/reportCard';
 import { getSummaryPlaceholder, getPlanPlaceholder } from '../shared/reportTemplate';
@@ -205,6 +206,14 @@ export default function ReportEdit() {
   const [savingText, setSavingText] = useState(false);
   const [aiField, setAiField] = useState<'summary' | 'plan' | null>(null);
   const aiAbort = useRef<AbortController | null>(null);
+
+  // 命令面板「当前页」动作的落点（下面几个都是函数声明，会提升，不受书写顺序影响）
+  useAppCommand('exportExcel', () => { void downloadExcel(); });
+  useAppCommand('exportCard', downloadCard);
+  useAppCommand('aiSummary', () => { void runAi('summary'); });
+  useAppCommand('aiPlan', () => { void runAi('plan'); });
+  useAppCommand('importLastMonth', () => { void importFromLastMonth(); });
+
   // 未保存改动离开守卫：正文保存中 / AI 正在写时刷新或关标签会真丢内容
   useUnsavedGuard(savingText || aiField !== null);
   const [showPicker, setShowPicker] = useState<'summary' | 'plan' | null>(null);
@@ -1113,10 +1122,6 @@ export default function ReportEdit() {
         reportTerm={report.term}
         addedIds={pickerAddedIds}
         onClose={() => setShowPicker(null)}
-        onCoursesUsed={(courseIds) => {
-          // 课程使用记录回调（可用于后续统计）
-          console.debug('[CoursePicker] 常用课程已更新', courseIds.length, '门');
-        }}
         onPick={async (courses) => {
           const kind = showPicker || 'plan';
           let base = kind === 'plan' ? nextSeq(planItems) : nextSeq(summaryItems);
@@ -1625,7 +1630,6 @@ function CoursePicker({
   addedIds,
   onClose,
   onPick,
-  onCoursesUsed,
 }: {
   open: boolean;
   kind: 'summary' | 'plan';
@@ -1635,7 +1639,6 @@ function CoursePicker({
   addedIds: Set<number>;
   onClose: () => void;
   onPick: (courses: CatalogCourseOption[]) => Promise<void>;
-  onCoursesUsed?: (courseIds: number[]) => void;
 }) {
   const [courses, setCourses] = useState<CatalogCourseOption[]>([]);
   const [total, setTotal] = useState(0);
@@ -1803,7 +1806,6 @@ function CoursePicker({
           ...prev.filter((p) => !pickedCourses.some((c) => c.id === p.id) && !addedIds.has(p.id)),
         ].slice(0, 20);
         localStorage.setItem(key, JSON.stringify(merged));
-        onCoursesUsed?.(pickedCourses.map((c) => c.id));
       }
       await onPick(pickedCourses);
     } finally {

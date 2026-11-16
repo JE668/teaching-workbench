@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useToast } from '../components/ui/Toast';
-import { prepareImageForUpload, formatBytes } from '../lib/image';
+import { prepareImageForUpload, formatBytes, MAX_UPLOAD_BYTES } from '../lib/image';
 import { extractDroppedImages } from '../lib/dropFiles';
 import { loadDraft } from '../lib/draft';
 
@@ -78,9 +78,18 @@ export function useImageUpload(ownerId: number | null): UseImageUploadResult {
       let added = 0;
       let compressedCount = 0;
       let savedBytes = 0;
+      /** 超过单张上限的文件：直接跳过并一次性提示，不发起注定 413 的请求 */
+      const oversized: string[] = [];
 
       try {
         for (const file of list) {
+          // 压缩兜不住的情况（HEIC 在 Chrome 解不开、超大 TIFF 等）会走 passthrough，
+          // 这里先按原始体积拦一刀，避免用户等完上传才看到 413。
+          if (file.size > MAX_UPLOAD_BYTES) {
+            oversized.push(file.name || '未命名图片');
+            continue;
+          }
+
           // 手机照片动辄 20-40MB：先在浏览器里缩到 2048px，
           // 上传更快、不撞体积限制，而 AI 看到的内容完全一样。
           const prepared = await prepareImageForUpload(file);
@@ -97,6 +106,13 @@ export function useImageUpload(ownerId: number | null): UseImageUploadResult {
             if (mountedRef.current) setImages((prev) => [...prev, ...res.paths]);
             added += res.paths.length;
           }
+        }
+
+        if (oversized.length) {
+          toast.error(
+            '有 ' + oversized.length + ' 张图片超过 ' + formatBytes(MAX_UPLOAD_BYTES) +
+            '，已跳过：' + oversized.join('、') + '。请先裁剪或压缩后再上传。'
+          );
         }
 
         if (added) {

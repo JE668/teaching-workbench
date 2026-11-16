@@ -13,11 +13,30 @@ export { getAiConfig };
 // ============ 并发闸门 ============
 // 老师连点两次「生成」，或两个学生在两个标签页同时生成，就是两个请求一起打出去：
 // 双倍计费，而且两份结果会互相覆盖（后返回的把先返回的冲掉）。
-// 限到 2 个对单人使用绰绰有余；超出就排队，不会丢请求。
-// 闸门加在真正调用 SDK 的地方，所有上层入口自动被覆盖。
+// 早期是整站共用一个全局计数（MAX_CONCURRENT_AI=2）：多用户一起用时，后台批量任务
+// （目录星级判定会连发几十批）会把槽位长期占满，别人正常的回访/听评课只能排队，
+// 最后一起撞上 2 分钟排队超时 —— 一个人卡住全站 AI 不可用。
+// 现在按用户分桶：每个用户各自限并发，互不饿死；全局再留一个更高的保护上限，
+// 防止多用户叠加把上游供应商的配额打爆。
+/** 单个用户同时最多几个 AI 请求 */
 export const MAX_CONCURRENT_AI = 2;
+/** 全站同时最多几个（多用户叠加时的保护上限，防上游限流/爆预算） */
+export const MAX_CONCURRENT_AI_GLOBAL = 8;
+
+/** 没有登录用户上下文的调用（启动时的后台任务、单测）统一算进这个桶 */
+const UNBOUND_AI_USER = 0;
+
+interface AiWaiter {
+  userId: number;
+  resolve: () => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
 let aiInFlight = 0;
-const aiWaiters: Array<{ resolve: () => void; reject: (e: Error) => void; timer: NodeJS.Timeout }> = [];
+/** userId -> 该用户正在跑的 AI 请求数（归零即删键，不会无限增长） */
+const aiInFlightByUser = new Map<number, number>();
+const aiWaiters: AiWaiter[] = [];
 
 /** 排队上限：超过就快速失败，而不是无限挂在某个卡死的生成上 */
 export const AI_QUEUE_TIMEOUT_MS = 120_000;
@@ -37,48 +56,88 @@ interface ChatStreamChunk {
   }>;
 }
 
+/** 归一化用户标识：未登录/非法值都落到匿名桶，绝不因为缺 userId 就跳过限流 */
+function bucketOf(userId?: number | null): number {
+  return typeof userId === 'number' && Number.isFinite(userId) && userId > 0 ? userId : UNBOUND_AI_USER;
+}
 
-export async function acquireAiSlot(timeoutMs: number = AI_QUEUE_TIMEOUT_MS): Promise<void> {
-  while (aiInFlight >= MAX_CONCURRENT_AI) {
+function inFlightOf(userId: number): number {
+  return aiInFlightByUser.get(userId) ?? 0;
+}
+
+/** 该用户是否还有余量（同时受用户上限和全局上限约束） */
+function hasRoom(userId: number): boolean {
+  return inFlightOf(userId) < MAX_CONCURRENT_AI && aiInFlight < MAX_CONCURRENT_AI_GLOBAL;
+}
+
+/** 唤醒队首中「自己的桶与全局都还有余量」的第一个等待者 */
+function wakeNextWaiter(): void {
+  const idx = aiWaiters.findIndex((w) => hasRoom(w.userId));
+  if (idx < 0) return;
+  const [next] = aiWaiters.splice(idx, 1);
+  clearTimeout(next.timer);
+  next.resolve();
+}
+
+/**
+ * 占用一个 AI 并发槽。
+ * @param timeoutMs 排队上限，超时抛 AiQueueTimeoutError（首位参数保持旧签名，老调用不受影响）
+ * @param userId 按用户分桶的键；不传算匿名桶
+ */
+export async function acquireAiSlot(
+  timeoutMs: number = AI_QUEUE_TIMEOUT_MS,
+  userId?: number | null
+): Promise<void> {
+  const bucket = bucketOf(userId);
+  // 用循环而不是单次判断：被唤醒时可能刚好被同桶的其他人抢先，重新排队即可
+  while (!hasRoom(bucket)) {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
-        const i = aiWaiters.findIndex((w) => w.timer === timer);
-        if (i >= 0) aiWaiters.splice(i, 1);
+        const k = aiWaiters.findIndex((w) => w.timer === timer);
+        if (k >= 0) aiWaiters.splice(k, 1);
         reject(new AiQueueTimeoutError());
       }, timeoutMs);
-      aiWaiters.push({ resolve, reject, timer });
+      aiWaiters.push({ userId: bucket, resolve, reject, timer });
     });
   }
   aiInFlight++;
+  aiInFlightByUser.set(bucket, inFlightOf(bucket) + 1);
 }
 
-export function releaseAiSlot(): void {
+/** 释放一个 AI 并发槽（必须传与 acquireAiSlot 相同的 userId，否则桶会对不上） */
+export function releaseAiSlot(userId?: number | null): void {
+  const bucket = bucketOf(userId);
   aiInFlight = Math.max(0, aiInFlight - 1);
-  const next = aiWaiters.shift();
-  if (next) {
-    clearTimeout(next.timer);
-    next.resolve();
-  }
+  const left = inFlightOf(bucket) - 1;
+  if (left > 0) aiInFlightByUser.set(bucket, left);
+  else aiInFlightByUser.delete(bucket);
+  wakeNextWaiter();
 }
 
-/** 把一次 AI 调用放进并发闸门 */
-export async function withAiSlot<T>(fn: () => Promise<T>): Promise<T> {
-  await acquireAiSlot();
+/** 把一次 AI 调用放进并发闸门（fn 里若还要拿 userId，注意别把桶传错） */
+export async function withAiSlot<T>(fn: () => Promise<T>, userId?: number | null): Promise<T> {
+  await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
   try {
     return await fn();
   } finally {
-    releaseAiSlot();
+    releaseAiSlot(userId);
   }
 }
 
-/** 当前正在跑的 AI 请求数（仅供测试断言） */
-export function getAiInFlightCount(): number {
-  return aiInFlight;
+/** 按用户分桶的闸门包装：AI 入口一律用这个，别用无 userId 的 withAiSlot */
+export async function withUserAiSlot<T>(userId: number, fn: () => Promise<T>): Promise<T> {
+  return withAiSlot(fn, userId);
+}
+
+/** 当前正在跑的 AI 请求数：不传 userId 返回全站总数（仅供测试断言） */
+export function getAiInFlightCount(userId?: number | null): number {
+  return userId === undefined || userId === null ? aiInFlight : inFlightOf(bucketOf(userId));
 }
 
 /** 重置闸门计数（仅供测试） */
 export function resetAiGate(): void {
   aiInFlight = 0;
+  aiInFlightByUser.clear();
   for (const w of aiWaiters) clearTimeout(w.timer);
   aiWaiters.length = 0;
 }
@@ -216,7 +275,7 @@ export async function generateOnce(
   correction?: string,
   endpoint = 'followup_once'
 ): Promise<string> {
-  return withAiSlot(async () => {
+  return withUserAiSlot(userId, async () => {
     const config = getAiConfig(userId);
     const ai = getClient(userId, config);
     const start = Date.now();
@@ -261,7 +320,7 @@ export async function* streamOnce(
   correction?: string,
   endpoint = 'followup_stream'
 ): AsyncGenerator<string> {
-  await acquireAiSlot();
+  await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
   const config = getAiConfig(userId);
   const ai = getClient(userId, config);
   const start = Date.now();
@@ -308,7 +367,7 @@ export async function* streamOnce(
     throw error;
   } finally {
     watchdog.done();
-    releaseAiSlot();
+    releaseAiSlot(userId);
   }
 }
 
@@ -351,7 +410,7 @@ export async function generateChatOnce(
   messages: ChatMessage[],
   opts: ChatOptions = {}
 ): Promise<string> {
-  return withAiSlot(async () => {
+  return withUserAiSlot(userId, async () => {
     const ai = getSharedClient(userId);
     const response = await ai.chat.completions.create(buildChatRequest(userId, messages, opts, false));
     return (response.choices[0].message.content || '').trim();
@@ -364,7 +423,7 @@ export async function* streamChat(
   messages: ChatMessage[],
   opts: ChatOptions = {}
 ): AsyncGenerator<string> {
-  await acquireAiSlot();
+  await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
   const watchdog = startStreamWatchdog();
   try {
     const ai = getSharedClient(userId);
@@ -381,7 +440,7 @@ export async function* streamChat(
     }
   } finally {
     watchdog.done();
-    releaseAiSlot();
+    releaseAiSlot(userId);
   }
 }
 

@@ -148,7 +148,6 @@ export default function StudentProfile() {
         if (!cancelled) setData(d);
       })
       .catch((e) => {
-        console.error(e);
         if (!cancelled) toast.error('加载学生档案失败：' + (e?.message || '未知错误'));
       })
       .finally(() => {
