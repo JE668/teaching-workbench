@@ -60,7 +60,7 @@ function CourseLinkField({ value, onChange }: { value: string; onChange: (v: str
 
   useEffect(() => {
     api
-      .get('/catalog/courses?limit=5000')
+      .get('/catalog/courses')
       .then((r: any) => setCourses(r?.courses || []))
       .catch(() => {
         /* 没有目录课时这一栏就留空，不影响填评课 */

@@ -28,6 +28,11 @@ const statusTone: Record<string, 'neutral' | 'success' | 'warning'> = {
 export default function Observations() {
   const [items, setItems] = useState<Observation[]>([]);
   const [loading, setLoading] = useState(true);
+  // 分页：后端默认每页 20 条，避免一次把几千条听评课全塞进内存和 DOM。
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [lessonTypeFilter, setLessonTypeFilter] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Observation | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -37,7 +42,8 @@ export default function Observations() {
   const toast = useToast();
 
   useEffect(() => {
-    load(lessonTypeFilter || undefined);
+    // 切筛选等于换数据集，必须回到第 1 页
+    load(lessonTypeFilter || undefined, 1, false);
   }, [lessonTypeFilter]);
 
   useEffect(() => {
@@ -47,17 +53,27 @@ export default function Observations() {
   // 请求序号：切筛选时旧响应可能后到，序号不匹配就丢弃（防列表回显旧筛选结果）
   const loadSeq = useRef(0);
 
-  const load = async (lessonType?: string) => {
+  const load = async (lessonType?: string, targetPage = 1, append = false) => {
     const seq = ++loadSeq.current;
+    if (append) setLoadingMore(true);
     try {
-      const qs = lessonType ? '?lessonType=' + encodeURIComponent(lessonType) : '';
-      const res = await api.get('/observations' + qs);
+      const params = new URLSearchParams();
+      if (lessonType) params.set('lessonType', lessonType);
+      params.set('page', String(targetPage));
+      const res = await api.get('/observations?' + params.toString());
       if (seq !== loadSeq.current) return;
-      setItems(res.observations || []);
+      const list: Observation[] = res.observations || [];
+      setItems((prev) => (append ? prev.concat(list) : list));
+      setPage(targetPage);
+      setTotal(Number(res.pagination?.total ?? list.length));
+      setTotalPages(Math.max(1, Number(res.pagination?.totalPages ?? 1)));
     } catch (err: any) {
       toast.error('加载听评课失败：' + err.message);
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      if (seq === loadSeq.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
       refreshReplyMetrics();
     }
   };
@@ -75,9 +91,16 @@ export default function Observations() {
     setDeleting(true);
     try {
       await api.delete('/observations/' + deleteTarget.id);
-      setItems((prev) => prev.filter((o) => o.id !== deleteTarget.id));
+      const rest = items.filter((o) => o.id !== deleteTarget.id);
+      setItems(rest);
+      setTotal((prev) => Math.max(0, prev - 1));
       toast.success('已删除该听评课记录');
       setDeleteTarget(null);
+      // 删掉的是当页最后一条时，回到上一页重拉，避免停在空页
+      if (rest.length === 0 && page > 1) {
+        setLoading(true);
+        void load(lessonTypeFilter || undefined, page - 1, false);
+      }
     } catch (err: any) {
       toast.error('删除失败：' + err.message);
     } finally {
@@ -218,6 +241,18 @@ export default function Observations() {
                     </td>
                   </tr>
                 ))}
+                {page < totalPages ? (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-4 text-center">
+                      <Button size="sm" variant="outline" loading={loadingMore} onClick={() => load(lessonTypeFilter || undefined, page + 1, true)}>
+                        加载更多
+                      </Button>
+                      <p className="mt-2 text-xs text-slate-400">
+                        已显示 {items.length} / {total} 条
+                      </p>
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>

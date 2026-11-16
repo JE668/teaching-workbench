@@ -682,13 +682,16 @@ router.post('/:id/exams', (req: AuthenticatedRequest, res) => {
         .prepare('SELECT COALESCE(MAX(sort), 0) AS m FROM report_items WHERE report_id = ?')
         .get(id) as { m: number } | undefined;
       let base = Number(maxSort?.m || 0);
+      // prepare 必须在循环外：better-sqlite3 的 prepare 每次都要解析 SQL 并生成
+      // 语句对象，放在循环里等于「一行一次编译」，几百行就是几百次无谓开销。
+      const insertStmt = db.prepare(
+        `INSERT INTO report_items (user_id, report_id, kind, content, scheduled_at, sort)
+         VALUES (?, ?, 'exam', ?, ?, ?)`
+      );
       db.transaction(() => {
         for (const s of suggestions) {
           base += 1;
-          db.prepare(
-            `INSERT INTO report_items (user_id, report_id, kind, content, scheduled_at, sort)
-             VALUES (?, ?, 'exam', ?, ?, ?)`
-          ).run(userId, id, s.content, s.date, base);
+          insertStmt.run(userId, id, s.content, s.date, base);
           inserted++;
         }
       })();
@@ -724,8 +727,11 @@ router.post('/:id/items/move', (req: AuthenticatedRequest, res) => {
 
       const a = items[idx];
       const b = items[swap];
-      db.prepare('UPDATE report_items SET sort = ?, updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ?').run(b.sort, a.id);
-      db.prepare('UPDATE report_items SET sort = ?, updated_at = datetime(\'now\', \'+8 hours\') WHERE id = ?').run(a.sort, b.id);
+      const updateStmt = db.prepare(
+        "UPDATE report_items SET sort = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+      );
+      updateStmt.run(b.sort, a.id);
+      updateStmt.run(a.sort, b.id);
       return { items: null, moved: true };
     })();
 
@@ -863,9 +869,13 @@ router.delete('/:id', (req: AuthenticatedRequest, res) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的报告 id' });
 
+    // 同上：语句在事务里只用到一次，但先 prepare 出来语义更清楚，
+    // 也避免在事务回调里重新编译（事务内做任何额外工作都会拉长持锁时间）。
+    const deleteItems = db.prepare('DELETE FROM report_items WHERE report_id = ? AND user_id = ?');
+    const deleteReport = db.prepare('DELETE FROM monthly_reports WHERE id = ? AND user_id = ?');
     const removed = db.transaction(() => {
-      const items = db.prepare('DELETE FROM report_items WHERE report_id = ? AND user_id = ?').run(id, userId).changes;
-      const reports = db.prepare('DELETE FROM monthly_reports WHERE id = ? AND user_id = ?').run(id, userId).changes;
+      const items = deleteItems.run(id, userId).changes;
+      const reports = deleteReport.run(id, userId).changes;
       return { reports, items };
     })();
     res.json({ deleted: removed.reports, itemsDeleted: removed.items });

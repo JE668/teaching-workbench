@@ -563,6 +563,12 @@ export async function initDatabase() {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_user_name ON teachers(user_id, name)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_observations_user ON observations(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_observations_date ON observations(observed_at DESC)');
+  // 列表主路径：WHERE user_id = ? [AND observed_at 范围] ORDER BY observed_at DESC, id DESC
+  // 只有 (user_id verbose) 单列索引时，排序要临时 B 树；带上 observed_at desc + id desc
+  // 后过滤与排序都能走索引，用户数据多了不会越翻越慢。
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_observations_user_date_id ON observations(user_id, observed_at DESC, id DESC)'
+  );
   db.exec('CREATE INDEX IF NOT EXISTS idx_catalog_imports_user ON catalog_imports(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_catalog_imports_sha ON catalog_imports(user_id, file_sha256)');
   // 目录 #40 后全局共享，courseFilter 不带 user_id：旧的 user_id 打头索引全是死索引
