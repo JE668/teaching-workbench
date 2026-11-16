@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { getAiConfig, getConfigVersion, AiConfig } from '../../config/settings.js';
+import { assertSafeOutboundUrlSync } from '../../utils/outboundUrl.js';
 
 // ============ SenseNova 客户端（OpenAI 兼容） ============
 // 配置可在前端设置页修改，因此客户端要能按版本号重建，
@@ -14,6 +15,10 @@ export function getClient(userId: number, config: AiConfig): OpenAI {
       const keyName = config.provider === 'gemini-proxy' ? 'GEMINI_PROXY_API_KEY' : 'SENSENOVA_API_KEY';
       throw new Error(`未配置 ${keyName}，请在「设置」页或 .env 中填写`);
     }
+    // 存量配置兜底：设置接口现在会校验，但库里可能还有修复前写入的地址
+    // （localhost、内网 IP、云元数据）。构造客户端前同步再核一次字面量。
+    if (config.baseUrl) assertSafeOutboundUrlSync(config.baseUrl);
+
     // gemini-proxy 层已实现重试/降级，这里关闭 SDK 重试避免双重重试导致延迟叠加
     const sdkRetries = config.provider === 'gemini-proxy' ? 0 : 1;
     const entry = {

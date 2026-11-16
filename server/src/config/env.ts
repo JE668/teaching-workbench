@@ -121,7 +121,10 @@ export const env = {
   AI_STREAM_IDLE_TIMEOUT_MS: parseInt(process.env.AI_STREAM_IDLE_TIMEOUT_MS || '60000', 10),
   DEFAULT_ADMIN_USER: process.env.DEFAULT_ADMIN_USER || 'admin',
   DEFAULT_ADMIN_PASS,
-  CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000',
+  // 默认留空：标准部署下前端 nginx 把 /api 反代到后端，浏览器看到的是同源请求，
+  // 不需要任何 CORS 头。默认填 localhost 会让人误以为"这些都放行"，实际只会让
+  // 分域部署时忘了配置而白查半天。需要跨域时显式写逗号分隔的来源白名单。
+  CORS_ORIGINS: process.env.CORS_ORIGINS || '',
   UPLOAD_DIR: path.resolve(DATA_DIR, 'uploads'),
   DATA_DIR,
   // Tesseract OCR 语言数据目录（CI 中需下载 chi_sim.traineddata、eng.traineddata）

@@ -9,6 +9,7 @@ import { setMediaCookie, clearMediaCookie } from '../middleware/mediaAuth.js';
 import { mapUser } from '../utils/mappers.js';
 import { validateBody } from '../utils/validation.js';
 import { registerSchema, loginSchema, changePasswordSchema } from '../utils/schemas.js';
+import { readPreferences, normalizePreferences, savePreferences } from '../services/preferences.js';
 
 /** users 表完整行结构 */
 interface UserRow {
@@ -61,7 +62,10 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req, 
     }
 
     // 创建用户
-    const hashedPassword = bcrypt.hashSync(password, 10);
+    // bcrypt 是刻意设计成慢的（cost=10 约几十毫秒）。用 *Sync 会把这几十毫秒
+    // 完全钉在事件循环上：注册、登录、改密期间，其它用户的请求全部排队。
+    // 一律走异步版本，把 CPU 让回 libuv 线程池。
+    const hashedPassword = await bcrypt.hash(password, 10);
     const result = db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username, hashedPassword);
 
     const userId = result.lastInsertRowid;
@@ -93,8 +97,8 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req, res) =
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
-    // 验证密码
-    if (!bcrypt.compareSync(password, user.password)) {
+    // 验证密码（异步，理由同上）
+    if (!(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ error: '用户名或密码错误' });
     }
 
@@ -115,7 +119,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req, res) =
  * 修改密码。
  * 必须校验当前密码 —— 否则 token 泄露后可直接改密码夺取账号。
  */
-router.put('/password', authMiddleware, validateBody(changePasswordSchema), (req: any, res) => {
+router.put('/password', authMiddleware, validateBody(changePasswordSchema), async (req: any, res) => {
   try {
     const { currentPassword, newPassword } = req.body || {};
 
@@ -132,14 +136,12 @@ router.put('/password', authMiddleware, validateBody(changePasswordSchema), (req
     const user = db.prepare('SELECT id, password FROM users WHERE id = ?').get(req.userId) as { id: number; password: string } | undefined;
     if (!user) return res.status(404).json({ error: '用户不存在' });
 
-    if (!bcrypt.compareSync(String(currentPassword), user.password)) {
+    if (!(await bcrypt.compare(String(currentPassword), user.password))) {
       return res.status(401).json({ error: '当前密码不正确' });
     }
 
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(
-      bcrypt.hashSync(String(newPassword), 10),
-      user.id
-    );
+    const hashedPassword = await bcrypt.hash(String(newPassword), 10);
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, user.id);
 
     // 改密即吊销：记录改密时刻（秒），authMiddleware 会拒签发时间早于它的令牌。
     // 当前请求自带的令牌也是旧的 —— 前端收到 401 后统一走重新登录。
@@ -156,39 +158,6 @@ router.put('/password', authMiddleware, validateBody(changePasswordSchema), (req
   }
 });
 
-/** 可同步的用户偏好（手机与电脑保持一致） */
-const DEFAULT_PREFERENCES = {
-  /** 快捷短语模式：mixed = 历史 + 内置通用词；history_only = 只用我的历史 */
-  phraseMode: 'mixed' as 'mixed' | 'history_only',
-  /** 工作台「待回访」的默认天数 */
-  pendingDays: 7,
-  /** 听评课 Word 里的评课人签名（未填时回落到登录用户名） */
-  signature: '' as string,
-  /** 导航序列键（g f 等）。默认关闭：老师常在输入框打字，字母序列容易误跳页 */
-  navShortcutsEnabled: false as boolean,
-};
-
-/** 签名最多 20 字：这是要落进正式报送表的，长文本没有意义 */
-const SIGNATURE_MAX = 20;
-
-function readPreferences(userId: number): typeof DEFAULT_PREFERENCES {
-  const row = db.prepare('SELECT preferences FROM users WHERE id = ?').get(userId) as { preferences: string | null } | undefined;
-  let saved: any = {};
-  try {
-    saved = row?.preferences ? JSON.parse(row.preferences) : {};
-  } catch {
-    saved = {}; // 脏数据按默认处理
-  }
-
-  return {
-    phraseMode: saved.phraseMode === 'history_only' ? 'history_only' : 'mixed',
-    pendingDays: Math.min(365, Math.max(1, parseInt(saved.pendingDays, 10) || 7)),
-    signature: typeof saved.signature === 'string' ? saved.signature.slice(0, SIGNATURE_MAX) : '',
-    navShortcutsEnabled: saved.navShortcutsEnabled === true,
-  };
-}
-
-export { readPreferences };
 
 router.get('/preferences', authMiddleware, (req: any, res) => {
   try {
@@ -201,34 +170,8 @@ router.get('/preferences', authMiddleware, (req: any, res) => {
 router.put('/preferences', authMiddleware, (req: any, res) => {
   try {
     const userId = req.userId;
-    const current = readPreferences(userId);
-    const incoming = req.body || {};
-
-    // 只接受已知字段，避免把任意内容写进去
-    const next = {
-      phraseMode:
-        incoming.phraseMode === 'history_only'
-          ? 'history_only'
-          : incoming.phraseMode === 'mixed'
-          ? 'mixed'
-          : current.phraseMode,
-      // 非正数/非数字一律视为非法，回落到默认 7（规则简单可预期）
-      pendingDays: (() => {
-        if (incoming.pendingDays === undefined) return current.pendingDays;
-        const parsed = parseInt(incoming.pendingDays, 10);
-        if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PREFERENCES.pendingDays;
-        return Math.min(365, parsed);
-      })(),
-      // 空字符串合法（表示"先不填，用登录名"）
-      signature: typeof incoming.signature === 'string'
-        ? incoming.signature.trim().slice(0, SIGNATURE_MAX)
-        : current.signature,
-      navShortcutsEnabled: incoming.navShortcutsEnabled === undefined
-        ? current.navShortcutsEnabled
-        : incoming.navShortcutsEnabled === true,
-    };
-
-    db.prepare('UPDATE users SET preferences = ? WHERE id = ?').run(JSON.stringify(next), userId);
+    const next = normalizePreferences(req.body, readPreferences(userId));
+    savePreferences(userId, next);
     res.json({ preferences: next });
   } catch (error: any) {
     res.status(500).json({ error: '保存偏好失败', message: error.message });

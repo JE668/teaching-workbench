@@ -7,6 +7,7 @@ import { db, initDatabase } from './config/database.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requireMediaAuth } from './middleware/mediaAuth.js';
 import { errorHandler, notFound } from './middleware/error.js';
+import { securityHeaders } from './middleware/securityHeaders.js';
 import { log } from './utils/logger.js';
 import { observeHttpRequest, renderPrometheus } from './utils/metrics.js';
 import authRoutes from './routes/auth.js';
@@ -36,6 +37,12 @@ export async function createApp() {
   await initDatabase();
 
   const app = express();
+
+  // 不暴露服务端框架：这是一条零成本的指纹消除，攻击者少一个判断依据。
+  app.disable('x-powered-by');
+
+  // 安全响应头必须在所有路由之前挂载，静态图片与 404 也要带上。
+  app.use(securityHeaders);
 
   // ========== CORS ==========
   // 说明：标准部署下前端 nginx 会把 /api 反代到后端，浏览器看到的是同源请求，

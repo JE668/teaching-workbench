@@ -20,8 +20,9 @@ RUN rm -rf /etc/nginx/conf.d/default.conf
 # 复制构建产物
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# 复制 nginx 配置
+# 复制 nginx 配置（与安全头 snippet 一起，后者被 nginx.conf include）
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/security-headers.conf
 
 # 注意：nginx 官方镜像的 master 进程仍以 root 启动（需要绑 80 端口），
 # 仅 worker 是非 root —— 并不是完全非 root 运行。要彻底非 root 需换 nginx-unprivileged。

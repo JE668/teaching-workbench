@@ -1,4 +1,4 @@
-import { getSharedClient, withAiSlot, describeAiError } from './ai/index.js';
+import { getSharedClient, withUserAiSlot, describeAiError } from './ai/index.js';
 import { getAiConfig } from '../config/settings.js';
 import { log } from '../utils/logger.js';
 import {
@@ -44,7 +44,7 @@ type StarGenerator = (userId: number, prompt: string) => Promise<string>;
 let generatorImpl: StarGenerator = callModel;
 
 async function callModel(userId: number, prompt: string): Promise<string> {
-  return withAiSlot(async () => {
+  return withUserAiSlot(userId, async () => {
     const ai = getSharedClient(userId);
     const config = getAiConfig(userId);
     const body: any = {

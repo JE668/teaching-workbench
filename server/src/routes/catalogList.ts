@@ -105,12 +105,17 @@ function courseFilter(req: AuthenticatedRequest) {
   return { clause: where.join(' AND '), params };
 }
 
+/** 列表默认返回条数：一次拿完整目录（内置两套全量约 3.5k 条，够用） */
+const DEFAULT_COURSE_LIMIT = 5000;
+/** 列表硬上限：拦住超大响应，也防止调用方拿超大 limit 单次拉库 */
+const MAX_COURSE_LIMIT = 5000;
+
 router.get('/courses', (req: AuthenticatedRequest, res) => {
   try {
     const { clause, params } = courseFilter(req);
     // 默认一把全给：目录页的筛选 / 排序 / 分组都在前端做（老师要看的是全貌），
-    // 拆成真正的分页要连带前端整套重写，收益配不上风险。上限 20000 只是兜底。
-    const limit = Math.min(Math.max(Number(req.query.limit) || 5000, 1), 20000);
+    // 上限 5000 已经覆盖内置目录全量（约 3.5k 条），再大就是拉库了。
+    const limit = Math.min(Math.max(Number(req.query.limit) || DEFAULT_COURSE_LIMIT, 1), MAX_COURSE_LIMIT);
     const sql = `SELECT * FROM course_catalog WHERE ${clause} ${COURSE_ORDER} LIMIT ?`;
     const countSql = `SELECT COUNT(*) AS n FROM course_catalog WHERE ${clause}`;
 
