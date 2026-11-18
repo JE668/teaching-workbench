@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'crypto';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -6,7 +7,7 @@ import { env } from './config/env.js';
 import { db, initDatabase } from './config/database.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requireMediaAuth } from './middleware/mediaAuth.js';
-import { errorHandler, notFound } from './middleware/error.js';
+import { errorHandler, notFound, sanitizeErrorMessages } from './middleware/error.js';
 import { securityHeaders } from './middleware/securityHeaders.js';
 import { log } from './utils/logger.js';
 import { observeHttpRequest, renderPrometheus } from './utils/metrics.js';
@@ -25,6 +26,9 @@ import catalogRoutes from './routes/catalog.js';
 import reportRoutes from './routes/reports.js';
 import reportAiRoutes from './routes/reports.ai.js';
 import aiMetricsRoutes from './routes/aiMetrics.js';
+import biRoutes from './bi/biRoutes.js';
+import { initBiDb } from './bi/migrate.js';
+import { seedFileRegistry } from './bi/fileRegistry.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -36,10 +40,19 @@ export async function createApp() {
   // 不 await 的话首批请求可能落在迁移/索引重建/RENAME 完成之前，撞进半初始化的库。
   await initDatabase();
 
+  // BI 报表模块（独立 bi.db）：初始化表结构 + 同步文件类型注册表
+  initBiDb();
+  seedFileRegistry();
+
   const app = express();
 
   // 不暴露服务端框架：这是一条零成本的指纹消除，攻击者少一个判断依据。
   app.disable('x-powered-by');
+
+  // S12：反代下 req.ip 默认取 socket 地址（全是 127.0.0.1）。
+  // 设 trust proxy = 1 跳（nginx/Lucky 一层），req.ip 会取 X-Forwarded-For 链的最后一跳。
+  // 与 rateLimit.clientIp() 的逻辑对齐，但更保守——只信单层代理（防伪造 XFF）。
+  app.set('trust proxy', 1);
 
   // 安全响应头必须在所有路由之前挂载，静态图片与 404 也要带上。
   app.use(securityHeaders);
@@ -112,6 +125,9 @@ export async function createApp() {
   // JSON 里只存图片【路径数组】与文本字段。此前全局 50mb 只是给内存放大攻击
   // （单个 JSON 请求即可占住 50MB 堆内存）留门，收窄到业务上限之上即可。
   app.use(express.json({ limit: '5mb' }));
+
+  // S10：拦截 500 响应里的 error.message（生产环境），防止 SQLite/FS 错误回显到前端
+  app.use(sanitizeErrorMessages);
 
   // ========== 图片服务（需鉴权） ==========
   // 不能直接用 express.static：那样任何拿到 URL 的人都能访问，
@@ -187,9 +203,15 @@ export async function createApp() {
       return res.status(404).end();
     }
     if (token) {
-      const given = String(req.query.token || '') ||
-        (/^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1] ?? '');
-      if (given !== token) return res.status(404).end();
+      // 只接受 Authorization: Bearer —— URL query token 会落进 nginx access log、
+      // 浏览器历史、Referer 头，等于把长期密钥撒在多处。
+      const given = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || ''))?.[1]?.trim() ?? '';
+      // 定长比较，避免时序侧信道逐字节爆破；长度不等直接拒绝（不进 timingSafeEqual）
+      const a = Buffer.from(given);
+      const b = Buffer.from(token);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return res.status(404).end();
+      }
     }
     res.type('text/plain; version=0.0.4; charset=utf-8');
     res.send(renderPrometheus(process.env.BUILD_SHA || 'dev'));
@@ -210,7 +232,22 @@ export async function createApp() {
   app.use('/api/ai-metrics', authMiddleware, aiMetricsRoutes);
   app.use('/api/draft', authMiddleware, draftRoutes);
   app.use('/api/draft', authMiddleware, draftHistoryRoutes);
+  // W13：给前端离线检测用。/health 挂在根路径且返回一堆字段，前端只需要一个
+  // 极轻的端点判定连通性；/api 前缀会被 Vite proxy 转给后端，避免 dev 模式下
+  // 心跳打到 Vite 自己（永远 200，离线检测失效）。
+  // 必须注册在 app.use('/api', authMiddleware, ...) 之前，否则 authMiddleware
+  // 会先拦下 /api/health 返回 401。
+  // 故意不挂 authMiddleware：未登录时也需要探测连通性。
+  app.get('/api/health', (req, res) => {
+    res.status(200).end();
+  });
+
   app.use('/api', authMiddleware, uploadRoutes);
+
+  // ========== BI 报表模块（独立 bi.db）==========
+  // 第一期：数据底座。上传 7 类 xlsx 报表，按 batch 落地到 bi.db。
+  // 指标计算、看板在第二/三期实现。
+  app.use('/api/bi', authMiddleware, biRoutes);
 
   // ========== 错误处理 ==========
   app.use(notFound);

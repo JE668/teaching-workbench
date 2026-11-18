@@ -429,7 +429,17 @@ router.put('/', async (req: any, res) => {
       // 记录旧值用于审计
       const oldValue = readRaw(key, req.userId!) || null;
       if (oldValue !== value) {
-        auditEntries.push([req.userId!, key, oldValue, value]);
+        // 密钥绝不能明文入库：审计日志的可见面比应用 DB 更广（备份/日志/排错 SQL dump），
+        // 任何拿到 settings_audit 的路径都能直接读出历史 Key。改为只留掩码 + changed 标记。
+        if (SECRET_KEYS.includes(key)) {
+          auditEntries.push([
+            req.userId!, key,
+            maskSecret(oldValue || ''),
+            value === '' ? '（已清空）' : maskSecret(value),
+          ]);
+        } else {
+          auditEntries.push([req.userId!, key, oldValue, value]);
+        }
       }
 
       patch[key] = value;

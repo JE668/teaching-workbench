@@ -313,12 +313,15 @@ export async function generateOnce(
   });
 }
 
-/** 单次调用（流式），逐块产出文本增量 */
+/** 单次调用（流式），逐块产出文本增量。
+ *  @param externalSignal 路由层在客户端断开时传进来的 abort 信号；
+ *  与内部 watchdog 信号合并后下发给上游，确保客户端断开能立即停止上游请求（释放并发槽、停止计费）。 */
 export async function* streamOnce(
   userId: number,
   params: FollowUpGenerateParams,
   correction?: string,
-  endpoint = 'followup_stream'
+  endpoint = 'followup_stream',
+  externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
   await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
   const config = getAiConfig(userId);
@@ -327,10 +330,14 @@ export async function* streamOnce(
   let fullContent = '';
   let recorded = false;
   const watchdog = startStreamWatchdog();
+  // 合并内外信号：任一触发即中止。Node 20+ 支持 AbortSignal.any。
+  const mergedSignal = externalSignal
+    ? AbortSignal.any([watchdog.signal, externalSignal])
+    : watchdog.signal;
   try {
     const stream = (await ai.chat.completions.create(
       await buildRequest(config, userId, params, correction, true),
-      { signal: watchdog.signal }
+      { signal: mergedSignal }
     )) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
       watchdog.kick();
@@ -417,19 +424,24 @@ export async function generateChatOnce(
   });
 }
 
-/** 通用单次调用（流式），逐块产出文本增量。占位到流读完，与 streamOnce 同一套口径 */
+/** 通用单次调用（流式），逐块产出文本增量。占位到流读完，与 streamOnce 同一套口径。
+ *  @param externalSignal 路由层在客户端断开时传进来的 abort 信号（与 streamOnce 同口径）。 */
 export async function* streamChat(
   userId: number,
   messages: ChatMessage[],
-  opts: ChatOptions = {}
+  opts: ChatOptions = {},
+  externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
   await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
   const watchdog = startStreamWatchdog();
+  const mergedSignal = externalSignal
+    ? AbortSignal.any([watchdog.signal, externalSignal])
+    : watchdog.signal;
   try {
     const ai = getSharedClient(userId);
     const stream = (await ai.chat.completions.create(
       buildChatRequest(userId, messages, opts, true),
-      { signal: watchdog.signal }
+      { signal: mergedSignal }
     )) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
       watchdog.kick();
@@ -488,11 +500,15 @@ export function runFollowUpGeneration(userId: number, params: FollowUpGeneratePa
   return generatorImpl(userId, params);
 }
 
-/** 路由统一入口：流式 */
+/** 路由统一入口：流式
+ *  @param externalSignal 客户端断开时由路由层传入的 abort 信号，透传给底层 streamOnce。 */
 export function runStreamGeneration(
   userId: number,
-  params: FollowUpGenerateParams
+  params: FollowUpGenerateParams,
+  externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
+  // 测试注入点保留旧签名；生产实现透传信号
+  if (streamerImpl === streamOnce) return streamOnce(userId, params, undefined, 'followup_stream', externalSignal);
   return streamerImpl(userId, params);
 }
 
@@ -541,12 +557,16 @@ export function runChatOnce(
   return chatOnceImpl(userId, messages, opts);
 }
 
-/** 路由统一入口：通用流式 */
+/** 路由统一入口：通用流式。
+ *  @param externalSignal 客户端断开时由路由层传入的 abort 信号，透传给底层 streamChat。 */
 export function runChatStream(
   userId: number,
   messages: ChatMessage[],
-  opts: ChatOptions = {}
+  opts: ChatOptions = {},
+  externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
+  // 生产实现透传信号；测试注入点保留旧签名
+  if (chatStreamImpl === streamChat) return streamChat(userId, messages, opts, externalSignal);
   return chatStreamImpl(userId, messages, opts);
 }
 

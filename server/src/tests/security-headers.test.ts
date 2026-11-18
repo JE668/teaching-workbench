@@ -32,6 +32,13 @@ test('安全响应头：接口响应禁止缓存并下发严格 CSP（401 分支
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
 });
 
+test('W13 前端离线检测：/api/health 不挂鉴权，未登录也返回 200 空体', async () => {
+  const res = await req('GET', '/api/health');
+  assert.equal(res.status, 200);
+  // 空体：前端只判断 res.ok，不解析 JSON
+  assert.equal(res.body ?? '', '');
+});
+
 test('安全响应头：仅当反代声明 https 时下发 HSTS', async () => {
   const res = await req('GET', '/health', { headers: { 'X-Forwarded-Proto': 'https' } });
   assert.equal(

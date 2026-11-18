@@ -17,6 +17,7 @@ import { normalizeCourseType, normalizeSessionCount, normalizeFollowUpModule, no
 import { log } from '../utils/logger.js';
 import { validateBody } from '../utils/validation.js';
 import { openSse } from '../utils/sse.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 import { followUpGenerateSchema } from '../utils/schemas.js';
 
 /**
@@ -111,7 +112,9 @@ function validateGenerateInput(body: any): string | null {
   return null;
 }
 
-router.post('/generate', validateBody(followUpGenerateSchema), async (req: AuthenticatedRequest, res: Response) => {
+// 包装 asyncHandler：buildGenerateParams 若抛错（数据异常/权限/IO），不包会变
+// unhandledRejection —— Express 4 不会自动捕获，进程活但请求永不响应。
+router.post('/generate', validateBody(followUpGenerateSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const error = validateGenerateInput(req.body);
   if (error) return res.status(400).json({ error });
 
@@ -126,14 +129,16 @@ router.post('/generate', validateBody(followUpGenerateSchema), async (req: Authe
     log.error({ httpStatus, error: message }, 'AI 生成失败');
     res.status(httpStatus).json({ error: message });
   }
-});
+}));
 
 /**
  * AI 生成（SSE 流式）。
  * 事件：delta -> regenerating? -> done | error
  * 首轮流式输出，若字数不达标则自动重试一次并以最终版本收尾。
  */
-router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req: AuthenticatedRequest, res: Response) => {
+// 包装 asyncHandler：buildGenerateParams 若抛错会变 unhandledRejection；
+// SSE headers 已发出时 asyncHandler 会走 res.destroy() 兜底。
+router.post('/generate/stream', validateBody(followUpGenerateSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const error = validateGenerateInput(req.body);
   if (error) return res.status(400).json({ error });
 
@@ -142,13 +147,18 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
   const sse = openSse(req, res);
   const { send } = sse;
 
+  // 客户端断开时立即中止上游 AI 请求：否则 for-await 只在下一次 chunk 到达才会注意到
+  // sse.isGone()，而上游还在继续计费、并发槽被占满 60s。
+  const abort = new AbortController();
+  res.on('close', () => { if (!res.writableEnded) abort.abort(); });
+
   try {
     let full = '';
     let phase = 'generating';
     // 阶段标记：首次开始生成
     send('phase', { phase, message: '开始生成回访内容...' }, { id: 'phase-generating' });
 
-    for await (const delta of runStreamGeneration(req.userId!, params)) {
+    for await (const delta of runStreamGeneration(req.userId!, params, abort.signal)) {
       if (sse.isGone()) break;
       full += delta;
       send('delta', { text: delta });
@@ -194,8 +204,9 @@ router.post('/generate/stream', validateBody(followUpGenerateSchema), async (req
     log.error({ error: message }, 'AI 流式生成失败');
     send('error', { error: message });
   } finally {
+    abort.abort(); // 兜底：确保上游流已关闭，避免极端路径泄漏并发槽
     sse.end();
   }
-});
+}));
 
 export default router;

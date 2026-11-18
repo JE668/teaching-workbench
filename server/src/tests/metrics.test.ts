@@ -67,7 +67,7 @@ test('/metrics 自身不进直方图', async () => {
   assert.equal((body.match(/path="\/metrics"/g) || []).length, 0);
 });
 
-test('设 METRICS_TOKEN 后：无 token 404、query/Bearer 放行', async () => {
+test('设 METRICS_TOKEN 后：无 token 404、query 被拒、Bearer 放行', async () => {
   process.env.METRICS_TOKEN = 's3cret-metrics';
   try {
     const anon = await fetch(url('/metrics'));
@@ -76,13 +76,21 @@ test('设 METRICS_TOKEN 后：无 token 404、query/Bearer 放行', async () => 
     const wrong = await fetch(url('/metrics?token=nope'));
     assert.equal(wrong.status, 404);
 
+    // S2：query token 已移除（会落进 nginx access log 与浏览器历史）。
+    // 正确 token 通过 query 传也必须 404，强制使用 Authorization: Bearer。
     const viaQuery = await fetch(url('/metrics?token=s3cret-metrics'));
-    assert.equal(viaQuery.status, 200);
+    assert.equal(viaQuery.status, 404, 'query token 已废弃，应返回 404');
 
     const viaBearer = await fetch(url('/metrics'), {
       headers: { Authorization: 'Bearer s3cret-metrics' },
     });
     assert.equal(viaBearer.status, 200);
+
+    // 时序侧信道：长度不等的错误 token 也走常量时间比较路径，依然 404
+    const viaShortBearer = await fetch(url('/metrics'), {
+      headers: { Authorization: 'Bearer x' },
+    });
+    assert.equal(viaShortBearer.status, 404);
   } finally {
     delete process.env.METRICS_TOKEN;
   }

@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { log } from '../utils/logger.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import {
   stagingDirFor,
   discardStagedImage,
@@ -15,6 +16,10 @@ import { saveOcrResults, ocrImage } from '../services/ocr.js';
 import { resolveOwnedUploadRelPath } from '../services/ai/utils.js';
 
 const router = Router();
+
+// 上传是磁盘 + OCR CPU 双密集：未挂限流时配合开放注册可被刷满磁盘（每张 40MB，一秒几十次）。
+// 15 分钟窗口内最多 30 次上传；超出后给前端明确的 Retry-After。
+const uploadLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, message: '上传过于频繁，请稍后再试' });
 
 /**
  * 对一张【按相对路径定位的上传图】做 OCR。
@@ -106,7 +111,7 @@ const upload = multer({
  * 前端用 "/uploads/<relativePath>" 访问，AI 生成也据此定位文件；
  * 保存回访时后端会把暂存图提交到正式归档目录（uploads/<账户名>/）。
  */
-router.post('/upload', (req: AuthenticatedRequest, res) => {
+router.post('/upload', uploadLimiter, (req: AuthenticatedRequest, res) => {
   upload.array('images', 5)(req, res, (err) => {
     if (err) {
       const message =

@@ -15,27 +15,31 @@ import { db } from '../config/database.js';
  */
 
 export const MEDIA_COOKIE = 'tw_media';
-export const MEDIA_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// 缩短到 24h：7 天的图片访问权在用户改密后仍能继续用，等于改密吊销对图片失效。
+// 24h 是可用性折中：<img> 在会话中会自动续期，但被盗 cookie 的存活窗口显著收窄。
+export const MEDIA_TTL_MS = 24 * 60 * 60 * 1000;
 
 function sign(payload: string): string {
   return crypto.createHmac('sha256', env.JWT_SECRET).update(payload).digest('base64url');
 }
 
-/** 生成无状态令牌："<userId>.<expiry>.<hmac>" */
-export function createMediaToken(userId: number): string {
-  const payload = userId + '.' + (Date.now() + MEDIA_TTL_MS);
+/** 生成无状态令牌："<userId>.<expiry>.<tva>.<hmac>"
+ *  tva = token_valid_after（秒级 Unix 时间戳，与 JWT 改密吊销共享同一来源）。
+ *  用户改密时 tva 会前进，旧 media cookie 在下次访问时立即失效 —— 与 JWT 吊销同频。 */
+export function createMediaToken(userId: number, tvaSeconds: number = 0): string {
+  const payload = [userId, Date.now() + MEDIA_TTL_MS, tvaSeconds].join('.');
   return payload + '.' + sign(payload);
 }
 
-/** 校验令牌，返回归属用户；非法/过期返回 null */
+/** 校验令牌，返回归属用户；非法/过期/被改密吊销返回 null */
 export function verifyMediaToken(token: string | undefined | null): { userId: number } | null {
   if (!token) return null;
 
   const parts = token.split('.');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 4) return null;
 
-  const [uidStr, expStr, sig] = parts;
-  const payload = uidStr + '.' + expStr;
+  const [uidStr, expStr, tvaStr, sig] = parts;
+  const payload = uidStr + '.' + expStr + '.' + tvaStr;
 
   // 定长比较，避免时序侧信道
   const provided = Buffer.from(sig);
@@ -48,6 +52,13 @@ export function verifyMediaToken(token: string | undefined | null): { userId: nu
 
   const userId = Number(uidStr);
   if (!Number.isFinite(userId) || userId <= 0) return null;
+
+  // 改密吊销：库里存的 tva 比 cookie 里签发时更新，说明改密后旧 cookie 不再合法。
+  // tva 为 0 表示该账号从未改密（默认值），不触发吊销。
+  const issuedTva = Number(tvaStr);
+  const row = db.prepare('SELECT token_valid_after AS tva FROM users WHERE id = ?').get(userId) as { tva: number } | undefined;
+  const currentTva = row?.tva || 0;
+  if (Number.isFinite(issuedTva) && currentTva > issuedTva) return null;
 
   return { userId };
 }
@@ -65,10 +76,12 @@ export function readCookie(header: string | undefined, name: string): string | u
   return undefined;
 }
 
-/** 下发图片访问 cookie（httpOnly，同源自动携带，无需前端改造） */
+/** 下发图片访问 cookie（httpOnly，同源自动携带，无需前端改造）。
+ *  签发时把当前 token_valid_after 一并写进 payload，改密后旧 cookie 立即失效。 */
 export function setMediaCookie(req: Request, res: Response, userId: number): void {
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  res.cookie(MEDIA_COOKIE, createMediaToken(userId), {
+  const row = db.prepare('SELECT token_valid_after AS tva FROM users WHERE id = ?').get(userId) as { tva: number } | undefined;
+  res.cookie(MEDIA_COOKIE, createMediaToken(userId, row?.tva || 0), {
     httpOnly: true,
     sameSite: 'lax',
     secure,

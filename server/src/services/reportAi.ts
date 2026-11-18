@@ -408,8 +408,9 @@ export function isWordCountOk(n: number, min: number, max: number): boolean {
   return n >= min && n <= max;
 }
 
-/** 流式产出总结 / 规划的正文增量 */
-export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncGenerator<string> {
+/** 流式产出总结 / 规划的正文增量。
+ *  @param externalSignal 客户端断开时由路由层传入的 abort 信号，透传给底层 streamChat。 */
+export async function* streamReportAi(userId: number, p: ReportAiParams, externalSignal?: AbortSignal): AsyncGenerator<string> {
   const endpoint = p.field === 'plan' ? 'report_plan_stream' : 'report_summary_stream';
   const { getAiConfig, countWords } = await import('./ai/index.js');
   const config = getAiConfig(userId);
@@ -417,7 +418,7 @@ export async function* streamReportAi(userId: number, p: ReportAiParams): AsyncG
   let fullContent = '';
   let recorded = false;
   try {
-    for await (const delta of runChatStream(userId, buildReportAiMessages(p), optionsFor(p.field))) {
+    for await (const delta of runChatStream(userId, buildReportAiMessages(p), optionsFor(p.field), externalSignal)) {
       fullContent += delta;
       yield delta;
     }

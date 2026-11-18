@@ -41,6 +41,12 @@ const router = Router();
 
 const BANDS: Band[] = ['高中', '小初'];
 
+// xlsx 本质是 zip；恶意文件（zip 炸弹）能解压出几 GB 的字符串把内存打爆。
+// 文件本身 multer 已限 20MB；这里再加内容侧闸门：单次导入的课程行数与单元格长度。
+// 正常全年目录几千行已足够（内置 seed 3589 条），超限即拒绝。
+const MAX_COURSES_PER_IMPORT = 20000;
+const MAX_CELL_LEN = 2000;
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 
@@ -105,6 +111,21 @@ router.post('/import', (req: AuthenticatedRequest, res) => {
       const buffer = file.buffer;
       const digest = sha256(buffer);
       const parsed = await parseCatalogWorkbook(new Uint8Array(buffer), band as Band, loadWorkbook);
+
+      // S11: 内容侧限制（防 xlsx zip 炸弹）
+      if (parsed.courses.length > MAX_COURSES_PER_IMPORT) {
+        return res.status(413).json({
+          error: `课程行数超过上限（${parsed.courses.length} > ${MAX_COURSES_PER_IMPORT}），请检查文件是否损坏`
+        });
+      }
+      const oversizedCell = parsed.courses.find(c =>
+        [c.content, c.textbook, c.section, c.type].some(v => (v || '').length > MAX_CELL_LEN)
+      );
+      if (oversizedCell) {
+        return res.status(413).json({
+          error: `单元格内容过长（> ${MAX_CELL_LEN} 字符），可能是恶意文件`
+        });
+      }
 
       const preview = parsed.sheets.map((s) => ({
         sheet: s.sheet,

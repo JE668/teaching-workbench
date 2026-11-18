@@ -57,16 +57,44 @@ export async function ocrImage(imagePath: string): Promise<string> {
   }
 }
 
+// OCR 是 CPU 密集型：tesseract 在 worker 线程里跑，但同一进程内多张并发仍会抢占
+// 主线程的 I/O 与内存。这里用 Promise 链做简易信号量，把并发压到 MAX_OCR_CONCURRENCY。
+// 不引入 p-limit：只为一个闸门多加一个运行时依赖不值当。
+const MAX_OCR_CONCURRENCY = Number(process.env.MAX_OCR_CONCURRENCY || 2);
+let ocrInFlight = 0;
+const ocrQueue: Array<() => void> = [];
+
+async function withOcrSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (ocrInFlight >= MAX_OCR_CONCURRENCY) {
+    await new Promise<void>((resolve) => ocrQueue.push(resolve));
+  }
+  ocrInFlight++;
+  try {
+    return await fn();
+  } finally {
+    ocrInFlight--;
+    ocrQueue.shift()?.();
+  }
+}
+
 /**
- * 批量识别多张图片。
+ * 批量识别多张图片（受并发闸门约束）。
  * @param imagePaths 图片绝对路径数组
  * @returns { path: string, text: string }[]，识别失败的 text 为空串
  */
 export async function ocrImages(imagePaths: string[]): Promise<Array<{ path: string; text: string }>> {
   const results = await Promise.all(
-    imagePaths.map(async (p) => ({ path: p, text: await ocrImage(p) }))
+    imagePaths.map(async (p) => ({
+      path: p,
+      text: await withOcrSlot(() => ocrImage(p)),
+    }))
   );
   return results;
+}
+
+/** 供测试断言闸门是否生效 */
+export function getOcrInFlight(): number {
+  return ocrInFlight;
 }
 
 /**

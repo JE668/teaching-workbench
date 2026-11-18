@@ -139,13 +139,18 @@ export function migrateTimestampsUtcToLocal(): void {
   // 判定门槛（skew = 此刻北京时间 − 库里最新时间戳）：
   //   · 库里是北京时间 → 刚写过约 0；闲置一段时间则是一个正的小偏移
   //   · 库里是 UTC      → 约 +8 小时（北京墙钟比 UTC 快 8 小时）
-  // 所以窗口取 [4h, 12h)：明显落后半小时以上才认「存的是 UTC」，避免把
-  // 时区正确的老库误判；超过 12h 说明记录太旧，与「本地库闲置很久」无法区分，宁可不动。
+  // 判定 = 「skew ≥ 4h」且「skew mod 24h 落在 8h ± 1h」。后者处理两类边界：
+  //   · 闲置 > 12h 的 UTC 库：skew 可能是 32h、56h…取模后仍为 8h，照样订正；
+  //   · 闲置很久的北京时间库：skew mod 24h 一般不落在 7–9h 窗口，保持跳过。
+  // 加上「≥4h」下限，避免把刚刚写过的库误判（skew 此时只是几秒到几分钟）。
   const SHIFT_MIN_MS = 4 * 3600 * 1000;
-  const SHIFT_MAX_MS = 12 * 3600 * 1000;
+  const HOUR_MS = 3600 * 1000;
+  const DAY_MS = 24 * HOUR_MS;
+  const skewModDay = skew === null ? 0 : ((skew % DAY_MS) + DAY_MS) % DAY_MS;
+  const inBeijingOffsetWindow = skewModDay >= 7 * HOUR_MS && skewModDay <= 9 * HOUR_MS;
   const shift =
     process.env.MIGRATE_TZ_FORCE === '1' ||
-    (skew !== null && skew >= SHIFT_MIN_MS && skew < SHIFT_MAX_MS);
+    (skew !== null && skew >= SHIFT_MIN_MS && inBeijingOffsetWindow);
 
   if (!shift) {
     db.prepare('INSERT INTO schema_migrations (name, applied_at) VALUES (?, datetime(\'now\', \'+8 hours\'))').run(TZ_FIX_VERSION);
@@ -208,7 +213,10 @@ function migrateSettingsPerUser(): void {
     });
     migrate();
   } catch (err: any) {
-    console.warn('[MIGRATE] settings → settings_user 迁移失败: ' + err.message);
+    // 半迁移态比启动失败更糟：RENAME 后 INSERT 失败会让 hasLegacy 幂等检测永久失效，
+    // 下次启动行为取决于残骸形态。这里 fail fast，让运维看到明确的启动报错。
+    log.error({ err: err.message }, 'settings → settings_user 迁移失败，拒绝启动');
+    throw err;
   }
 }
 
