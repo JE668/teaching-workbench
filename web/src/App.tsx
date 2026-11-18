@@ -46,6 +46,8 @@ const Catalog = lazy(() => import('./pages/Catalog'));
 const Reports = lazy(() => import('./pages/Reports'));
 const ReportEdit = lazy(() => import('./pages/ReportEdit'));
 const AiMetrics = lazy(() => import('./pages/AiMetrics'));
+const BiReports = lazy(() => import('./pages/BiReports'));
+const BiDashboard = lazy(() => import('./pages/BiDashboard'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -105,6 +107,8 @@ function AppRoutes() {
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:id" element={<ReportEdit />} />
           <Route path="ai-metrics" element={<AiMetrics />} />
+          <Route path="bi-reports" element={<BiReports />} />
+          <Route path="bi-dashboard" element={<BiDashboard />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

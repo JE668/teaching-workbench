@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
+  FileSpreadsheet,
   Users,
   MessageSquarePlus,
   History,
@@ -29,6 +30,8 @@ const navItems = [
   { to: '/catalog', label: '课程目录', icon: BookOpen },
   { to: '/reports', label: '月度总结规划', icon: CalendarRange },
   { to: '/ai-metrics', label: 'AI 指标看板', icon: BarChart3 },
+  { to: '/bi-reports', label: '报表上传', icon: FileSpreadsheet },
+  { to: '/bi-dashboard', label: '报表看板', icon: BarChart3 },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 
@@ -154,7 +157,7 @@ export default function Layout() {
             className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm animate-fade-in lg:hidden"
             onClick={() => setDrawerOpen(false)}
           />
-          <aside className="fixed inset-y-0 left-0 z-50 w-[272px] animate-fade-in lg:hidden">
+          <aside id="mobile-drawer" role="navigation" aria-label="导航菜单" className="fixed inset-y-0 left-0 z-50 w-[272px] animate-fade-in lg:hidden">
             {sidebar}
           </aside>
         </>
@@ -164,6 +167,9 @@ export default function Layout() {
       <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-slate-200/80 bg-white/85 px-4 py-3 backdrop-blur lg:hidden">
         <button
           onClick={() => setDrawerOpen(true)}
+          aria-label="打开导航菜单"
+          aria-expanded={drawerOpen}
+          aria-controls="mobile-drawer"
           className="rounded-lg p-2 text-slate-600 transition-colors hover:bg-slate-100"
         >
           <Menu className="h-5 w-5" />
