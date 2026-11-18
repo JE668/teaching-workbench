@@ -56,6 +56,7 @@ export default function BiDashboard() {
   const [xushengRows, setXushengRows] = useState<XushengRateRow[]>([]);
   const [presaleRows, setPresaleRows] = useState<PreSaleRow[]>([]);
   const [incentiveRows, setIncentiveRows] = useState<IncentiveRow[]>([]);
+  const [exporting, setExporting] = useState(false);
   const [report, setReport] = useState<MonthlyReport | null>(null);
   const [loading, setLoading] = useState(false);
   const toast = useToast();
@@ -125,6 +126,38 @@ export default function BiDashboard() {
     }
   }
 
+  // 导出当前 tab 的数据为 xlsx。
+  // 用 window.open 会丢 Authorization，故用 fetch + Blob 触发下载。
+  async function handleExport() {
+    const params = new URLSearchParams();
+    if (selectedMonth && tab !== 'presale' && tab !== 'overview') params.append('month', selectedMonth);
+    if (tab === 'xuke') params.append('groupBy', groupBy);
+    const kind = tab === 'overview' ? 'monthly' : tab;
+    const token = api.getToken();
+    try {
+      setExporting(true);
+      const res = await fetch('/api/bi/export/' + kind + (params.toString() ? '?' + params.toString() : ''), {
+        headers: token ? { Authorization: 'Bearer ' + token } : undefined,
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const m = /filename="([^"]+)"/.exec(disposition);
+      a.download = m ? decodeURIComponent(m[1]) : 'bi-export.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('导出失败：' + (err instanceof Error ? err.message : '未知错误'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function loadIncentive() {
     setLoading(true);
     try {
@@ -168,12 +201,22 @@ export default function BiDashboard() {
             续科率、续生率、预存推断的核心指标。数据来自 <Link to="/bi-reports" className="text-brand-600 underline">报表上传</Link>。
           </p>
         </div>
-        <Link
-          to="/bi-reports"
-          className="rounded-md bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
-        >
-          上传新报表
-        </Link>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {exporting ? '导出中…' : '导出 xlsx'}
+          </button>
+          <Link
+            to="/bi-reports"
+            className="rounded-md bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200"
+          >
+            上传新报表
+          </Link>
+        </div>
       </div>
 
       {/* 标签页 */}

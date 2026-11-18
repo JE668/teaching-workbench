@@ -14,6 +14,14 @@ import {
 } from './importService.js';
 import { biDb, BI_UPLOAD_DIR } from './db.js';
 import { computeXukeRates, computeXushengRates, computePreSale, availableMonths, computeIncentive, computeMonthlyReport } from './metrics.js';
+import {
+  buildBiXlsx,
+  xukeRowsToBi,
+  xushengRowsToBi,
+  presaleRowsToBi,
+  incentiveRowsToBi,
+  monthlyReportToBi,
+} from '../utils/biExcel.js';
 import biConfigRoutes from './biConfigRoutes.js';
 import biMapRoutes from './biMapRoutes.js';
 import { reconcilePrepaid } from './reconciliation.js';
@@ -251,6 +259,70 @@ router.get('/reconciliation/prepaid', (req: AuthenticatedRequest, res) => {
 });
 
 // 可用月份（前端下拉框用）
+// ===== 报表导出（xlsx）=====
+// 与 /metrics/* 查询参数一致，返回 xlsx 而非 JSON。用于替用户省掉手工重排。
+router.get('/export/:kind', (req: AuthenticatedRequest, res) => {
+  const kind = String(req.params.kind);
+  const statMonth = typeof req.query.month === 'string' ? req.query.month : undefined;
+  const groupBy = req.query.groupBy === 'subject_group' ? 'subject_group' : 'teacher';
+
+  // 限速：导出是 CPU+IO 密集操作，15 分钟最多 30 次
+  // （复用 biUploadLimiter 略重；这里直接放行，由反向代理/通用限流兜底）
+
+  try {
+    let input;
+    switch (kind) {
+      case 'xuke': {
+        const rows = computeXukeRates({ statMonth, groupBy });
+        input = xukeRowsToBi({
+          title: '续科率报表' + (statMonth ? '（' + statMonth + '）' : '') + ' · 按' + (groupBy === 'subject_group' ? '科组' : '老师'),
+          rows, groupBy,
+        });
+        break;
+      }
+      case 'xusheng': {
+        const rows = computeXushengRates({ statMonth });
+        input = xushengRowsToBi({
+          title: '续生率报表' + (statMonth ? '（' + statMonth + '）' : '') + ' · 按学管师',
+          rows,
+        });
+        break;
+      }
+      case 'presale': {
+        const rows = computePreSale({});
+        input = presaleRowsToBi({ title: '预存报表 · 按校区', rows });
+        break;
+      }
+      case 'incentive': {
+        const rows = computeIncentive({ statMonth });
+        input = incentiveRowsToBi({ title: '激励差额报表' + (statMonth ? '（' + statMonth + '）' : ''), rows });
+        break;
+      }
+      case 'monthly': {
+        const report = computeMonthlyReport({ statMonth });
+        input = monthlyReportToBi(report);
+        break;
+      }
+      default:
+        return res.status(400).json({ error: '未知导出类型: ' + kind });
+    }
+
+    buildBiXlsx(input).then((buf) => {
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(input.filename) + '"');
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).end(buf);
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error('BI 导出失败: ' + msg);
+      res.status(500).json({ error: '导出失败：' + msg });
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
 router.get('/metrics/months/:fileType', (req: AuthenticatedRequest, res) => {
   const { fileType } = req.params;
 
