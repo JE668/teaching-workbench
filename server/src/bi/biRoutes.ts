@@ -42,7 +42,11 @@ const biStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, BI_UPLOAD_DIR),
   filename: (_req, file, cb) => {
     const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
+    // multer 1.x 的 originalname 按 latin-1 解码，中文文件名会变成 mojibake。
+    // 强制转 utf8；fileFilter 检查扩展名也用转码后的名字。
+    const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    file.originalname = originalname;
+    const ext = path.extname(originalname);
     cb(null, `bi-${unique}${ext}`);
   },
 });

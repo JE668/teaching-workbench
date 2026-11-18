@@ -56,16 +56,16 @@ export default function BiSettings() {
     try {
       if (tab === 'overrides') {
         const res = await api.get('/bi/indicator-overrides');
-        setOverrides(res.rows);
+        setOverrides(res.overrides ?? []);
       } else if (tab === 'incentive') {
         const res = await api.get('/bi/incentive-settings');
-        setIncentives(res.rows);
+        setIncentives(res.settings ?? []);
       } else if (tab === 'teacher') {
         const res = await api.get('/bi/teacher-students');
-        setTeachers(res.rows);
+        setTeachers(res.teachers ?? []);
       } else {
         const res = await api.get('/bi/mentor-students');
-        setMentors(res.rows);
+        setMentors(res.mentors ?? []);
       }
     } catch (err) {
       toast.error('加载数据失败');

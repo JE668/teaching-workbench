@@ -40,10 +40,10 @@ const MENTOR_ROWS = [
 
 function mockGet() {
   get.mockImplementation((path: string) => {
-    if (path.includes('/indicator-overrides')) return Promise.resolve({ rows: OVERRIDE_ROWS });
-    if (path.includes('/incentive-settings')) return Promise.resolve({ rows: INCENTIVE_ROWS });
-    if (path.includes('/teacher-students')) return Promise.resolve({ rows: TEACHER_ROWS });
-    if (path.includes('/mentor-students')) return Promise.resolve({ rows: MENTOR_ROWS });
+    if (path.includes('/indicator-overrides')) return Promise.resolve({ overrides: OVERRIDE_ROWS });
+    if (path.includes('/incentive-settings')) return Promise.resolve({ settings: INCENTIVE_ROWS });
+    if (path.includes('/teacher-students')) return Promise.resolve({ teachers: TEACHER_ROWS });
+    if (path.includes('/mentor-students')) return Promise.resolve({ mentors: MENTOR_ROWS });
     return Promise.reject(new Error('unmocked: ' + path));
   });
 }

@@ -46,7 +46,7 @@ router.get('/teacher-students', (req: AuthenticatedRequest, res) => {
   const rows = biDb.prepare(
     `SELECT * FROM teacher_student_map ${where} ORDER BY teacher_no, student_id LIMIT 5000`
   ).all(...params);
-  res.json({ rows });
+  res.json({ teachers: rows });
 });
 
 router.post('/teacher-students', (req: AuthenticatedRequest, res) => {
@@ -115,7 +115,7 @@ router.get('/mentor-students', (req: AuthenticatedRequest, res) => {
   const rows = biDb.prepare(
     `SELECT * FROM mentor_student_map ${where} ORDER BY mentor_no, student_id LIMIT 5000`
   ).all(...params);
-  res.json({ rows });
+  res.json({ mentors: rows });
 });
 
 router.post('/mentor-students', (req: AuthenticatedRequest, res) => {
