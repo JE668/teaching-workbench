@@ -66,6 +66,21 @@ router.get('/file-types', (req: AuthenticatedRequest, res) => {
   res.json({ fileTypes: rows });
 });
 
+/**
+ * 按 file_type 删除所有旧批次（覆盖模式用）。
+ * CASCADE 会自动删除关联的 raw_* 行和 import_error 行。
+ * 返回删除的批次数。
+ */
+function deleteBatchesByFileType(ft: string): number {
+  const count = (biDb.prepare('SELECT COUNT(*) AS n FROM upload_batch WHERE file_type = ?').get(ft) as { n: number }).n;
+  if (count === 0) return 0;
+  const tx = biDb.transaction(() => {
+    biDb.prepare('DELETE FROM upload_batch WHERE file_type = ?').run(ft);
+  });
+  tx();
+  return count;
+}
+
 // ===== 上传并解析 xlsx =====
 router.post(
   '/upload/:fileType',
@@ -89,8 +104,18 @@ router.post(
     }
 
     const note = typeof req.body.note === 'string' ? req.body.note : undefined;
+    // 覆盖模式：先删该 file_type 所有旧批次，再导入新文件。
+    // 默认 append —— 首次上传/换月份/换校区可能是追加，显式选才覆盖。
+    const mode = req.body.mode === 'replace' ? 'replace' : 'append';
 
     try {
+      if (mode === 'replace') {
+        const deleted = deleteBatchesByFileType(fileType);
+        if (deleted > 0) {
+          log.info({ fileType, deleted }, 'BI 覆盖模式：已删除旧批次');
+        }
+      }
+
       const result = await importBiFile({
         fileType: fileType as FileType,
         filePath: req.file.path,
@@ -111,8 +136,9 @@ router.post(
         });
       }
 
+      const modeHint = mode === 'replace' ? '（覆盖模式）' : '';
       return res.json({
-        message: `导入成功：${result.successRows} 行${result.errorRows > 0 ? `，${result.errorRows} 行跳过` : ''}`,
+        message: `导入成功${modeHint}：${result.successRows} 行${result.errorRows > 0 ? `，${result.errorRows} 行跳过` : ''}`,
         batchId: result.batchId,
         successRows: result.successRows,
         errorRows: result.errorRows,
