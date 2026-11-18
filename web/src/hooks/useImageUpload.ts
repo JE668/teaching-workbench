@@ -22,7 +22,10 @@ const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
 /** 判断文件是否为可上传的图片类型。
  *  MIME 存在时优先按 MIME 判断；为空时按扩展名兜底。 */
 function isImageFile(file: File): boolean {
-  if (file.type) return IMAGE_MIME_TYPES.has(file.type.toLowerCase());
+  // MIME 为空时放行：macOS 微信拖拽出的 File 没有 MIME 类型，文件名也可能无扩展名。
+  // 只拒绝"明确声明为非图片"的 MIME。
+  if (!file.type) return true;
+  if (IMAGE_MIME_TYPES.has(file.type.toLowerCase())) return true;
   return IMAGE_EXTENSIONS.test(file.name || '');
 }
 

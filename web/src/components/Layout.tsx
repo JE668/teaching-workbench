@@ -16,6 +16,8 @@ import {
   Menu,
   X,
   Settings as SettingsIcon,
+  GitCompare,
+  Settings2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
@@ -32,6 +34,8 @@ const navItems = [
   { to: '/ai-metrics', label: 'AI 指标看板', icon: BarChart3 },
   { to: '/bi-reports', label: '报表上传', icon: FileSpreadsheet },
   { to: '/bi-dashboard', label: '报表看板', icon: BarChart3 },
+  { to: '/bi-reconciliation', label: '预存对账', icon: GitCompare },
+  { to: '/bi-settings', label: 'BI 配置', icon: Settings2 },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 
