@@ -30,7 +30,7 @@ beforeEach(() => {
 
 describe('BiOverviewCard', () => {
   it('有数据时渲染四项指标', async () => {
-    get.mockResolvedValue(REPORT);
+    get.mockResolvedValue({ report: REPORT });
     renderWithProviders(<BiOverviewCard />);
     expect(await screen.findByText(/本月 BI 概览/)).toBeInTheDocument();
     expect(screen.getAllByText('80.0%').length).toBe(2); // 续科率 + 续生率
@@ -49,7 +49,7 @@ describe('BiOverviewCard', () => {
   });
 
   it('显示「查看完整看板」链接', async () => {
-    get.mockResolvedValue(REPORT);
+    get.mockResolvedValue({ report: REPORT });
     renderWithProviders(<BiOverviewCard />);
     expect(await screen.findByText('查看完整看板')).toBeInTheDocument();
   });

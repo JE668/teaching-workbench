@@ -30,8 +30,9 @@ export default function BiOverviewCard() {
     let alive = true;
     api
       .get('/bi/metrics/report')
-      .then((r: MonthlyReport) => {
-        if (alive) setReport(r);
+      .then((res: { report: MonthlyReport }) => {
+        if (alive && res?.report) setReport(res.report);
+        else if (alive) setHidden(true);
       })
       .catch(() => {
         // BI 未上传或后端异常时降级为不渲染，不打扰主看板
@@ -42,7 +43,7 @@ export default function BiOverviewCard() {
     };
   }, []);
 
-  if (hidden || !report) return null;
+  if (hidden || !report?.xuke || !report?.xusheng || !report?.presale || !report?.incentive) return null;
 
   const cells: { label: string; value: string; hint?: string; to: string }[] = [
     {
