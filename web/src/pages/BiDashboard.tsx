@@ -27,6 +27,15 @@ interface PreSaleRow {
   total_amount: number;
 }
 
+interface PersonalPerfRow {
+  performer: string;
+  performer_no: string | null;
+  learning_center: string | null;
+  perf_total: number;
+  grand_total: number;
+  contract_count: number;
+}
+
 interface IncentiveRow {
   scope: string;
   scope_value: string;
@@ -45,7 +54,7 @@ interface MonthlyReport {
   incentive: { entries: number; total_gap: number };
 }
 
-type Tab = 'overview' | 'xuke' | 'xusheng' | 'presale' | 'incentive';
+type Tab = 'overview' | 'xuke' | 'xusheng' | 'presale' | 'incentive' | 'perf';
 
 export default function BiDashboard() {
   const [tab, setTab] = useState<Tab>('xuke');
@@ -56,6 +65,7 @@ export default function BiDashboard() {
   const [xushengRows, setXushengRows] = useState<XushengRateRow[]>([]);
   const [presaleRows, setPresaleRows] = useState<PreSaleRow[]>([]);
   const [incentiveRows, setIncentiveRows] = useState<IncentiveRow[]>([]);
+  const [perfRows, setPerfRows] = useState<PersonalPerfRow[]>([]);
   const [exporting, setExporting] = useState(false);
   const [report, setReport] = useState<MonthlyReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,6 +80,7 @@ export default function BiDashboard() {
     else if (tab === 'xusheng') loadXushengRates();
     else if (tab === 'presale') loadPresale();
     else if (tab === 'incentive') loadIncentive();
+    else if (tab === 'perf') loadPerf();
     else loadReport();
   }, [tab, selectedMonth, groupBy]);
 
@@ -172,7 +183,19 @@ export default function BiDashboard() {
     }
   }
 
-  async function loadReport() {
+    async function loadPerf() {
+    setLoading(true);
+    try {
+      const res = await api.get('/bi/metrics/personal-perf');
+      setPerfRows(res.rows);
+    } catch (err) {
+      toast.error('加载个人业绩失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+async function loadReport() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -228,6 +251,7 @@ export default function BiDashboard() {
             { key: 'xusheng' as Tab, label: '续生率（学管）' },
             { key: 'presale' as Tab, label: '预存（校区）' },
             { key: 'incentive' as Tab, label: '激励差额' },
+            { key: 'perf' as Tab, label: '个人业绩' },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -463,6 +487,41 @@ export default function BiDashboard() {
                     <td className={`px-6 py-3 text-sm text-right font-semibold ${r.gap > 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {r.gap > 0 ? `+${r.gap}` : r.gap}
                     </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'perf' && !loading && (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">业绩人员</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">工号</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">学习中心</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">合同数</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">个人总业绩</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">总业绩</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {perfRows.length === 0 ? (
+                <tr><td colSpan={6} className="px-6 py-12 text-center text-sm text-slate-500">
+                  暂无数据，请先上传 <Link to="/bi-reports" className="text-brand-600 underline">个人业绩统计</Link> 报表
+                </td></tr>
+              ) : (
+                perfRows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="px-6 py-3 text-sm text-slate-600">{r.performer}</td>
+                    <td className="px-6 py-3 text-sm text-slate-500">{r.performer_no ?? '-'}</td>
+                    <td className="px-6 py-3 text-sm text-slate-600">{r.learning_center ?? '-'}</td>
+                    <td className="px-6 py-3 text-sm text-right text-slate-600">{r.contract_count}</td>
+                    <td className="px-6 py-3 text-sm text-right text-slate-600">{r.perf_total.toLocaleString()}</td>
+                    <td className="px-6 py-3 text-sm text-right font-semibold text-slate-800">{r.grand_total.toLocaleString()}</td>
                   </tr>
                 ))
               )}

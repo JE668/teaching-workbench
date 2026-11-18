@@ -27,6 +27,9 @@ const XUSHENG_ROWS = [
 const PRESALE_ROWS = [
   { branch_company: '小榄分公司', learning_center: '龙山', valid_voucher_count: 5, presale_student_count: 7, total_amount: 35000 },
 ];
+const PERF_ROWS = [
+  { performer: '郑淼林', performer_no: 'X49763', learning_center: '龙山', perf_total: 1000, grand_total: 1000, contract_count: 2 },
+];
 const INCENTIVE_ROWS = [
   { scope: 'mentor', scope_value: '李学管', target_rate: 80, base_count: 12, target_count: 10, renewed_count: 9, gap: 1 },
 ];
@@ -54,6 +57,9 @@ function mockGet() {
     }
     if (path.includes('/metrics/incentive')) {
       return Promise.resolve({ rows: INCENTIVE_ROWS });
+    }
+    if (path.includes('/metrics/personal-perf')) {
+      return Promise.resolve({ rows: PERF_ROWS });
     }
     if (path.includes('/metrics/report')) {
       return Promise.resolve({ report: REPORT });
@@ -125,6 +131,23 @@ describe('BiDashboard', () => {
     expect(screen.getByText('+1')).toBeInTheDocument();
     const gapCell = screen.getByText('+1');
     expect(gapCell.className).toContain('text-red-600');
+  });
+
+  it('切换到个人业绩 tab 展示业绩人员行', async () => {
+    renderWithProviders(<BiDashboard />);
+    await screen.findByText('张老师');
+    // Reset mock calls to isolate this test
+    get.mockClear();
+    await switchTab('个人业绩');
+    await waitFor(() => {
+      expect(get).toHaveBeenCalledWith('/bi/metrics/personal-perf');
+    });
+    await waitFor(() => {
+      expect(screen.getByText('郑淼林')).toBeInTheDocument();
+    });
+    expect(screen.getByText('X49763')).toBeInTheDocument();
+    expect(screen.getByText('龙山')).toBeInTheDocument();
+    expect(screen.getByText('2')).toBeInTheDocument(); // 合同数
   });
 
   it('续科率表格按科组分组：切换 groupBy 后调用接口带 groupBy 参数', async () => {
