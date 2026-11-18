@@ -2,23 +2,21 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { env } from '../config/env.js';
 import { AuthenticatedRequest } from '../types/index.js';
 import { log } from '../utils/logger.js';
 import { rateLimit } from '../middleware/rateLimit.js';
-import {
-  FILE_TYPES,
-  type FileType,
-} from './fileRegistry.js';
+import type { FileType } from './fileRegistry.js';
 import {
   importBiFile,
   deleteBatch,
   listBatches,
   getBatchDetail,
 } from './importService.js';
-import { biDb } from './db.js';
+import { biDb, BI_UPLOAD_DIR } from './db.js';
 import { computeXukeRates, computeXushengRates, computePreSale, availableMonths, computeIncentive } from './metrics.js';
 import biConfigRoutes from './biConfigRoutes.js';
+import biMapRoutes from './biMapRoutes.js';
+import { reconcilePrepaid } from './reconciliation.js';
 
 const router = Router();
 
@@ -30,10 +28,7 @@ const biUploadLimiter = rateLimit({
 });
 
 // Multer：BI 报表临时存放目录
-const BI_UPLOAD_DIR = path.join(env.DATA_DIR, 'bi_uploads');
-if (!fs.existsSync(BI_UPLOAD_DIR)) {
-  fs.mkdirSync(BI_UPLOAD_DIR, { recursive: true });
-}
+
 
 const biStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, BI_UPLOAD_DIR),
@@ -174,6 +169,7 @@ router.delete('/batches/:id', (req: AuthenticatedRequest, res) => {
 
 // ===== 配置表 CRUD（挂子路由）=====
 router.use('/', biConfigRoutes);
+router.use('/', biMapRoutes);
 
 // ===== 指标计算 =====
 
@@ -225,6 +221,17 @@ router.get('/metrics/incentive', (req: AuthenticatedRequest, res) => {
   try {
     const rows = computeIncentive({ statMonth });
     res.json({ rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 对账：定金券 vs teacher_student_map
+router.get('/reconciliation/prepaid', (req: AuthenticatedRequest, res) => {
+  try {
+    const { rows, summary } = reconcilePrepaid({});
+    res.json({ rows, summary });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });

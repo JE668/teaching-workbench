@@ -1,4 +1,4 @@
-import { parseXlsx, type ParsedRow } from './parserBase.js';
+import { parseXlsx } from './parserBase.js';
 
 /**
  * 字段映射：源表头（xlsx 第一行）→ 目标字段名（数据库列名）。

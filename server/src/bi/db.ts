@@ -44,3 +44,8 @@ export function ensureBiColumn(table: string, column: string, definition: string
   biDb.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
   log.info({ table, column }, 'bi.db 列补齐');
 }
+
+export const BI_UPLOAD_DIR = path.join(env.DATA_DIR, 'bi_uploads');
+if (!fs.existsSync(BI_UPLOAD_DIR)) {
+  fs.mkdirSync(BI_UPLOAD_DIR, { recursive: true });
+}

@@ -7,7 +7,7 @@
  *   3. 返回 { records, errors, totalSourceRows }
  *   4. records 里每个对象直接对应数据库列名
  */
-import { mapRows, toStr, toFloat, toInt, type MapperResult, type RowError } from './mappers.js';
+import { mapRows, toStr, toFloat, toInt, type MapperResult } from './mappers.js';
 import { FILE_TYPES } from './fileRegistry.js';
 
 // ============ 在读学生明细 ============
