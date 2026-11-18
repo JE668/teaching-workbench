@@ -21,6 +21,7 @@ import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
 import { PageSkeleton } from '../components/ui/Skeleton';
+import BiOverviewCard from '../components/BiOverviewCard';
 import { useToast } from '../components/ui/Toast';
 import { relativeTime, formatDate } from '../lib/utils';
 
@@ -153,6 +154,9 @@ export default function Dashboard() {
         ))}
       </div>
 
+
+      {/* 本月 BI 概览（接口失败静默降级） */}
+      <BiOverviewCard />
 
       <div className="grid gap-6 lg:grid-cols-5">
         {/* 待回访 —— 老师最怕漏掉某个孩子 */}
