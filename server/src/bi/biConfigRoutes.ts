@@ -77,7 +77,7 @@ router.patch('/indicator-overrides/:id', (req: AuthenticatedRequest, res) => {
   values.push(id);
 
   biDb.prepare(
-    `UPDATE indicator_overrides SET ${setClause}, updated_by = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
+    `UPDATE indicator_overrides SET ${setClause}, updated_by = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?`
   ).run(...values);
 
   const row = biDb.prepare('SELECT * FROM indicator_overrides WHERE id = ?').get(id);

@@ -77,7 +77,7 @@ router.patch('/teacher-students/:id', (req: AuthenticatedRequest, res) => {
   values.push(req.userId ?? null);
   values.push(id);
   biDb.prepare(
-    `UPDATE teacher_student_map SET ${setClause}${extraSet}, updated_by = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
+    `UPDATE teacher_student_map SET ${setClause}${extraSet}, updated_by = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?`
   ).run(...values);
   const row = biDb.prepare('SELECT * FROM teacher_student_map WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: '记录不存在' });
@@ -142,7 +142,7 @@ router.patch('/mentor-students/:id', (req: AuthenticatedRequest, res) => {
   const values: unknown[] = fields.map(([, v]) => v);
   values.push(id);
   biDb.prepare(
-    `UPDATE mentor_student_map SET ${setClause}, updated_at = datetime('now', 'localtime') WHERE id = ?`
+    `UPDATE mentor_student_map SET ${setClause}, updated_at = datetime('now', '+8 hours') WHERE id = ?`
   ).run(...values);
   const row = biDb.prepare('SELECT * FROM mentor_student_map WHERE id = ?').get(id);
   if (!row) return res.status(404).json({ error: '记录不存在' });
@@ -195,7 +195,7 @@ router.post('/maps/import/:kind', mapUpload.single('file'), async (req: Authenti
            grade=excluded.grade,
            note=excluded.note,
            updated_by=excluded.updated_by,
-           updated_at=datetime('now', 'localtime')`
+           updated_at=datetime('now', '+8 hours')`
       );
       const tx = biDb.transaction(() => {
         rows.forEach((r, i) => {
@@ -233,7 +233,7 @@ router.post('/maps/import/:kind', mapUpload.single('file'), async (req: Authenti
            student_name=excluded.student_name,
            grade=excluded.grade,
            note=excluded.note,
-           updated_at=datetime('now', 'localtime')`
+           updated_at=datetime('now', '+8 hours')`
       );
       const tx = biDb.transaction(() => {
         rows.forEach((r, i) => {

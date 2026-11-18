@@ -13,7 +13,7 @@ import {
   getBatchDetail,
 } from './importService.js';
 import { biDb, BI_UPLOAD_DIR } from './db.js';
-import { computeXukeRates, computeXushengRates, computePreSale, availableMonths, computeIncentive } from './metrics.js';
+import { computeXukeRates, computeXushengRates, computePreSale, availableMonths, computeIncentive, computeMonthlyReport } from './metrics.js';
 import biConfigRoutes from './biConfigRoutes.js';
 import biMapRoutes from './biMapRoutes.js';
 import { reconcilePrepaid } from './reconciliation.js';
@@ -221,6 +221,18 @@ router.get('/metrics/incentive', (req: AuthenticatedRequest, res) => {
   try {
     const rows = computeIncentive({ statMonth });
     res.json({ rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 月度报表概览
+router.get('/metrics/report', (req: AuthenticatedRequest, res) => {
+  const statMonth = typeof req.query.month === 'string' ? req.query.month : undefined;
+  try {
+    const report = computeMonthlyReport({ statMonth });
+    res.json({ report });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });

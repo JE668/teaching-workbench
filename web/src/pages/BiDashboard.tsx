@@ -27,7 +27,25 @@ interface PreSaleRow {
   total_amount: number;
 }
 
-type Tab = 'xuke' | 'xusheng' | 'presale';
+interface IncentiveRow {
+  scope: string;
+  scope_value: string;
+  target_rate: number;
+  base_count: number;
+  target_count: number;
+  renewed_count: number;
+  gap: number;
+}
+
+interface MonthlyReport {
+  month: string | null;
+  xuke: { total_base: number; total_renewed: number; overall_rate: number; teacher_count: number };
+  xusheng: { total_base: number; total_renewed: number; overall_rate: number; mentor_count: number };
+  presale: { total_vouchers: number; total_students: number; total_amount: number; learning_center_count: number };
+  incentive: { entries: number; total_gap: number };
+}
+
+type Tab = 'overview' | 'xuke' | 'xusheng' | 'presale' | 'incentive';
 
 export default function BiDashboard() {
   const [tab, setTab] = useState<Tab>('xuke');
@@ -37,6 +55,8 @@ export default function BiDashboard() {
   const [xukeRows, setXukeRows] = useState<XukeRateRow[]>([]);
   const [xushengRows, setXushengRows] = useState<XushengRateRow[]>([]);
   const [presaleRows, setPresaleRows] = useState<PreSaleRow[]>([]);
+  const [incentiveRows, setIncentiveRows] = useState<IncentiveRow[]>([]);
+  const [report, setReport] = useState<MonthlyReport | null>(null);
   const [loading, setLoading] = useState(false);
   const toast = useToast();
 
@@ -47,7 +67,9 @@ export default function BiDashboard() {
   useEffect(() => {
     if (tab === 'xuke') loadXukeRates();
     else if (tab === 'xusheng') loadXushengRates();
-    else loadPresale();
+    else if (tab === 'presale') loadPresale();
+    else if (tab === 'incentive') loadIncentive();
+    else loadReport();
   }, [tab, selectedMonth, groupBy]);
 
   async function loadMonths() {
@@ -103,6 +125,34 @@ export default function BiDashboard() {
     }
   }
 
+  async function loadIncentive() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (selectedMonth) params.append('month', selectedMonth);
+      const res = await api.get('/bi/metrics/incentive?' + params.toString());
+      setIncentiveRows(res.rows);
+    } catch (err) {
+      toast.error('加载激励数据失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadReport() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (selectedMonth) params.append('month', selectedMonth);
+      const res = await api.get('/bi/metrics/report?' + params.toString());
+      setReport(res.report);
+    } catch (err) {
+      toast.error('加载月度报表失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function rateColor(rate: number): string {
     if (rate >= 80) return 'text-green-600';
     if (rate >= 60) return 'text-yellow-600';
@@ -130,9 +180,11 @@ export default function BiDashboard() {
       <div className="border-b border-slate-200">
         <nav className="-mb-px flex space-x-8">
           {[
+            { key: 'overview' as Tab, label: '总览' },
             { key: 'xuke' as Tab, label: '续科率（老师）' },
             { key: 'xusheng' as Tab, label: '续生率（学管）' },
             { key: 'presale' as Tab, label: '预存（校区）' },
+            { key: 'incentive' as Tab, label: '激励差额' },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -150,7 +202,7 @@ export default function BiDashboard() {
       </div>
 
       {/* 筛选器 */}
-      {tab !== 'presale' && (
+      {tab !== 'presale' && tab !== 'overview' && (
         <div className="flex gap-4">
           <div>
             <label htmlFor="month" className="block text-xs font-medium text-slate-700">月份</label>
@@ -282,6 +334,91 @@ export default function BiDashboard() {
                     <td className="px-6 py-3 text-sm text-right text-slate-600">{r.presale_student_count}</td>
                     <td className="px-6 py-3 text-sm text-right text-slate-900 font-semibold">
                       ¥{r.total_amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 总览面板 */}
+      {tab === 'overview' && !loading && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {report && (
+            <>
+              <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-medium text-slate-500">续科率</h3>
+                <p className={`mt-2 text-3xl font-bold ${rateColor(report.xuke.overall_rate)}`}>
+                  {report.xuke.overall_rate.toFixed(2)}%
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {report.xuke.total_renewed} / {report.xuke.total_base} 科次 · {report.xuke.teacher_count} 老师
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-medium text-slate-500">续生率</h3>
+                <p className={`mt-2 text-3xl font-bold ${rateColor(report.xusheng.overall_rate)}`}>
+                  {report.xusheng.overall_rate.toFixed(2)}%
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {report.xusheng.total_renewed} / {report.xusheng.total_base} 学生 · {report.xusheng.mentor_count} 学管
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-medium text-slate-500">预存学生数</h3>
+                <p className="mt-2 text-3xl font-bold text-slate-900">{report.presale.total_students}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {report.presale.total_vouchers} 张定金券 · ¥{report.presale.total_amount.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+                <h3 className="text-sm font-medium text-slate-500">激励差额（总）</h3>
+                <p className="mt-2 text-3xl font-bold text-slate-900">{report.incentive.total_gap}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {report.incentive.entries} 条激励规则
+                </p>
+              </div>
+            </>
+          )}
+          {!report && <div className="col-span-full py-12 text-center text-sm text-slate-500">暂无数据</div>}
+        </div>
+      )}
+
+      {/* 激励表格 */}
+      {tab === 'incentive' && !loading && (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">维度</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500">对象</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">目标比例</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">基数</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">目标数</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">已完成</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500">差额</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 bg-white">
+              {incentiveRows.length === 0 ? (
+                <tr><td colSpan={7} className="px-6 py-12 text-center text-sm text-slate-500">
+                  暂无数据，请先配置 <Link to="/bi-settings" className="text-brand-600 underline">激励目标</Link> 并上传续生率明细
+                </td></tr>
+              ) : (
+                incentiveRows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="px-6 py-3 text-sm text-slate-600">
+                      {r.scope === 'mentor' ? '学管' : r.scope === 'branch_company' ? '分公司' : r.scope}
+                    </td>
+                    <td className="px-6 py-3 text-sm text-slate-900">{r.scope_value}</td>
+                    <td className="px-6 py-3 text-sm text-right text-slate-600">{r.target_rate}%</td>
+                    <td className="px-6 py-3 text-sm text-right text-slate-600">{r.base_count}</td>
+                    <td className="px-6 py-3 text-sm text-right text-slate-600">{r.target_count}</td>
+                    <td className="px-6 py-3 text-sm text-right text-slate-600">{r.renewed_count}</td>
+                    <td className={`px-6 py-3 text-sm text-right font-semibold ${r.gap > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {r.gap > 0 ? `+${r.gap}` : r.gap}
                     </td>
                   </tr>
                 ))

@@ -416,3 +416,88 @@ export function computeIncentive(options: {
     };
   });
 }
+
+
+// ============ 月度报表聚合 ============
+
+export interface MonthlyReport {
+  month: string | null;
+  xuke: {
+    total_base: number;
+    total_renewed: number;
+    overall_rate: number;
+    teacher_count: number;
+  };
+  xusheng: {
+    total_base: number;
+    total_renewed: number;
+    overall_rate: number;
+    mentor_count: number;
+  };
+  presale: {
+    total_vouchers: number;
+    total_students: number;
+    total_amount: number;
+    learning_center_count: number;
+  };
+  incentive: {
+    entries: number;
+    total_gap: number;
+  };
+}
+
+/**
+ * 一次性拉取指定月份（或最新）的所有核心指标概览。
+ * 给前端看板「总览」卡片用。
+ */
+export function computeMonthlyReport(options: {
+  statMonth?: string;
+} = {}): MonthlyReport {
+  const { statMonth } = options;
+
+  // 续科率
+  const xukeRows = computeXukeRates({ statMonth, groupBy: 'teacher' });
+  const xuke_base = xukeRows.reduce((s, r) => s + r.base_count, 0);
+  const xuke_renewed = xukeRows.reduce((s, r) => s + r.renewed_count, 0);
+
+  // 续生率
+  const xushengRows = computeXushengRates({ statMonth });
+  const xusheng_base = xushengRows.reduce((s, r) => s + r.base_count, 0);
+  const xusheng_renewed = xushengRows.reduce((s, r) => s + r.renewed_count, 0);
+
+  // 预存
+  const presaleRows = computePreSale({});
+  const presale_vouchers = presaleRows.reduce((s, r) => s + r.valid_voucher_count, 0);
+  const presale_students = presaleRows.reduce((s, r) => s + r.presale_student_count, 0);
+  const presale_amount = presaleRows.reduce((s, r) => s + r.total_amount, 0);
+
+  // 激励
+  const incentiveRows = computeIncentive({ statMonth });
+  const incentive_gap = incentiveRows.reduce((s, r) => s + Math.max(0, r.gap), 0);
+
+  return {
+    month: statMonth ?? null,
+    xuke: {
+      total_base: xuke_base,
+      total_renewed: xuke_renewed,
+      overall_rate: rate(xuke_renewed, xuke_base),
+      teacher_count: xukeRows.length,
+    },
+    xusheng: {
+      total_base: xusheng_base,
+      total_renewed: xusheng_renewed,
+      overall_rate: rate(xusheng_renewed, xusheng_base),
+      mentor_count: xushengRows.length,
+    },
+    presale: {
+      total_vouchers: presale_vouchers,
+      total_students: presale_students,
+      total_amount: Math.round(presale_amount * 100) / 100,
+      learning_center_count: presaleRows.length,
+    },
+    incentive: {
+      entries: incentiveRows.length,
+      total_gap: incentive_gap,
+    },
+  };
+}

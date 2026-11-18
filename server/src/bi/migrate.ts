@@ -22,12 +22,12 @@ CREATE TABLE IF NOT EXISTS upload_batch (
   file_name TEXT NOT NULL,             -- 原始文件名
   file_size INTEGER,                   -- 字节数
   uploaded_by INTEGER NOT NULL,        -- users.id（业务库），仅记录不做外键
-  uploaded_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   row_count INTEGER,                   -- 解析后总行数
   error_count INTEGER DEFAULT 0,       -- 跳过的错误行数
   status TEXT NOT NULL DEFAULT 'pending',  -- pending/parsed/committed/failed
   note TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_upload_batch_file_type ON upload_batch(file_type);
 CREATE INDEX IF NOT EXISTS idx_upload_batch_uploaded_at ON upload_batch(uploaded_at DESC);
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS import_error (
   error_code TEXT NOT NULL,            -- MISSING_FIELD / INVALID_TYPE / DUPLICATE / ...
   error_message TEXT,
   raw_data TEXT,                       -- 原始行 JSON（便于人工核对）
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_import_error_batch ON import_error(batch_id);
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS raw_student_snapshot (
   one_to_many_end_date TEXT,
   total_remaining_hours REAL,          -- 总剩余小时
   extra TEXT,                          -- 剩余列的 JSON 兜底（schema 演进用）
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_student_snapshot_batch ON raw_student_snapshot(batch_id);
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS raw_subject_snapshot (
   subject_remaining_hours REAL,        -- 科目剩余小时
   subject_end_date TEXT,               -- 科目停结课日期
   extra TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_subject_snapshot_batch ON raw_subject_snapshot(batch_id);
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS raw_renew_close_ratio (
   teacher_no TEXT,
   teacher_name TEXT,
   extra TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_renew_close_batch ON raw_renew_close_ratio(batch_id);
@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS raw_xusheng_detail (
   renew_class_amount REAL,             -- 续班课金额
   renew_hours_standard REAL,           -- 续费小时(正价)
   extra TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_xusheng_batch ON raw_xusheng_detail(batch_id);
@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS raw_xuke_detail (
   prev_2m_learning_center TEXT,        -- 前2个月上课学习中心
   prev_6m_learning_center TEXT,        -- 前6个月上课学习中心
   extra TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_xuke_batch ON raw_xuke_detail(batch_id);
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS raw_scheduled_course (
   one_to_many_type TEXT,
   charge_coefficient REAL,             -- 扣费系数
   extra TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_scheduled_batch ON raw_scheduled_course(batch_id);
@@ -272,7 +272,7 @@ CREATE TABLE IF NOT EXISTS raw_voucher (
   intent_grade TEXT,                   -- 意向使用年级
   remark TEXT,                         -- 备注
   extra TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_raw_voucher_batch ON raw_voucher(batch_id);
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS voucher_student_link (
   student_grade TEXT,
   link_kind TEXT NOT NULL,             -- real / parent_lead / student_lead / unknown / empty
   position INTEGER NOT NULL,           -- 在原单元格中的位置（从 1 起）
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   FOREIGN KEY (voucher_id) REFERENCES raw_voucher(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_voucher_student_link_voucher ON voucher_student_link(voucher_id);
@@ -311,7 +311,7 @@ CREATE TABLE IF NOT EXISTS teacher_student_map (
   grade TEXT,
   note TEXT,
   updated_by INTEGER,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   UNIQUE(teacher_no, student_id)
 );
 CREATE INDEX IF NOT EXISTS idx_teacher_student_teacher ON teacher_student_map(teacher_no);
@@ -327,7 +327,7 @@ CREATE TABLE IF NOT EXISTS mentor_student_map (
   grade TEXT,
   note TEXT,
   updated_by INTEGER,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   UNIQUE(mentor_no, student_id)
 );
 CREATE INDEX IF NOT EXISTS idx_mentor_student_mentor ON mentor_student_map(mentor_no);
@@ -347,9 +347,9 @@ CREATE TABLE IF NOT EXISTS indicator_overrides (
   effective_from TEXT,                 -- 生效起始（含）
   effective_to TEXT,                   -- 生效结束（含），NULL=永久
   created_by INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   updated_by INTEGER,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_indicator_overrides_lookup
   ON indicator_overrides(scope, key_type, key_value, indicator);
@@ -363,9 +363,9 @@ CREATE TABLE IF NOT EXISTS incentive_settings (
   effective_from TEXT NOT NULL,        -- YYYY-MM-DD
   effective_to TEXT,                   -- NULL = 永久
   created_by INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
   updated_by INTEGER,
-  updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_incentive_settings_lookup
   ON incentive_settings(scope, scope_value, effective_from);
@@ -378,7 +378,7 @@ CREATE TABLE IF NOT EXISTS product_match_rules (
   enabled INTEGER NOT NULL DEFAULT 1,
   note TEXT,
   created_by INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours'))
 );
 CREATE INDEX IF NOT EXISTS idx_product_match_rules_cat ON product_match_rules(course_category);
 `;
