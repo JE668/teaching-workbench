@@ -92,14 +92,14 @@ head_ "6. backup.sh 回退路径（M25 校正后的语义）"
 grep -q 'db.backup(' backup.sh                               && ok "先尝试容器内一致快照 .backup()" || bad "缺少一致快照尝试"
 grep -qE '三件套直拷|非原子' backup.sh                        && ok "退化路径有醒目告警" || bad "三件套直拷缺少告警"
 grep -q 'integrity_check' backup.sh                          && ok "备份后完整性校验" || bad "缺完整性校验"
-grep -q 'backup_one_db "bi.db"' backup.sh                    && ok "备份 bi.db（BI 数据底座）" || bad "backup.sh 未备份 bi.db"
-grep -q 'verify_one_db "$BI_DB_FILE"' backup.sh              && ok "备份后校验 bi.db" || bad "未校验 bi.db 备份件"
+grep -q 'backup_one_db "renewal.db"' backup.sh                    && ok "备份 renewal.db（续费看板）" || bad "backup.sh 未备份 renewal.db"
+grep -q 'verify_one_db "$RENEWAL_DB_FILE"' backup.sh              && ok "备份后校验 renewal.db" || bad "未校验 renewal.db 备份件"
 
 # ---------- 7. restore.sh 以 root 修属主 ----------
 head_ "7. restore.sh 恢复属主（M26）"
 grep -q 'docker exec -u 0 "\$CONTAINER"' scripts/restore.sh  && ok "chown 以 root 执行" || bad "chown 仍以非 root 执行"
 grep -q 'PUID:-1001' scripts/restore.sh                       && ok "属主落到 PUID" || bad "属主未落到 PUID"
-grep -q '/app/data/bi.db' scripts/restore.sh                  && ok "恢复 bi.db" || bad "restore.sh 未恢复 bi.db"
+grep -q '/app/data/renewal.db' scripts/restore.sh                  && ok "恢复 renewal.db" || bad "restore.sh 未恢复 renewal.db"
 
 printf '\n\033[1m========== 结果 ==========\033[0m\n'
 printf '通过 %d 项，失败 %d 项\n' "$PASS" "$FAIL"

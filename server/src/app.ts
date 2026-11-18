@@ -26,9 +26,8 @@ import catalogRoutes from './routes/catalog.js';
 import reportRoutes from './routes/reports.js';
 import reportAiRoutes from './routes/reports.ai.js';
 import aiMetricsRoutes from './routes/aiMetrics.js';
-import biRoutes from './bi/biRoutes.js';
-import { initBiDb } from './bi/migrate.js';
-import { seedFileRegistry } from './bi/fileRegistry.js';
+import renewalRoutes from './renewal/renewalRoutes.js';
+import { initRenewalDb } from './renewal/db.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -40,9 +39,9 @@ export async function createApp() {
   // 不 await 的话首批请求可能落在迁移/索引重建/RENAME 完成之前，撞进半初始化的库。
   await initDatabase();
 
-  // BI 报表模块（独立 bi.db）：初始化表结构 + 同步文件类型注册表
-  initBiDb();
-  seedFileRegistry();
+  // 续费看板模块（独立 renewal.db）：初始化表结构。
+  // 数据源收敛为一份用户做好的续费统计表 xlsx，解析入库后看板直接出图。
+  initRenewalDb();
 
   const app = express();
 
@@ -244,10 +243,10 @@ export async function createApp() {
 
   app.use('/api', authMiddleware, uploadRoutes);
 
-  // ========== BI 报表模块（独立 bi.db）==========
-  // 第一期：数据底座。上传 7 类 xlsx 报表，按 batch 落地到 bi.db。
-  // 指标计算、看板在第二/三期实现。
-  app.use('/api/bi', authMiddleware, biRoutes);
+  // ========== 续费看板模块（独立 renewal.db）==========
+  // 上传用户在 Excel 里已做好的续费统计表，解析入库；
+  // 教师统计表按 激励/学段/学管/课时 4 个 tab 出图，另有科组对比/学管业绩/续生漏斗/风险清单。
+  app.use('/api/renewal', authMiddleware, renewalRoutes);
 
   // ========== 错误处理 ==========
   app.use(notFound);

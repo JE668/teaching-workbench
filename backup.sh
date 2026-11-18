@@ -23,12 +23,12 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
 mkdir -p "$BACKUP_DIR"
 
-# ===== 数据库备份（teaching.db + bi.db）=====
+# ===== 数据库备份（teaching.db + renewal.db）=====
 # 服务开着时库是 WAL 模式，只拷 .db 会丢掉 -wal 里尚未合并的写入。
 # 首选 better-sqlite3 的在线备份（会正确读完 WAL）；失败才退化成三件套一起拷。
-# bi.db（BI 报表数据底座）与 teaching.db 同目录，一并备份，否则报表上传/指标配置全丢。
+# renewal.db（续费看板）与 teaching.db 同目录，一并备份，否则报表上传/指标配置全丢。
 backup_one_db() {
-  local src_name="$1"           # 容器内文件名，如 teaching.db / bi.db
+  local src_name="$1"           # 容器内文件名，如 teaching.db / renewal.db
   local dst_file="$2"           # 宿主目标路径
   local tmp_name="tw-backup-$src_name"
 
@@ -96,12 +96,12 @@ verify_one_db() {
 
 log "备份数据库..."
 DB_FILE="$BACKUP_DIR/${BACKUP_PREFIX}$TIMESTAMP.db"
-BI_DB_FILE="$BACKUP_DIR/${BACKUP_PREFIX}bi-$TIMESTAMP.db"
+RENEWAL_DB_FILE="$BACKUP_DIR/${BACKUP_PREFIX}renewal-$TIMESTAMP.db"
 backup_one_db "teaching.db" "$DB_FILE" || true
-backup_one_db "bi.db" "$BI_DB_FILE" || true
+backup_one_db "renewal.db" "$RENEWAL_DB_FILE" || true
 
 verify_one_db "$DB_FILE"
-verify_one_db "$BI_DB_FILE"
+verify_one_db "$RENEWAL_DB_FILE"
 
 # ===== 上传文件（课堂照片 / 作业截图）=====
 log "备份上传文件..."
@@ -128,18 +128,18 @@ fi
 log "清理旧备份（保留最近7天）..."
 cd "$BACKUP_DIR"
 # 同时覆盖常规备份（teaching-workbench-*）与恢复前快照（pre-restore-*）
-find . -maxdepth 1 \( -name 'teaching-workbench-*.db*' -o -name 'teaching-workbench-bi-*.db*' -o -name 'pre-restore-*.db*' \) -mtime +7 -delete 2>/dev/null || true
+find . -maxdepth 1 \( -name 'teaching-workbench-*.db*' -o -name 'teaching-workbench-renewal-*.db*' -o -name 'pre-restore-*.db*' \) -mtime +7 -delete 2>/dev/null || true
 # pre-restore 的 uploads/密钥与常规备份共用同一条时间戳命名，一并被下面匹配
 find . -maxdepth 1 -name 'uploads-*.tar.gz' -mtime +7 -delete 2>/dev/null || true
 find . -maxdepth 1 -name '.jwt_secret-*' -mtime +7 -delete 2>/dev/null || true
 
 TOTAL_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "0B")
 DB_COUNT=$(find "$BACKUP_DIR" -maxdepth 1 -name 'teaching-workbench-[0-9]*.db' | wc -l | tr -d ' ')
-BI_DB_COUNT=$(find "$BACKUP_DIR" -maxdepth 1 -name 'teaching-workbench-bi-*.db' | wc -l | tr -d ' ')
+RENEWAL_DB_COUNT=$(find "$BACKUP_DIR" -maxdepth 1 -name 'teaching-workbench-renewal-*.db' | wc -l | tr -d ' ')
 UPLOAD_COUNT=$(find "$BACKUP_DIR" -maxdepth 1 -name 'uploads-*.tar.gz' | wc -l | tr -d ' ')
 SECRET_COUNT=$(find "$BACKUP_DIR" -maxdepth 1 -name '.jwt_secret-*' | wc -l | tr -d ' ')
 
 echo ""
 log "========== 备份完成 =========="
 log "备份目录: $BACKUP_DIR"
-log "主库: $DB_COUNT 个 | BI 库: $BI_DB_COUNT 个 | 上传文件: $UPLOAD_COUNT 个 | JWT 密钥: $SECRET_COUNT 个 | 总大小: $TOTAL_SIZE"
+log "主库: $DB_COUNT 个 | 续费库: $RENEWAL_DB_COUNT 个 | 上传文件: $UPLOAD_COUNT 个 | JWT 密钥: $SECRET_COUNT 个 | 总大小: $TOTAL_SIZE"

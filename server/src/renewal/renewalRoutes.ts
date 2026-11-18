@@ -1,0 +1,208 @@
+import { Router } from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { AuthenticatedRequest } from '../types/index.js';
+import { log } from '../utils/logger.js';
+import { rateLimit } from '../middleware/rateLimit.js';
+import { renewalDb, RENEWAL_UPLOAD_DIR } from './db.js';
+import {
+  importRenewalFile,
+  listReports,
+  deleteReport,
+  latestReportId,
+} from './renewalService.js';
+import {
+  getTeacherStats,
+  getGroupComparison,
+  getManagerPerf,
+  getFunnel,
+  getRiskStudents,
+  getStudentStatusSummary,
+} from './analytics.js';
+
+/**
+ * 续费看板路由。
+ *
+ * 上传只收一份 xlsx（用户在 Excel 里已做好的续费统计表），解析入库后
+ * 看板页按 tab / 指标取数出图。
+ */
+const router = Router();
+
+// 上传是重 I/O：15 分钟窗口内最多 10 次
+const renewalUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: '报表上传过于频繁，请稍后再试',
+});
+
+const renewalStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, RENEWAL_UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    // multer 1.x 的 originalname 按 latin-1 解码，中文文件名会变 mojibake，统一转回 utf8
+    const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    file.originalname = originalname;
+    cb(null, `renewal-${unique}${path.extname(originalname)}`);
+  },
+});
+
+const renewalUpload = multer({
+  storage: renewalStorage,
+  limits: { fileSize: 60 * 1024 * 1024 },   // 60MB（汇总表 16 sheet 约 1.5MB，留足余量）
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.xlsx', '.xls'].includes(ext)) cb(null, true);
+    else cb(new Error('仅支持 xlsx / xls 格式'));
+  },
+});
+
+/** 拼出 multer 落地文件的绝对路径：优先用 file.path，否则按目录 + 文件名拼。 */
+function fileAbsolutePath(file: Express.Multer.File): string {
+  return file.path || path.join(RENEWAL_UPLOAD_DIR, file.filename);
+}
+
+/** 上传并解析续费统计表 */
+router.post('/upload', renewalUploadLimiter, (req: AuthenticatedRequest, res, next) => {
+  renewalUpload.single('file')(req, res, async (err) => {
+    const uploadedPath = req.file ? fileAbsolutePath(req.file) : null;
+    const cleanup = () => { if (uploadedPath) { try { fs.rmSync(uploadedPath, { force: true }); } catch { /* 忽略清理失败 */ } } };
+
+    try {
+      // multer 自身的错误（扩展名不过滤、超过体积上限、磁盘写入失败）统一转 400。
+      // 不能交给 errorHandler：那会变成一个 500，用户只能看到「服务器内部错误」。
+      if (err) return res.status(400).json({ error: '文件读取失败：' + err.message });
+      if (!req.file) return res.status(400).json({ error: '未收到文件（表单字段名应为 file）' });
+
+      const file = req.file;
+      // 上传文件入库成功后即删：数据已在库里，磁盘不留副本
+      const report = await importRenewalFile(file.path, file.originalname, file.size, req.userId ?? null);
+      cleanup();
+      res.status(201).json({ report });
+    } catch (e) {
+      cleanup();
+      const msg = e instanceof Error ? e.message : String(e);
+      log.error({ err: msg }, '续费统计表上传失败');
+      res.status(400).json({ error: '解析失败：' + msg.slice(0, 300) });
+    }
+  });
+});
+
+/** 报表批次列表 */
+router.get('/reports', (_req, res) => {
+  res.json({ reports: listReports() });
+});
+
+/** 删除一批（整批回滚） */
+router.delete('/reports/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: '无效的报表 id' });
+    return;
+  }
+  const ok = deleteReport(id);
+  if (!ok) {
+    res.status(404).json({ error: '报表不存在' });
+    return;
+  }
+  res.json({ deleted: id });
+});
+
+/** 解析错误明细 */
+router.get('/reports/:id/errors', (req, res) => {
+  const id = Number(req.params.id);
+  const rows = renewalDb.prepare(`
+    SELECT sheet_name, row_number, error_message FROM renewal_import_error
+    WHERE report_id = ? ORDER BY row_number
+  `).all(id);
+  res.json({ errors: rows });
+});
+
+
+/**
+ * 教师统计明细（含学生网格 + 颜色状态）。tab: incentive | stage | mentor | hours
+ * 不传 reportId 时用最新一份。
+ */
+router.get('/dashboard/teacher-stats', (req: AuthenticatedRequest, res) => {
+  const tab = String(req.query.tab || 'incentive');
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  try {
+    const rows = getTeacherStats(reportId, tab);
+    res.json({ tab, reportId, rows });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 科组对比 */
+router.get('/analytics/group-compare', (req: AuthenticatedRequest, res) => {
+  const tab = String(req.query.tab || 'incentive');
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  try {
+    const rows = getGroupComparison(reportId, tab);
+    res.json({ tab, reportId, rows });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 学管业绩 */
+router.get('/analytics/manager-perf', (req: AuthenticatedRequest, res) => {
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  res.json({ reportId, rows: getManagerPerf(reportId) });
+});
+
+/** 续生漏斗 */
+router.get('/analytics/funnel', (req: AuthenticatedRequest, res) => {
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  res.json({ reportId, rows: getFunnel(reportId) });
+});
+
+/** 风险学生清单 */
+router.get('/analytics/risk-list', (req: AuthenticatedRequest, res) => {
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  const limit = Math.min(Number(req.query.limit) || 200, 500);
+  res.json({ reportId, rows: getRiskStudents(reportId, limit) });
+});
+
+/** 学生网格状态分布 */
+router.get('/analytics/student-status', (req: AuthenticatedRequest, res) => {
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  res.json({ reportId, rows: getStudentStatusSummary(reportId) });
+});
+
+/** 解析报表 id：显式传则用它，否则取最新一份 */
+function resolveReportId(raw: unknown): number | null {
+  if (typeof raw === 'string' && raw.trim()) {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) return n;
+    return null;
+  }
+  return latestReportId();
+}
+
+export default router;
