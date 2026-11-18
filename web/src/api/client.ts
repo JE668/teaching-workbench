@@ -11,6 +11,41 @@ async function fetchApi(input: RequestInfo | URL, init?: RequestInit): Promise<R
   }
 }
 
+/**
+ * 合并外部 AbortSignal 与内部超时信号。
+ * 任一触发即中止；返回 controller 便于调用方在请求完成后清理定时器。
+ * @param external 调用方传入的 signal（可能为 undefined）
+ * @param timeoutMs 请求超时毫秒数；0 或 falsy 表示不限时
+ */
+function withTimeout(external: AbortSignal | null | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void } {
+  if (!timeoutMs) {
+    if (!external) return { signal: new AbortController().signal, cleanup: () => {} };
+    // 仅外部信号：原样返回即可（fetch 接受任意 AbortSignal）
+    return { signal: external, cleanup: () => {} };
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('请求超时', 'TimeoutError')), timeoutMs);
+  const onExternalAbort = () => controller.abort(external?.reason);
+  if (external) {
+    if (external.aborted) controller.abort(external.reason);
+    else external.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (external) external.removeEventListener('abort', onExternalAbort);
+    },
+  };
+}
+
+/** 各类请求的默认超时（毫秒）。0 = 不限时。 */
+const DEFAULT_TIMEOUTS = {
+  request: 15_000,
+  upload: 60_000,
+  stream: 0, // SSE 长连接，超时由服务端 watchdog 控制
+} as const;
+
 class ApiClient {
   private token: string | null = null;
   private user: any = null;
@@ -88,18 +123,23 @@ class ApiClient {
       throw new Error('API 路径配置错误：request() 已自动添加 /api 前缀');
     }
 
+    // W12：只有带 body 的请求才设 Content-Type。GET/DELETE 不带 body，
+    // 设置 Content-Type 反而会让部分网关/反代误判为不合法请求并直接拒绝。
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...options.headers as Record<string, string>,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers as Record<string, string>),
     };
 
     if (this.token) {
       headers['Authorization'] = 'Bearer ' + this.token;
     }
 
+    const { signal: mergedSignal, cleanup } = withTimeout(options.signal, DEFAULT_TIMEOUTS.request);
+    try {
     const response = await fetchApi(BASE_URL + path, {
       ...options,
       headers,
+      signal: mergedSignal,
     });
 
     if (!response.ok) {
@@ -115,19 +155,31 @@ class ApiClient {
     if (response.status === 204) return undefined as T;
     const len = response.headers.get('content-length');
     if (len === '0') return undefined as T;
-    return response.json();
+    return await response.json();
+    } finally {
+      cleanup();
+    }
   }
 
-  async upload<T = any>(path: string, formData: FormData): Promise<T> {
+  async upload<T = any>(path: string, formData: FormData, signal?: AbortSignal): Promise<T> {
     const headers: Record<string, string> = {};
     if (this.token) {
       headers['Authorization'] = 'Bearer ' + this.token;
     }
-    const response = await fetchApi(BASE_URL + path, {
+    const { signal: mergedSignal, cleanup } = withTimeout(signal, DEFAULT_TIMEOUTS.upload);
+    let response: Response;
+    try {
+    response = await fetchApi(BASE_URL + path, {
       method: 'POST',
       headers,
       body: formData,
+      signal: mergedSignal,
     });
+    } finally {
+      // 注意：upload 在拿到 response 后还要读 body（json），不能立即 cleanup；
+      // 但 abort 只影响 fetch 阶段，body 读取不受 signal 控制，这里立即 cleanup 是安全的。
+      cleanup();
+    }
     if (!response.ok) {
       // 注意：反向代理层（nginx / Lucky 等）拒绝时返回的是 HTML 错误页，
       // 解析 JSON 会失败。此时必须把 HTTP 状态带出来，

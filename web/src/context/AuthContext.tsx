@@ -106,9 +106,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = () => {
     // 通知服务端收回图片访问 cookie。
-    // 不等待结果：登出必须立刻生效，不能因为网络问题卡住界面。
-    // 共用设备上若不收回，登出后仍可直接打开图片 URL。
-    api.post('/auth/logout', {}).catch(() => {});
+    // W14: 使用 fetch keepalive 替代 fire-and-forget api.post —— 标签页关闭时仍能送达，
+    // 且带上 Authorization 头（api.post 不一定在所有调用时序里都可用）。
+    try {
+      const token = api.getToken();
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+        body: '{}',
+      }).catch(() => {
+        /* 登出必须立刻生效，网络失败时仅服务端 cookie 未回收，下次访问靠 401 兜底 */
+      });
+    } catch {
+      /* 同上：忽略 */
+    }
 
     // 清掉本地的回访草稿。
     // 草稿里是学生姓名、课堂表现原文和还没发出去的评语 —— 共用设备上

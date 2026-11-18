@@ -111,6 +111,15 @@ export function CommandPalette({ isOpen, onClose, items }: CommandPaletteProps) 
             <input
               ref={inputRef}
               type="text"
+              role="combobox"
+              aria-expanded={isOpen}
+              aria-controls="cmd-listbox"
+              aria-autocomplete="list"
+              aria-activedescendant={
+                filteredItems[selectedIndex]
+                  ? `cmd-option-${filteredItems[selectedIndex].id}`
+                  : undefined
+              }
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="输入命令或搜索… (⌘K 打开，Esc 关闭)"
@@ -128,6 +137,7 @@ export function CommandPalette({ isOpen, onClose, items }: CommandPaletteProps) 
         {/* 结果列表 */}
         <div
           ref={listRef}
+          id="cmd-listbox"
           className="max-h-[60vh] overflow-auto p-2"
           role="listbox"
           aria-label="命令面板"
@@ -155,6 +165,7 @@ export function CommandPalette({ isOpen, onClose, items }: CommandPaletteProps) 
                     {groupItems.map((item) => (
                       <button
                         key={item.id}
+                        id={`cmd-option-${item.id}`}
                         data-index={filteredItems.indexOf(item)}
                         onClick={() => {
                           item.onSelect();

@@ -15,7 +15,7 @@
 const CACHE = 'tw-static-v1';
 
 // Vite 产物文件名带内容哈希，改代码即换名，所以缓存不会串版本
-const IMMUTABLE = /^\/(assets\/.+|icon-\d+\.png|apple-touch-icon\.png)$/;
+const IMMUTABLE = /^\/(assets\/.+|icon-\d+\.png|apple-touch-icon\.png|manifest\.webmanifest)$;/;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

@@ -85,6 +85,11 @@ function replyFor(payload) {
   if (prompt.includes('评课维度') || prompt.includes('被听课老师')) return OBSERVATION_REPLY;
   if (prompt.includes('请写这一块报告的本月总结')) return REPORT_SUMMARY_REPLY;
   if (prompt.includes('请写这一块报告的课程规划说明')) return REPORT_PLAN_REPLY;
+
+  // W8: 后端 prompt 措辞改动时这里会静默退到 FOLLOWUP_REPLY，断言可能误报。
+  // 加防御性日志：CI 里看见这行就该回头更新匹配串。
+  console.warn('[mock-sensenova] replyFor: 未命中已知提示词，回退到 FOLLOWUP_REPLY。' +
+    '若为新增链路，请补充匹配串。prompt 前 200 字：' + prompt.slice(0, 200));
   return FOLLOWUP_REPLY;
 }
 

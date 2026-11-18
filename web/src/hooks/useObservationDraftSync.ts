@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { stableStringify, fieldOf } from '../lib/draftSyncUtils';
 
 /**
  * 听评课草稿实时同步。
@@ -35,29 +36,6 @@ const LOCAL_GRACE_MS = 3000;
 const PUSH_DEBOUNCE_MS = 500;
 const RECONNECT_MS = 2500;
 
-/**
- * 键顺序无关的序列化。
- * 用于判断"本地状态是否真的变了"——直接 JSON.stringify 会因键顺序不同而误判。
- */
-function stableStringify(value: any): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
-  return (
-    '{' +
-    Object.keys(value)
-      .sort()
-      .map((k) => JSON.stringify(k) + ':' + stableStringify(value[k]))
-      .join(',') +
-    '}'
-  );
-}
-
-/** 读取某个 DOM 元素上标记的同步字段名 */
-function fieldOf(el: Element | null): string | null {
-  if (!el) return null;
-  return el.getAttribute?.('data-sync-field') || null;
-}
-
 export function useObservationDraftSync({ state, observationId, applyRemote, onRemoteCleared, paused }: Options) {
   // 每次挂载生成一个设备标识，用于区分"是我发的"还是"别的设备发的"
   const clientId = useMemo(() => Math.random().toString(36).slice(2, 10), []);
@@ -66,7 +44,8 @@ export function useObservationDraftSync({ state, observationId, applyRemote, onR
   /** 其它在线设备数量（不含自己） */
   const [peerCount, setPeerCount] = useState(0);
 
-  const lastLocalEdit = useRef<{ field: string; at: number }>({ field: '', at: 0 });
+  /** W4: 字段名 → 最近一次本地编辑时间。Map 而非单 ref，允许多字段在 3s 保护期内并存 */
+  const lastLocalEdit = useRef<Map<string, number>>(new Map());
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -81,23 +60,25 @@ export function useObservationDraftSync({ state, observationId, applyRemote, onR
 
   /** 供输入框调用：标记"我刚改了这个字段" */
   const markLocalEdit = useCallback((field: string) => {
-    lastLocalEdit.current = { field, at: Date.now() };
+    lastLocalEdit.current.set(field, Date.now());
   }, []);
 
   /** 计算本次远端更新需要跳过的字段 */
   const computeSkipFields = useCallback((): string[] => {
-    const skip: string[] = [];
+    const skip = new Set<string>();
 
     // ① 正在输入的字段
     const focused = fieldOf(document.activeElement);
-    if (focused) skip.push(focused);
+    if (focused) skip.add(focused);
 
-    // ② 3 秒内本地刚改过的字段
-    if (Date.now() - lastLocalEdit.current.at < LOCAL_GRACE_MS && lastLocalEdit.current.field) {
-      skip.push(lastLocalEdit.current.field);
+    // ② 3 秒内本地刚改过的字段（可有多个：先编辑正文再改表单，两个都受保护）
+    const now = Date.now();
+    for (const [field, at] of lastLocalEdit.current) {
+      if (now - at < LOCAL_GRACE_MS) skip.add(field);
+      else lastLocalEdit.current.delete(field);
     }
 
-    return [...new Set(skip)];
+    return [...skip];
   }, []);
 
   // ---------- 推送本地改动 ----------

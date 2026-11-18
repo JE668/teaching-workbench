@@ -5,6 +5,27 @@ import { prepareImageForUpload, formatBytes, MAX_UPLOAD_BYTES } from '../lib/ima
 import { extractDroppedImages } from '../lib/dropFiles';
 import { loadDraft } from '../lib/draft';
 
+/** 支持的图片 MIME 白名单 */
+const IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/heic',
+  'image/heif',
+]);
+
+/** 按扩展名兜底（微信拖拽常给空 MIME） */
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
+
+/** 判断文件是否为可上传的图片类型。
+ *  MIME 存在时优先按 MIME 判断；为空时按扩展名兜底。 */
+function isImageFile(file: File): boolean {
+  if (file.type) return IMAGE_MIME_TYPES.has(file.type.toLowerCase());
+  return IMAGE_EXTENSIONS.test(file.name || '');
+}
+
 export interface UseImageUploadResult {
   images: string[];
   setImages: React.Dispatch<React.SetStateAction<string[]>>;
@@ -80,9 +101,17 @@ export function useImageUpload(ownerId: number | null): UseImageUploadResult {
       let savedBytes = 0;
       /** 超过单张上限的文件：直接跳过并一次性提示，不发起注定 413 的请求 */
       const oversized: string[] = [];
+      /** 非图片类型的文件：本地拦截，避免发起注定失败的请求 */
+      const rejected: string[] = [];
 
       try {
         for (const file of list) {
+          // W3：先做类型校验。微信拖拽会给出空 MIME，此时按扩展名兜底。
+          if (!isImageFile(file)) {
+            rejected.push(file.name || '未命名文件');
+            continue;
+          }
+
           // 压缩兜不住的情况（HEIC 在 Chrome 解不开、超大 TIFF 等）会走 passthrough，
           // 这里先按原始体积拦一刀，避免用户等完上传才看到 413。
           if (file.size > MAX_UPLOAD_BYTES) {
@@ -112,6 +141,13 @@ export function useImageUpload(ownerId: number | null): UseImageUploadResult {
           toast.error(
             '有 ' + oversized.length + ' 张图片超过 ' + formatBytes(MAX_UPLOAD_BYTES) +
             '，已跳过：' + oversized.join('、') + '。请先裁剪或压缩后再上传。'
+          );
+        }
+
+        if (rejected.length) {
+          toast.error(
+            '有 ' + rejected.length + ' 个文件不是支持的图片格式（JPG/PNG/WebP/GIF/HEIC），已跳过：' +
+            rejected.join('、')
           );
         }
 

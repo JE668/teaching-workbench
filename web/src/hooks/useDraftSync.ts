@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client';
+import { stableStringify, fieldOf } from '../lib/draftSyncUtils';
 
 /**
  * 跨设备草稿实时同步。
@@ -34,29 +35,6 @@ interface Options {
 const LOCAL_GRACE_MS = 3000;
 const PUSH_DEBOUNCE_MS = 500;
 const RECONNECT_MS = 2500;
-
-/**
- * 键顺序无关的序列化。
- * 用于判断"本地状态是否真的变了"——直接 JSON.stringify 会因键顺序不同而误判。
- */
-function stableStringify(value: any): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
-  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
-  return (
-    '{' +
-    Object.keys(value)
-      .sort()
-      .map((k) => JSON.stringify(k) + ':' + stableStringify(value[k]))
-      .join(',') +
-    '}'
-  );
-}
-
-/** 读取某个 DOM 元素上标记的同步字段名 */
-function fieldOf(el: Element | null): string | null {
-  if (!el) return null;
-  return el.getAttribute?.('data-sync-field') || null;
-}
 
 export function useDraftSync({ state, applyRemote, onRemoteCleared, paused }: Options) {
   // 每次挂载生成一个设备标识，用于区分"是我发的"还是"别的设备发的"

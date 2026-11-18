@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // 后端地址：E2E 场景下通过环境变量指向测试实例
@@ -11,10 +11,24 @@ const API_TARGET = process.env.VITE_API_TARGET || process.env.E2E_API_TARGET || 
 const proxy = {
   '/api': { target: API_TARGET, changeOrigin: true },
   '/uploads': { target: API_TARGET, changeOrigin: true },
+  // Docker/NAS 探活端点。dev 下手动打开 /health 也能看到真实状态。
+  '/health': { target: API_TARGET, changeOrigin: true },
 };
 
+// W9: 生产构建时注入 CSP meta 标签（防 XSS 注入的最坏情况）。
+// 长期方案：服务端下 httpOnly cookie + Set-Cookie CSP header。
+// dev 不注入以保留 Vite HMR；build/preview 走这份。
+const CSP_META = '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\' \'unsafe-inline\' \'unsafe-eval\'; style-src \'self\' \'unsafe-inline\' data:; img-src \'self\' data: blob:; font-src \'self\' data:; connect-src \'self\'; manifest-src \'self\'; frame-ancestors \'none\'; base-uri \'self\'; form-action \'self\'">';
+const injectCsp = (): Plugin => ({
+  name: 'inject-csp-meta',
+  apply: 'build',
+  transformIndexHtml(html) {
+    return html.replace('<!--%CSP_META%-->', CSP_META);
+  },
+});
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), injectCsp()],
   // 路由级分包之后，再手动切一层 vendor，避免每个页面 chunk 都各自重复打包 react。
   // 注意：这里只放「稳定不变的第三方库」。
   // 业务模块（含 framer-motion，被多个页面共享）交给 Rollup 的动态分块处理，

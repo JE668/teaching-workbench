@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -52,12 +52,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [remove]
   );
 
-  const value: ToastContextValue = {
-    toast,
-    success: (m) => toast(m, 'success'),
-    error: (m) => toast(m, 'error'),
-    info: (m) => toast(m, 'info'),
-  };
+  // W5: value 对象每渲染重建会让 23 个消费组件全部重渲染。用 useMemo + useCallback
+  // 把引用固定下来，items 变化时不再触发下游。
+  const success = useCallback((m: string) => toast(m, 'success'), [toast]);
+  const error = useCallback((m: string) => toast(m, 'error'), [toast]);
+  const info = useCallback((m: string) => toast(m, 'info'), [toast]);
+  const value = useMemo(
+    () => ({ toast, success, error, info }),
+    [toast, success, error, info]
+  );
 
   return (
     <ToastContext.Provider value={value}>
