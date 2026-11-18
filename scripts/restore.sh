@@ -25,9 +25,12 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # ===== 列出备份（只读操作，不需要容器在跑）=====
 if [ "${1:-}" = "--list" ]; then
-  log "可用数据库备份（${BACKUP_DIR}）:"
-  ls -1 "$BACKUP_DIR"/teaching-workbench-*.db 2>/dev/null \
+  log "可用主库备份（${BACKUP_DIR}）:"
+  ls -1 "$BACKUP_DIR"/teaching-workbench-[0-9]*.db 2>/dev/null \
     | sed -E "s|.*teaching-workbench-([0-9]{8}-[0-9]{6})\.db|\1|" || { warn "没有找到备份"; exit 0; }
+  log "可用 BI 库备份（${BACKUP_DIR}）:"
+  ls -1 "$BACKUP_DIR"/teaching-workbench-bi-*.db 2>/dev/null \
+    | sed -E "s|.*teaching-workbench-bi-([0-9]{8}-[0-9]{6})\.db|\1|" || warn "没有 BI 库备份"
   exit 0
 fi
 
@@ -38,7 +41,7 @@ if [ -n "${1:-}" ]; then
   [[ "$1" =~ $STAMP_RE ]] || error "时间戳格式应为 YYYYmmdd-HHMMSS，或用 --list 查看"
   STAMP="$1"
 else
-  STAMP=$(ls -1 "$BACKUP_DIR"/teaching-workbench-*.db 2>/dev/null \
+  STAMP=$(ls -1 "$BACKUP_DIR"/teaching-workbench-[0-9]*.db 2>/dev/null \
     | sed -E "s|.*teaching-workbench-([0-9]{8}-[0-9]{6})\.db|\1|" | tail -1 || true)
   [ -n "$STAMP" ] || error "备份目录里没有找到数据库备份：$BACKUP_DIR"
   warn "未指定时间戳，使用最新备份: $STAMP"
@@ -106,10 +109,32 @@ if [ -f "$SECRET_FILE" ] && ! grep -qE '^JWT_SECRET=.+' .env 2>/dev/null; then
   docker exec "$CONTAINER" sh -c 'chmod 600 /app/data/.jwt_secret' 2>/dev/null || true
 fi
 
+# ===== BI 库（bi.db）=====
+# bi.db 与 teaching.db 同时间戳备份；不存在时可能是老备份，警告但不阻塞主库恢复。
+BI_DB_FILE="$BACKUP_DIR/teaching-workbench-bi-$STAMP.db"
+if [ -f "$BI_DB_FILE" ]; then
+  log "恢复 BI 库..."
+  docker cp "$BI_DB_FILE" "$CONTAINER:/tmp/restore-bi.db"
+  docker exec -u 0 "$CONTAINER" sh -c '
+    mv /tmp/restore-bi.db /app/data/bi.db &&
+    rm -f /app/data/bi.db-wal /app/data/bi.db-shm 2>/dev/null;
+    chown "${PUID:-1001}:${PGID:-1001}" /app/data/bi.db ||
+      chown nodejs:nodejs /app/data/bi.db 2>/dev/null || true'
+  docker exec -u 0 "$CONTAINER" sh -c 'test -w /app/data/bi.db || chmod 664 /app/data/bi.db' 2>/dev/null || true
+  BI_INTEG=$(docker exec "$CONTAINER" node --input-type=module -e \
+    "import Database from 'better-sqlite3';const db=new Database('/app/data/bi.db',{readonly:true});console.log(db.pragma('integrity_check',{simple:true}));db.close()" \
+    < /dev/null 2>&1 | tail -1)
+  [ "$BI_INTEG" = "ok" ] || warn "BI 库完整性校验失败（返回: ${BI_INTEG}），请人工检查 $BI_DB_FILE"
+  log "BI 库恢复完成"
+else
+  warn "该时间戳没有 BI 库备份（可能是 bi.db 上线前的旧备份），跳过"
+fi
+
 log "重启后端服务..."
 docker compose up -d backend || error "启动后端失败"
 
 echo ""
 log "========== 恢复完成 =========="
-log "数据库: teaching-workbench-$STAMP.db"
+log "主库: teaching-workbench-$STAMP.db"
+log "BI 库: teaching-workbench-bi-$STAMP.db（若存在）"
 warn "请打开页面确认数据正确；确认后可删除 uploads.bak"
