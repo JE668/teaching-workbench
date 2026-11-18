@@ -394,6 +394,166 @@ export async function parseVoucher(filePath: string): Promise<MapperResult> {
 // ============ 路由解析器注册 ============
 export type BiParser = (filePath: string) => Promise<MapperResult>;
 
+// ============ 个人业绩统计 ============
+// 源文件是三层合并表头（A1 标题 + A3 三大组 + A4 基础字段 + A5 业绩字段），
+// 数据从第 7 行起，第 27 行是小计、第 28 行是分页信息。
+// 策略：用 parseXlsx 以第 5 行为表头行（这一行 L-X 有完整列名），
+// A-K 列在第 5 行是空的，mapRows 会按第 4 行对应列读 —— 但 mapRows 不支持双层，
+// 因此这里绕过 mapRows，直接基于 parseXlsx + 自定义行→列映射。
+interface PersonalPerfRecord {
+  group_name: string | null;
+  branch_company: string | null;
+  learning_center: string | null;
+  performer: string | null;
+  performer_no: string | null;
+  department: string | null;
+  perf_source: string | null;
+  operator: string | null;
+  contract_grade: string | null;
+  student_name: string | null;
+  contract_type: string | null;
+  product_type: string | null;
+  perf_new_sign: number | null;
+  perf_renew: number | null;
+  perf_received: number | null;
+  perf_refund: number | null;
+  perf_total: number | null;
+  live_new_sign: number | null;
+  live_renew: number | null;
+  live_new_refund: number | null;
+  live_renew_refund: number | null;
+  live_total: number | null;
+  grand_received: number | null;
+  grand_refund: number | null;
+  grand_total: number | null;
+  source_row: number | null;
+}
+
+function splitPerformerNo(raw: string | null): { performer: string | null; performer_no: string | null } {
+  if (!raw) return { performer: null, performer_no: null };
+  const m = raw.match(/^(.*)\(([^)]+)\)\s*$/);
+  if (m) {
+    const name = m[1].trim();
+    const no = m[2].trim();
+    return { performer: name || raw, performer_no: no || null };
+  }
+  return { performer: raw, performer_no: null };
+}
+
+export async function parsePersonalPerfDirect(filePath: string): Promise<MapperResult> {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  const sheet = wb.worksheets[0];
+  if (!sheet) throw new Error('文件没有任何 sheet');
+
+  const records: Record<string, unknown>[] = [];
+  const errors: { rowNumber: number; errorCode: string; errorMessage: string; rawData: Record<string, unknown> }[] = [];
+  let totalSourceRows = 0;
+
+  // 数据从第 7 行开始（第 1 行标题，第 3-5 行表头，第 6 行空）
+  for (let r = 7; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const cell = (col: number): string | number | null => {
+      const v = row.getCell(col).value;
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'object' && 'richText' in v) {
+        const rt = (v as { richText: { text: string }[] }).richText;
+        const s = rt.map(x => x.text).join('').trim();
+        return s === '' ? null : s;
+      }
+      if (typeof v === 'object' && 'result' in v) {
+        const res = (v as { result: unknown }).result;
+        if (res === null || res === undefined) return null;
+        return typeof res === 'number' ? res : String(res).trim() || null;
+      }
+      if (typeof v === 'string') {
+        const s = v.trim();
+        return s === '' ? null : s;
+      }
+      if (typeof v === 'number') return v;
+      return String(v).trim() || null;
+    };
+
+    const branch = cell(2);
+    const performer = cell(4);
+    const studentName = cell(9);
+    const productType = cell(11);
+
+    // 跳过小计行（A-K 全空，K 列含"小计"）和分页行
+    const kVal = cell(11);
+    if (typeof kVal === 'string' && kVal.includes('小计')) {
+      totalSourceRows++;
+      continue;
+    }
+    // 分页行：A-J 全空，F 列有"共 X 页"或 J 列有"1 - 20"
+    const aVal = cell(1);
+    const fVal = cell(6);
+    const jVal = cell(10);
+    if (aVal === null && (typeof fVal === 'string' && fVal.includes('页') || typeof jVal === 'string' && /共 \d+ 条/.test(jVal))) {
+      totalSourceRows++;
+      continue;
+    }
+    // 完全空行
+    if (aVal === null && branch === null && performer === null && studentName === null) {
+      continue;
+    }
+
+    totalSourceRows++;
+
+    // 必填：分公司 + 业绩人员
+    if (branch === null || performer === null) {
+      errors.push({
+        rowNumber: r,
+        errorCode: 'MISSING_REQUIRED',
+        errorMessage: '缺少分公司或业绩人员',
+        rawData: { branch, performer },
+      });
+      continue;
+    }
+
+    const { performer: pName, performer_no } = splitPerformerNo(String(performer));
+    const num = (v: string | number | null): number | null => {
+      if (v === null || v === '') return null;
+      if (typeof v === 'number') return v;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const rec: PersonalPerfRecord = {
+      group_name: cell(1) as string | null,
+      branch_company: branch as string,
+      learning_center: cell(3) as string | null,
+      performer: pName,
+      performer_no,
+      department: cell(5) as string | null,
+      perf_source: cell(6) as string | null,
+      operator: cell(7) as string | null,
+      contract_grade: cell(8) as string | null,
+      student_name: studentName as string | null,
+      contract_type: cell(10) as string | null,
+      product_type: typeof productType === 'string' ? productType : productType === null ? null : String(productType),
+      perf_new_sign: num(cell(12)),
+      perf_renew: num(cell(13)),
+      perf_received: num(cell(14)),
+      perf_refund: num(cell(15)),
+      perf_total: num(cell(16)),
+      live_new_sign: num(cell(17)),
+      live_renew: num(cell(18)),
+      live_new_refund: num(cell(19)),
+      live_renew_refund: num(cell(20)),
+      live_total: num(cell(21)),
+      grand_received: num(cell(22)),
+      grand_refund: num(cell(23)),
+      grand_total: num(cell(24)),
+      source_row: r,
+    };
+    records.push(rec as unknown as Record<string, unknown>);
+  }
+
+  return { records, errors, totalSourceRows };
+}
+
 export const PARSERS: Record<string, BiParser> = {
   [FILE_TYPES.STUDENT_SNAPSHOT]: parseStudentSnapshot,
   [FILE_TYPES.SUBJECT_SNAPSHOT]: parseSubjectSnapshot,
@@ -402,5 +562,5 @@ export const PARSERS: Record<string, BiParser> = {
   [FILE_TYPES.XUKE_DETAIL]: parseXukeDetail,
   [FILE_TYPES.SCHEDULED_COURSE]: parseScheduledCourse,
   [FILE_TYPES.VOUCHER]: parseVoucher,
-  // PERSONAL_PERF 暂未启用（源文件待重新导出）
+  [FILE_TYPES.PERSONAL_PERF]: parsePersonalPerfDirect,
 };

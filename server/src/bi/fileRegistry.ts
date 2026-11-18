@@ -103,11 +103,10 @@ const REGISTRY_SEED: RegistryRow[] = [
     file_type: FILE_TYPES.PERSONAL_PERF,
     display_name: '个人业绩统计',
     sheet_name: null,
-    header_row: 1,
+    header_row: 5,
     parser_version: 1,
-    // 用户当前导出的文件是空壳，禁用直到重新导出
-    enabled: 0,
-    description: '老师-学生-科目业绩明细（源文件待重新导出，暂不可上传）。',
+    enabled: 1,
+    description: '业绩人员维度：合同 × 产品类型 业绩分配。数据从第 7 行起（第 3-5 行三层合并表头）。每行约 20 条。',
   },
 ];
 

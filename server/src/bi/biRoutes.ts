@@ -13,7 +13,7 @@ import {
   getBatchDetail,
 } from './importService.js';
 import { biDb, BI_UPLOAD_DIR } from './db.js';
-import { computeXukeRates, computeXushengRates, computePreSale, availableMonths, computeIncentive, computeMonthlyReport } from './metrics.js';
+import { computeXukeRates, computeXushengRates, computePreSale, availableMonths, computeIncentive, computeMonthlyReport, computePersonalPerfStats } from './metrics.js';
 import {
   buildBiXlsx,
   xukeRowsToBi,
@@ -215,6 +215,17 @@ router.get('/metrics/presale', (req: AuthenticatedRequest, res) => {
 
   try {
     const rows = computePreSale({ batchId });
+    res.json({ rows });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
+
+// 个人业绩统计（按业绩人员聚合）
+router.get('/metrics/personal-perf', (req: AuthenticatedRequest, res) => {
+  try {
+    const rows = computePersonalPerfStats();
     res.json({ rows });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

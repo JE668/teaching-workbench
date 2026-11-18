@@ -501,3 +501,56 @@ export function computeMonthlyReport(options: {
     },
   };
 }
+
+// ============ 个人业绩统计 ============
+
+export interface PersonalPerfRow {
+  performer: string;
+  performer_no: string | null;
+  learning_center: string | null;
+  perf_total: number;
+  grand_total: number;
+  contract_count: number;
+}
+
+/**
+ * 按业绩人员聚合个人业绩。
+ * 返回每个业绩人员的合同数、个人总业绩、总业绩。
+ */
+export function computePersonalPerfStats(): PersonalPerfRow[] {
+  const batchId = latestBatchId('personal_perf');
+  if (!batchId) return [];
+
+  const rows = biDb.prepare(
+    `SELECT performer, performer_no, learning_center,
+            perf_total, grand_total
+     FROM raw_personal_perf WHERE batch_id = ?`
+  ).all(batchId) as Array<{
+    performer: string | null;
+    performer_no: string | null;
+    learning_center: string | null;
+    perf_total: number | null;
+    grand_total: number | null;
+  }>;
+
+  const map = new Map<string, PersonalPerfRow>();
+  for (const r of rows) {
+    const key = r.performer ?? '未知';
+    if (!map.has(key)) {
+      map.set(key, {
+        performer: key,
+        performer_no: r.performer_no,
+        learning_center: r.learning_center,
+        perf_total: 0,
+        grand_total: 0,
+        contract_count: 0,
+      });
+    }
+    const cur = map.get(key)!;
+    cur.perf_total += r.perf_total ?? 0;
+    cur.grand_total += r.grand_total ?? 0;
+    cur.contract_count += 1;
+  }
+
+  return Array.from(map.values()).sort((a, b) => b.grand_total - a.grand_total);
+}

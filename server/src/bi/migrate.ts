@@ -280,6 +280,49 @@ CREATE INDEX IF NOT EXISTS idx_raw_voucher_contract ON raw_voucher(contract_no);
 CREATE INDEX IF NOT EXISTS idx_raw_voucher_builder ON raw_voucher(builder_name);
 CREATE INDEX IF NOT EXISTS idx_raw_voucher_created ON raw_voucher(created_at);
 
+-- 个人业绩统计：每行 = 合同 × 产品类型 业绩分配
+-- 源文件是三层合并表头（个人业绩/直播合作业绩/总业绩），入库时拍平为独立列。
+CREATE TABLE IF NOT EXISTS raw_personal_perf (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL,
+  group_name TEXT,                       -- 集团
+  branch_company TEXT,                   -- 分公司
+  learning_center TEXT,                  -- 学习中心
+  performer TEXT,                        -- 业绩人员（原字段含工号括号，原样保存）
+  performer_no TEXT,                     -- 括号里的工号（如 X49763），拆出来便于关联
+  department TEXT,                       -- 归属部门
+  perf_source TEXT,                      -- 业绩来源
+  operator TEXT,                         -- 签单人/操作人
+  contract_grade TEXT,                   -- 合同年级
+  student_name TEXT,                     -- 学生姓名
+  contract_type TEXT,                    -- 合同类型：新签合同 / 续费合同
+  product_type TEXT,                     -- 产品类型：一对一 / 小班 / ...
+  -- 个人业绩
+  perf_new_sign REAL,                    -- 新签合同业绩
+  perf_renew REAL,                       -- 续费合同业绩
+  perf_received REAL,                    -- 收款业绩
+  perf_refund REAL,                      -- 退费责任业绩
+  perf_total REAL,                       -- 个人总业绩
+  -- 直播合作业绩
+  live_new_sign REAL,                    -- 新签业绩
+  live_renew REAL,                       -- 续费业绩
+  live_new_refund REAL,                  -- 新签退费责任业绩
+  live_renew_refund REAL,                -- 续费退费责任业绩
+  live_total REAL,                       -- 合作总业绩
+  -- 总业绩
+  grand_received REAL,                   -- 总收款业绩
+  grand_refund REAL,                     -- 总退费责任
+  grand_total REAL,                      -- 总业绩
+  source_row INTEGER,                    -- 源文件行号（排查用）
+  extra TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now', '+8 hours')),
+  FOREIGN KEY (batch_id) REFERENCES upload_batch(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_raw_personal_perf_batch ON raw_personal_perf(batch_id);
+CREATE INDEX IF NOT EXISTS idx_raw_personal_perf_performer ON raw_personal_perf(performer_no);
+CREATE INDEX IF NOT EXISTS idx_raw_personal_perf_center ON raw_personal_perf(learning_center);
+CREATE INDEX IF NOT EXISTS idx_raw_personal_perf_contract_grade ON raw_personal_perf(contract_grade);
+
 -- 定金券 ↔ 学生 关联表（多对多，一行定金券可关联多个学生/线索）
 CREATE TABLE IF NOT EXISTS voucher_student_link (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
