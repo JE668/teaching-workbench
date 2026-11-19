@@ -15,11 +15,12 @@ import EmptyState from '../components/ui/EmptyState';
 import { Card } from '../components/ui/Card';
 import KpiCard from '../components/renewal/KpiCard';
 import { cn } from '../lib/utils';
-import TeacherView from './renewal/TeacherView';
-import GroupView from './renewal/GroupView';
-import ManagerView from './renewal/ManagerView';
-import FunnelView from './renewal/FunnelView';
-import RiskView from './renewal/RiskView';
+import TeacherViewEnhanced from '../components/renewal/TeacherViewEnhanced';
+import GroupViewEnhanced from '../components/renewal/GroupViewEnhanced';
+import ManagerViewEnhanced from '../components/renewal/ManagerViewEnhanced';
+import FunnelViewEnhanced from '../components/renewal/FunnelViewEnhanced';
+import RiskViewEnhanced from '../components/renewal/RiskViewEnhanced';
+import ExecutiveSummary from '../components/renewal/ExecutiveSummary';
 import {
   clampRatio,
   count,
@@ -137,7 +138,7 @@ export default function RenewalDashboard() {
     return { base, renewed, prepaid, gap, rate: base > 0 ? (renewed / base) * 100 : 0, hasData: true };
   }, [teacherRows]);
 
-  const funnelSteps = useMemo(() => {
+  const funnelStages = useMemo(() => {
     if (funnelRows.length === 0) return [];
     const sum = (pick: (r: FunnelRow) => number) => funnelRows.reduce((s, r) => s + (pick(r) || 0), 0);
     const students = sum(r => r.students);
@@ -145,12 +146,40 @@ export default function RenewalDashboard() {
     const last1 = sum(r => r.classedLast1);
     const renewed = sum(r => r.renewed);
     return [
-      { label: '学生总数', count: students, width: 100 },
-      { label: '上2个月有课消', count: last2, width: students > 0 ? (last2 / students) * 100 : 0 },
-      { label: '上1个月有课消', count: last1, width: students > 0 ? (last1 / students) * 100 : 0 },
-      { label: '本月已续费', count: renewed, width: students > 0 ? (renewed / students) * 100 : 0 },
+      { name: '学生总数', value: students },
+      { name: '上2个月有课消', value: last2 },
+      { name: '上1个月有课消', value: last1 },
+      { name: '本月已续费', value: renewed },
     ];
   }, [funnelRows]);
+
+  // 为 FunnelViewEnhanced 准备学管分解数据
+  const funnelManagerRows = useMemo(() => {
+    if (funnelRows.length === 0) return [];
+    return funnelRows.map(r => ({
+      manager: r.managerName,
+      students: r.students,
+      renewed: r.renewed,
+      rate: r.renewRate || 0,
+    }));
+  }, [funnelRows]);
+
+  // 为 RiskViewEnhanced 转换数据
+  const riskStudents = useMemo(() => {
+    if (riskRows.length === 0) return [];
+    return riskRows.map(r => ({
+      ...r,
+      teacherName: null,
+      subjectGroup: null,
+      riskLevel: 'low' as 'low' | 'medium' | 'high',
+      riskCount: 1,
+      status: 'normal' as 'renewed' | 'prepaid' | 'dropped' | 'graduating' | 'normal',
+      prepaid: false,
+      renewed: false,
+      remainingHours: null,
+      riskReasons: r.type ? [r.type] : [],
+    }));
+  }, [riskRows]);
 
   function toggleTeacher(name: string) {
     setExpanded(prev => {
@@ -203,6 +232,17 @@ export default function RenewalDashboard() {
           <Button variant="outline" size="md" icon={<RefreshCw className="h-4 w-4" />} onClick={async () => { await loadReports(); loadRest(); }}>刷新</Button>
         </div>
       </div>
+
+      {/* 执行摘要 */}
+      {teacherRows.length > 0 && managerRows.length > 0 && (
+        <ExecutiveSummary
+          teacherRows={teacherRows}
+          managerRows={managerRows}
+          reportId={reportId}
+          reports={reports}
+          currentTab={tab}
+        />
+      )}
 
       {/* 汇总卡 */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -269,11 +309,11 @@ export default function RenewalDashboard() {
 
       {loading ? (
         <div className="py-16 text-center text-sm text-slate-400">加载中…</div>
-      ) : view === 'teacher' ? <TeacherView rows={teacherRows} tab={tab} setTab={setTab} expanded={expanded} toggleTeacher={toggleTeacher} />
-        : view === 'group' ? <GroupView rows={groupRows} tab={tab} setTab={setTab} />
-        : view === 'manager' ? <ManagerView rows={managerRows} />
-        : view === 'funnel' ? <FunnelView steps={funnelSteps} rows={funnelRows} statusRows={statusRows} />
-        : <RiskView rows={riskRows} />}
+      ) : view === 'teacher' ? <TeacherViewEnhanced rows={teacherRows} tab={tab} setTab={setTab} expanded={expanded} toggleTeacher={toggleTeacher} />
+        : view === 'group' ? <GroupViewEnhanced rows={groupRows} tab={tab} setTab={setTab} />
+        : view === 'manager' ? <ManagerViewEnhanced rows={managerRows} />
+        : view === 'funnel' ? <FunnelViewEnhanced stages={funnelStages} managerRows={funnelManagerRows} />
+        : <RiskViewEnhanced students={riskStudents} />}
     </div>
   );
 }

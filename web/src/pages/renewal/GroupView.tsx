@@ -56,6 +56,7 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
                 rows={rows.map((r, i) => ({
                   label: r.subjectGroup,
                   value: count(r.renewedCount),
+                  rawValue: r.renewedCount || 0,
                   ratio: maxRenewed > 0 ? (r.renewedCount / maxRenewed) * 100 : 0,
                   hint: r.teacherCount + ' 位老师 · 基数 ' + count(r.baseCount) + ' · 续科率 ' + pct(r.renewRate),
                   className: rankStyle(i),
@@ -74,6 +75,7 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
                   rows={gapPositive.map((r, i) => ({
                     label: r.subjectGroup,
                     value: count(r.incentiveGap),
+                    rawValue: r.incentiveGap || 0,
                     ratio: maxGap > 0 ? (r.incentiveGap / maxGap) * 100 : 0,
                     hint: '基数 ' + count(r.baseCount) + ' · 续科 ' + count(r.renewedCount),
                     className: rankStyle(i),
