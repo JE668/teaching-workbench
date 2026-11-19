@@ -12,6 +12,28 @@
 /** 学生网格颜色状态（与后端 parser.ts 的 GridStatus 对应） */
 export type GridStatus = 'renewed' | 'prepaid' | 'stopped' | 'closed' | 'grade3' | 'normal';
 
+/** 教师 × 学管 矩阵单元格 */
+export interface MentorMatrixCell {
+  teacherName: string;
+  managerName: string;
+  studentCount: number;
+  prepaidCount: number;
+  renewedCount: number;
+  prepaidRate: number | null;
+  renewRate: number | null;
+  students: { name: string; status: string }[];
+}
+
+/** 教师 × 学管 矩阵 */
+export interface MentorMatrix {
+  teachers: string[];
+  managers: string[];
+  cells: MentorMatrixCell[];
+  totalPrepaid: number;
+  totalRenewed: number;
+  totalStudents: number;
+}
+
 /**
  * 颜色取自用户在 Excel 里配的条件格式，保证「系统显示的色 = 表里看到的色」。
  * renewed=绿 00B050 / prepaid=紫 7030A0 / stopped=橙 FFC000 / closed=红 FF0000。

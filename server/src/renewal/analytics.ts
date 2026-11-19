@@ -32,7 +32,7 @@ export interface TeacherStatFull extends TeacherStatDto {
   students: { name: string; status: string; slot: number }[];
 }
 
-/** 科组汇总（把同科组老师加总，用于科组对比柱状图） */
+/** 科组汇总（把教师按科组归并，用于科组对比柱状图） */
 export interface GroupSummary {
   subjectGroup: string;
   teacherCount: number;
@@ -83,6 +83,28 @@ export interface RiskStudentDto {
   courseProduct: string | null;
   classLast1: number | null;
   classLast2: number | null;
+}
+
+/** 教师 × 学管 矩阵单元格 */
+export interface MentorMatrixCell {
+  teacherName: string;
+  managerName: string;
+  studentCount: number;
+  prepaidCount: number;
+  renewedCount: number;
+  prepaidRate: number | null;
+  renewRate: number | null;
+  students: { name: string; status: string }[];
+}
+
+/** 教师 × 学管 矩阵 */
+export interface MentorMatrix {
+  teachers: string[];
+  managers: string[];
+  cells: MentorMatrixCell[];
+  totalPrepaid: number;
+  totalRenewed: number;
+  totalStudents: number;
 }
 
 const TABS = new Set(['incentive', 'stage', 'mentor', 'hours']);
@@ -249,6 +271,88 @@ export function getRiskStudents(reportId: number, limit = 200): RiskStudentDto[]
     classLast1: r.class_last1,
     classLast2: r.class_last2,
   }));
+}
+
+/**
+ * 教师 × 学管 矩阵（仅 mentor tab 可用）。
+ * 通过学生名关联 teacher_stats.grid_students 与 student_funnel.manager_name。
+ */
+export function getMentorMatrix(reportId: number): MentorMatrix {
+  // 1. 取该报表 mentor tab 下所有老师的学生（带状态）
+  const teacherStudents = renewalDb.prepare(`
+    SELECT gs.teacher_name, gs.student_name, gs.status
+    FROM grid_students gs
+    JOIN teacher_stats ts ON ts.report_id = gs.report_id AND ts.tab = gs.tab AND ts.teacher_name = gs.teacher_name
+    WHERE gs.report_id = ? AND gs.tab = 'mentor'
+  `).all(reportId) as { teacher_name: string; student_name: string; status: string }[];
+
+  // 2. 取该报表所有学生的学管（student_funnel）
+  const studentManagers = renewalDb.prepare(`
+    SELECT student_name, manager_name FROM student_funnel
+    WHERE report_id = ? AND manager_name IS NOT NULL AND student_name NOT IN ('小计', '合计')
+  `).all(reportId) as { student_name: string; manager_name: string }[];
+
+  const managerByStudent = new Map<string, string>();
+  for (const sm of studentManagers) {
+    managerByStudent.set(sm.student_name, sm.manager_name);
+  }
+
+  // 3. 聚合成矩阵
+  const cellMap = new Map<string, MentorMatrixCell>(); // key: teacher|manager
+  const teachers = new Set<string>();
+  const managers = new Set<string>();
+
+  for (const ts of teacherStudents) {
+    const teacher = ts.teacher_name;
+    const manager = managerByStudent.get(ts.student_name) || '未分配学管';
+    teachers.add(teacher);
+    managers.add(manager);
+
+    const key = teacher + '|' + manager;
+    let cell = cellMap.get(key);
+    if (!cell) {
+      cell = {
+        teacherName: teacher,
+        managerName: manager,
+        studentCount: 0,
+        prepaidCount: 0,
+        renewedCount: 0,
+        prepaidRate: null,
+        renewRate: null,
+        students: [],
+      };
+      cellMap.set(key, cell);
+    }
+    cell.studentCount++;
+    if (ts.status === 'prepaid') cell.prepaidCount++;
+    if (ts.status === 'renewed') cell.renewedCount++;
+    cell.students.push({ name: ts.student_name, status: ts.status });
+  }
+
+  // 计算率
+  for (const cell of cellMap.values()) {
+    cell.prepaidRate = cell.studentCount > 0 ? (cell.prepaidCount / cell.studentCount) * 100 : null;
+    cell.renewRate = cell.studentCount > 0 ? (cell.renewedCount / cell.studentCount) * 100 : null;
+  }
+
+  const sortedTeachers = Array.from(teachers).sort();
+  const sortedManagers = Array.from(managers).sort();
+
+  let totalPrepaid = 0, totalRenewed = 0, totalStudents = 0;
+  for (const cell of cellMap.values()) {
+    totalPrepaid += cell.prepaidCount;
+    totalRenewed += cell.renewedCount;
+    totalStudents += cell.studentCount;
+  }
+
+  return {
+    teachers: sortedTeachers,
+    managers: sortedManagers,
+    cells: Array.from(cellMap.values()),
+    totalPrepaid,
+    totalRenewed,
+    totalStudents,
+  };
 }
 
 /** 学生网格颜色状态分布（全部 4 个 tab 合并） */

@@ -2,7 +2,7 @@ import React from 'react';
 import { ChevronDown, Users, TrendingUp, Target, AlertCircle, CheckCircle } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
-import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, type TeacherStatRow } from '../../lib/renewal';
+import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, type TeacherStatRow, type MentorMatrix } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
 import Sparkline from './Sparkline';
 import StudentGrid from './StudentGrid';
@@ -13,6 +13,9 @@ interface Props {
   setTab: (t: string) => void;
   expanded: Set<string>;
   toggleTeacher: (name: string) => void;
+  mentorMatrix?: MentorMatrix;
+  reportId?: number;
+  fetchMentorMatrix?: (reportId: number) => Promise<MentorMatrix>;
 }
 
 interface Col {
@@ -155,7 +158,7 @@ function TeacherRow({
   );
 }
 
-export default function TeacherViewEnhanced({ rows, tab, setTab, expanded, toggleTeacher }: Props) {
+export default function TeacherViewEnhanced({ rows, tab, setTab, expanded, toggleTeacher, mentorMatrix, reportId, fetchMentorMatrix }: Props) {
   const cols = tabColumns(tab);
   const maxBase = rows.reduce((m, r) => Math.max(m, r.baseCount || 0), 0);
   const maxRenewed = rows.reduce((m, r) => Math.max(m, r.renewedCount || 0), 0);
@@ -226,6 +229,113 @@ export default function TeacherViewEnhanced({ rows, tab, setTab, expanded, toggl
           </div>
         ) : (
           <div className="space-y-6 p-4">
+            
+            {/* 学管矩阵视图（仅 mentor tab） */}
+            {tab === 'mentor' && mentorMatrix && (
+              <div className="space-y-6 p-4">
+                <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
+                    <Users className="h-4 w-4 text-brand-500" />
+                    教师 × 学管 矩阵
+                  </h4>
+                  <p className="text-xs text-slate-500 mb-3">
+                    行=教师，列=学管，单元格显示「学生数 / 预存 / 续费」。点击单元格可展开学生明细。
+                  </p>
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-left text-sm min-w-max">
+                      <thead className="bg-slate-50 text-xs text-slate-500 sticky top-0 z-10">
+                        <tr className="border-b border-slate-200">
+                          <th className="px-3 py-2 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200">教师</th>
+                          {mentorMatrix.managers.map(m => (
+                            <th key={m} className="px-3 py-2 font-medium text-center min-w-[120px]">{m}</th>
+                          ))}
+                          <th className="px-3 py-2 font-medium text-center min-w-[120px]">合计</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {mentorMatrix.teachers.map(teacher => {
+                          const rowCells = mentorMatrix.managers.map(manager => {
+                            const cell = mentorMatrix.cells.find(c => c.teacherName === teacher && c.managerName === manager);
+                            return cell ? (
+                              <td
+                                key={manager}
+                                className="px-3 py-2 text-center relative cursor-pointer hover:bg-brand-50/50 transition-colors"
+                                onClick={() => {
+                                  // TODO: 展开学生明细弹窗
+                                  console.log('Cell clicked:', cell);
+                                }}
+                                title={`${cell.studentCount} 人 · 预存 ${cell.prepaidCount} · 续费 ${cell.renewedCount}`}
+                              >
+                                <div className="font-medium text-slate-800">{cell.studentCount}</div>
+                                <div className="flex justify-center gap-1 text-xs">
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">预 ${cell.prepaidCount}</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">续 ${cell.renewedCount}</span>
+                                </div>
+                                {cell.prepaidRate !== null && cell.renewRate !== null && (
+                                  <div className="text-[10px] text-slate-400 mt-0.5">
+                                    预存率 ${cell.prepaidRate.toFixed(1)}% · 续费率 ${cell.renewRate.toFixed(1)}%
+                                  </div>
+                                )}
+                              </td>
+                            ) : (
+                              <td key={manager} className="px-3 py-2 text-center text-slate-300">—</td>
+                            );
+                          });
+
+                          const teacherTotal = mentorMatrix.cells.filter(c => c.teacherName === teacher);
+                          const totalStudents = teacherTotal.reduce((s, c) => s + c.studentCount, 0);
+                          const totalPrepaid = teacherTotal.reduce((s, c) => s + c.prepaidCount, 0);
+                          const totalRenewed = teacherTotal.reduce((s, c) => s + c.renewedCount, 0);
+
+                          return (
+                            <tr key={teacher} className="hover:bg-slate-50/60 transition-colors">
+                              <td className="px-3 py-2 font-medium text-slate-700 sticky left-0 z-10 bg-white border-r border-slate-200">
+                                {teacher}
+                              </td>
+                              {rowCells}
+                              <td className="px-3 py-2 text-center font-medium text-slate-700 bg-slate-50/50 border-l border-slate-200">
+                                <div>{totalStudents}</div>
+                                <div className="flex justify-center gap-1 text-xs mt-0.5">
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">预 ${totalPrepaid}</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">续 ${totalRenewed}</span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {/* 底部合计行 */}
+                        <tr className="bg-slate-100 font-semibold">
+                          <td className="px-3 py-2 sticky left-0 z-10 bg-slate-100 border-r border-slate-200">合计</td>
+                          {mentorMatrix.managers.map(manager => {
+                            const colCells = mentorMatrix.cells.filter(c => c.managerName === manager);
+                            const totalStudents = colCells.reduce((s, c) => s + c.studentCount, 0);
+                            const totalPrepaid = colCells.reduce((s, c) => s + c.prepaidCount, 0);
+                            const totalRenewed = colCells.reduce((s, c) => s + c.renewedCount, 0);
+                            return (
+                              <td key={manager} className="px-3 py-2 text-center border-t border-slate-200">
+                                <div>{totalStudents}</div>
+                                <div className="flex justify-center gap-1 text-xs mt-0.5">
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">预 ${totalPrepaid}</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">续 ${totalRenewed}</span>
+                                </div>
+                              </td>
+                            );
+                          })}
+                          <td className="px-3 py-2 text-center border-t border-slate-200 border-l border-slate-200 bg-slate-200">
+                            <div>{mentorMatrix.totalStudents}</div>
+                            <div className="flex justify-center gap-1 text-xs mt-0.5">
+                              <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">预 ${mentorMatrix.totalPrepaid}</span>
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">续 ${mentorMatrix.totalRenewed}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 快速榜单 */}
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">

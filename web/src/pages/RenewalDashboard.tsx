@@ -30,6 +30,7 @@ import {
   type FunnelRow,
   type GroupSummaryRow,
   type ManagerPerfRow,
+  type MentorMatrix,
   type ReportSummary,
   type RiskStudentRow,
   type TeacherStatRow,
@@ -66,6 +67,7 @@ export default function RenewalDashboard() {
   const [funnelRows, setFunnelRows] = useState<FunnelRow[]>([]);
   const [riskRows, setRiskRows] = useState<RiskStudentRow[]>([]);
   const [statusRows, setStatusRows] = useState<{ status: string; count: number }[]>([]);
+  const [mentorMatrix, setMentorMatrix] = useState<MentorMatrix | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function loadReports() {
@@ -102,6 +104,15 @@ export default function RenewalDashboard() {
         const res = await api.get('/renewal/analytics/group-compare?tab=' + tab + '&reportId=' + reportId);
         if (!cancelled) setGroupRows(((res as any).rows as GroupSummaryRow[]) || []);
       } catch { /* 科组取数失败不影响主表 */ }
+      // 学管矩阵（仅 mentor tab）
+      if (tab === 'mentor') {
+        try {
+          const res = await api.get('/renewal/analytics/mentor-matrix?reportId=' + reportId);
+          if (!cancelled) setMentorMatrix((res as any).matrix as MentorMatrix);
+        } catch { /* 矩阵取数失败不影响主表 */ }
+      } else if (!cancelled) {
+        setMentorMatrix(null);
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -309,7 +320,7 @@ export default function RenewalDashboard() {
 
       {loading ? (
         <div className="py-16 text-center text-sm text-slate-400">加载中…</div>
-      ) : view === 'teacher' ? <TeacherViewEnhanced rows={teacherRows} tab={tab} setTab={setTab} expanded={expanded} toggleTeacher={toggleTeacher} />
+      ) : view === 'teacher' ? <TeacherViewEnhanced rows={teacherRows} tab={tab} setTab={setTab} expanded={expanded} toggleTeacher={toggleTeacher} mentorMatrix={mentorMatrix ?? undefined} reportId={reportId ?? undefined} />
         : view === 'group' ? <GroupViewEnhanced rows={groupRows} tab={tab} setTab={setTab} />
         : view === 'manager' ? <ManagerViewEnhanced rows={managerRows} />
         : view === 'funnel' ? <FunnelViewEnhanced stages={funnelStages} managerRows={funnelManagerRows} />
