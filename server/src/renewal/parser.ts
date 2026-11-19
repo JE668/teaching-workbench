@@ -271,14 +271,14 @@ export function resolveStudentStatus(
   }
 ): GridStatus {
   const pairKey = teacherName + studentName;
-  const st = ctx.statusMap.get(pairKey);
+  const st = ctx.statusMap?.get(pairKey);
   if (st === '结课') return 'closed';
   if (st === '停课') return 'stopped';
-  if (ctx.renewedMap.get(studentName)) return 'renewed';
-  if (ctx.prepaidPairMap.get(teacherName + studentName) || ctx.prepaidNameMap.get(studentName)) {
+  if (ctx.renewedMap?.get(studentName)) return 'renewed';
+  if (ctx.prepaidPairMap?.get(teacherName + studentName) || ctx.prepaidNameMap?.get(studentName)) {
     return 'prepaid';
   }
-  if (ctx.gradeMap.get(studentName) === '高三') return 'grade3';
+  if (ctx.gradeMap?.get(studentName) === '高三') return 'grade3';
   return 'normal';
 }
 
@@ -383,6 +383,8 @@ export function parseTeacherStats(
     for (let r = cfg.dataStartRow; r <= ws.rowCount; r++) {
       const teacherName = colOf.teacher_name ? readCell(ws, r, colOf.teacher_name!) : null;
       if (typeof teacherName !== 'string' || teacherName === '') break;
+      // 跳过汇总行：数学组/文科组/理综组/学习中心 等
+      if (['数学组', '文科组', '理综组', '学习中心'].includes(teacherName)) break;
 
       const pick = (f: string): string | number | null =>
         colOf[f] ? readCell(ws, r, colOf[f]!) : null;
@@ -393,10 +395,20 @@ export function parseTeacherStats(
       }
 
       // 学生网格：从 gridStartCol 往右读，连续空则停
+      // 注意：gridStartCol (如 15/O列) 可能是数组公式（spill），readCell 返回 null
+      // 实际学生名在后续列的溢出值中；模板里可能有 0 占位，视为空
       const students: { name: string; status: GridStatus; slot: number }[] = [];
+      let emptyStreak = 0;
       for (let col = cfg.gridStartCol; col < cfg.gridStartCol + 80; col++) {
         const name = readCell(ws, r, col);
-        if (typeof name !== 'string' || name === '') { slot++; continue; }
+        // 只接受非空字符串类型的学生名；数字/0/null/公式/空串都视为空
+        if (typeof name !== 'string' || name === '') {
+          emptyStreak++;
+          if (emptyStreak >= 3) break;  // 连续 3 个空列则认为网格结束
+          slot++;
+          continue;
+        }
+        emptyStreak = 0;
         slot++;
         students.push({
           name,
@@ -550,11 +562,34 @@ export function parseFunnel(workbook: ExcelJS.Workbook): FunnelRow[] {
  * 标题区在前 3 行，扫一遍找「XX学习中心」和「YYYY年MM月」。
  */
 export function extractReportMeta(workbook: ExcelJS.Workbook): { statMonth: string | null; centerName: string | null } {
+  const wsTitle = workbook.getWorksheet('教师统计表(激励)') || workbook.getWorksheet('教师统计表 (学段)');
+  if (wsTitle) {
+    for (let r = 1; r <= Math.min(3, wsTitle.rowCount); r++) {
+      for (let col = 1; col <= Math.min(wsTitle.columnCount, 20); col++) {
+        const v = readCell(wsTitle, r, col);
+        if (typeof v !== 'string' || v.length < 4) continue;
+        if (!v.includes('学习中心')) continue;
+        const cm = v.match(/([一-龥A-Za-z0-9]{2,12}学习中心)/);
+        const centerName = cm ? cm[1] : null;
+        let statMonth = null;
+        const mm1 = v.match(/(\d{2})-(\d{2})秋寒/);
+        if (mm1) statMonth = '20' + mm1[1] + '-' + mm1[2];
+        const mm2 = v.match(/(\d{4})年(\d{1,2})月/);
+        if (mm2) statMonth = mm2[1] + '-' + String(mm2[2]).padStart(2, '0');
+        if (!statMonth) {
+          const mm3 = v.match(/\((\d{2})\/(\d{2})\/(\d{2})/);
+          if (mm3) statMonth = '20' + mm3[1] + '-' + mm3[2];
+        }
+        if (statMonth && centerName) return { statMonth, centerName };
+      }
+    }
+  }
+
   const ws = workbook.getWorksheet('续生率');
   if (!ws) return { statMonth: null, centerName: null };
 
-  let statMonth: string | null = null;
-  let centerName: string | null = null;
+  let statMonth = null;
+  let centerName = null;
 
   const maxCol = Math.min(ws.columnCount, 97);
   for (let r = 1; r <= Math.min(3, ws.rowCount); r++) {
@@ -562,12 +597,12 @@ export function extractReportMeta(workbook: ExcelJS.Workbook): { statMonth: stri
       const v = readCell(ws, r, col);
       if (typeof v !== 'string' || v.length < 4) continue;
       if (!centerName) {
-        const cm = v.match(/([\u4e00-\u9fa5A-Za-z0-9]{2,12}学习中心)/);
+        const cm = v.match(/([一-龥A-Za-z0-9]{2,12}学习中心)/);
         if (cm) centerName = cm[1];
       }
       if (!statMonth) {
         const mm = v.match(/(\d{4})年(\d{1,2})月/);
-        if (mm) statMonth = `${mm[1]}-${String(mm[2]).padStart(2, '0')}`;
+        if (mm) statMonth = mm[1] + '-' + String(mm[2]).padStart(2, '0');
       }
       if (statMonth && centerName) break;
     }
