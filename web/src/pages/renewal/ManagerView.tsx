@@ -3,7 +3,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
-import { clampRatio, count, money, pct, type ManagerPerfRow } from '../../lib/renewal';
+import { clampRatio, count, money, NOT_AVAILABLE_YET, pct, type ManagerPerfRow } from '../../lib/renewal';
 
 /**
  * 学管业绩视图。
@@ -62,8 +62,8 @@ export default function ManagerView({ rows }: { rows: ManagerPerfRow[] }) {
                       {r.managerName}
                     </span>
                   </td>
-                  <td className="px-4 py-3 tabular-nums text-slate-700">{money(r.renew.total)}</td>
-                  <td className="px-4 py-3 tabular-nums text-slate-700">{money(r.newsign.total)}</td>
+                  <td className="px-4 py-3 tabular-nums text-slate-700">{r.renew.total !== null ? money(r.renew.total) : <span className="text-slate-400">{NOT_AVAILABLE_YET}</span>}</td>
+                  <td className="px-4 py-3 tabular-nums text-slate-700">{r.newsign.total !== null ? money(r.newsign.total) : <span className="text-slate-400">{NOT_AVAILABLE_YET}</span>}</td>
                   <td className="px-4 py-3 tabular-nums text-slate-700">{count(r.renewedCount)}</td>
                   <td className="px-4 py-3 tabular-nums text-slate-700">{pct(r.renewRate)}</td>
                   <td className="px-4 py-3 tabular-nums text-slate-700">{money(r.taskAmount)}</td>
@@ -80,7 +80,7 @@ export default function ManagerView({ rows }: { rows: ManagerPerfRow[] }) {
                     </div>
                   </td>
                   <td className="px-4 py-3 tabular-nums text-slate-700">{count(r.actualStudents)}</td>
-                  <td className="px-4 py-3 tabular-nums text-slate-700">{money(r.perStudent)}</td>
+                  <td className="px-4 py-3 tabular-nums text-slate-700">{r.perStudent !== null ? money(r.perStudent) : <span className="text-slate-400">{NOT_AVAILABLE_YET}</span>}</td>
                 </tr>
               ))}
             </tbody>

@@ -24,6 +24,7 @@ import {
   clampRatio,
   count,
   gridLegend,
+  NOT_AVAILABLE_YET,
   pct,
   type FunnelRow,
   type GroupSummaryRow,
@@ -123,6 +124,9 @@ export default function RenewalDashboard() {
 
   /** 汇总卡：当前 tab 下全体教师的基数/续科/续科率/激励差额 */
   const totals = useMemo(() => {
+    if (teacherRows.length === 0) {
+      return { base: 0, renewed: 0, prepaid: 0, gap: 0, rate: 0, hasData: false };
+    }
     let base = 0, renewed = 0, gap = 0, prepaid = 0;
     for (const r of teacherRows) {
       base += r.baseCount || 0;
@@ -130,7 +134,7 @@ export default function RenewalDashboard() {
       prepaid += r.prepaidCount || 0;
       gap += r.incentiveGap || 0;
     }
-    return { base, renewed, prepaid, gap, rate: base > 0 ? (renewed / base) * 100 : 0 };
+    return { base, renewed, prepaid, gap, rate: base > 0 ? (renewed / base) * 100 : 0, hasData: true };
   }, [teacherRows]);
 
   const funnelSteps = useMemo(() => {
@@ -202,10 +206,36 @@ export default function RenewalDashboard() {
 
       {/* 汇总卡 */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KpiCard label="学生基数" value={count(totals.base)} tone="brand" icon={<Users className="h-4 w-4" />} hint="当前 tab 合计" />
-        <KpiCard label="已续科" value={count(totals.renewed)} tone="emerald" icon={<TrendingUp className="h-4 w-4" />} progress={clampRatio(totals.renewed, totals.base)} hint={pct(totals.rate) + ' 续科率'} />
-        <KpiCard label="已预存" value={count(totals.prepaid)} tone="violet" icon={<Target className="h-4 w-4" />} progress={clampRatio(totals.prepaid, totals.base)} hint={pct(totals.base > 0 ? (totals.prepaid / totals.base) * 100 : 0) + ' 预存率'} />
-        <KpiCard label="激励差额合计" value={count(totals.gap)} tone="amber" icon={<AlertTriangle className="h-4 w-4" />} hint="正值 = 还差" />
+        <KpiCard
+          label="学生基数"
+          value={totals.hasData ? count(totals.base) : NOT_AVAILABLE_YET}
+          tone="brand"
+          icon={<Users className="h-4 w-4" />}
+          hint={totals.hasData ? '当前 tab 合计' : '数据下月开启'}
+        />
+        <KpiCard
+          label="已续科"
+          value={totals.hasData ? count(totals.renewed) : NOT_AVAILABLE_YET}
+          tone="emerald"
+          icon={<TrendingUp className="h-4 w-4" />}
+          progress={totals.hasData ? clampRatio(totals.renewed, totals.base) : undefined}
+          hint={totals.hasData ? pct(totals.rate) + ' 续科率' : '数据下月开启'}
+        />
+        <KpiCard
+          label="已预存"
+          value={totals.hasData ? count(totals.prepaid) : NOT_AVAILABLE_YET}
+          tone="violet"
+          icon={<Target className="h-4 w-4" />}
+          progress={totals.hasData ? clampRatio(totals.prepaid, totals.base) : undefined}
+          hint={totals.hasData ? pct(totals.base > 0 ? (totals.prepaid / totals.base) * 100 : 0) + ' 预存率' : '数据下月开启'}
+        />
+        <KpiCard
+          label="激励差额合计"
+          value={totals.hasData ? count(totals.gap) : NOT_AVAILABLE_YET}
+          tone="amber"
+          icon={<AlertTriangle className="h-4 w-4" />}
+          hint={totals.hasData ? '正值 = 还差' : '数据下月开启'}
+        />
       </div>
 
       {/* 视图切换 */}

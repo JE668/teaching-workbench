@@ -3,7 +3,7 @@ import FunnelChart, { type FunnelStep } from '../../components/renewal/FunnelCha
 import StatusDonut from '../../components/renewal/StatusDonut';
 import EmptyState from '../../components/ui/EmptyState';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
-import { count, pct, type FunnelRow } from '../../lib/renewal';
+import { count, NOT_AVAILABLE_YET, pct, type FunnelRow } from '../../lib/renewal';
 
 /**
  * 续生漏斗视图。
@@ -25,8 +25,8 @@ export default function FunnelView({
         <CardBody>
           <EmptyState
             icon={<Filter className="h-7 w-7" />}
-            title="没有解析到续生率明细"
-            description="确认表格包含「续生率」sheet（只读主表 A:R 列）。"
+            title="本期数据为空，下月开启"
+            description="续生率明细将在下个月录入完成后显示。"
           />
         </CardBody>
       </Card>

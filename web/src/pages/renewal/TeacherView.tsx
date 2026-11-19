@@ -3,7 +3,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import StudentGrid from '../../components/renewal/StudentGrid';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
-import { TAB_LABELS, TAB_ORDER, count, pct, type TeacherStatRow } from '../../lib/renewal';
+import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, type TeacherStatRow } from '../../lib/renewal';
 
 interface Props {
   rows: TeacherStatRow[];
@@ -90,8 +90,8 @@ export default function TeacherView({ rows, tab, setTab, expanded, toggleTeacher
         {rows.length === 0 ? (
           <EmptyState
             icon={<Users className="h-7 w-7" />}
-            title="该 tab 没有解析到教师行"
-            description="确认上传的表格包含对应统计表 sheet。"
+            title="本期数据为空，下月开启"
+            description="该统计表的数据将在下个月录入完成后显示。"
           />
         ) : (
           <div className="overflow-x-auto">

@@ -2,7 +2,7 @@ import { AlertTriangle } from 'lucide-react';
 import EmptyState from '../../components/ui/EmptyState';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
-import { count, type RiskStudentRow } from '../../lib/renewal';
+import { count, NOT_AVAILABLE_YET, type RiskStudentRow } from '../../lib/renewal';
 
 /**
  * 风险学生清单。
@@ -22,8 +22,8 @@ export default function RiskView({ rows }: { rows: RiskStudentRow[] }) {
         {rows.length === 0 ? (
           <EmptyState
             icon={<AlertTriangle className="h-7 w-7" />}
-            title="没有风险学生"
-            description="当前批次里所有未续费学生上月都有课消，暂无需要优先跟进的对象。"
+            title="本期数据为空，下月开启"
+            description="续生率明细将在下个月录入完成后显示，随后自动生成风险清单。"
           />
         ) : (
           <div className="overflow-x-auto">

@@ -3,7 +3,7 @@ import BarList from '../../components/renewal/BarList';
 import EmptyState from '../../components/ui/EmptyState';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
-import { TAB_LABELS, TAB_ORDER, count, pct, rankStyle, type GroupSummaryRow } from '../../lib/renewal';
+import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, type GroupSummaryRow } from '../../lib/renewal';
 
 /**
  * 科组对比视图。
@@ -45,8 +45,8 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
         {rows.length === 0 ? (
           <EmptyState
             icon={<FolderTree className="h-7 w-7" />}
-            title="该 tab 没有解析到科组数据"
-            description="科组列（D 列）为空时无法归并。"
+            title="本期数据为空，下月开启"
+            description="该统计表的数据将在下个月录入完成后显示。"
           />
         ) : (
           <div className="grid gap-6 lg:grid-cols-2">

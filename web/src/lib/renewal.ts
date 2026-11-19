@@ -180,3 +180,6 @@ export function rankStyle(index: number): string {
   if (index === 2) return 'bg-sky-50/60';
   return '';
 }
+
+/** 空数据占位：本期缺失、下月开启 */
+export const NOT_AVAILABLE_YET = '下月开启'; // "下月开启"
