@@ -31,8 +31,8 @@ const navItems = [
   { to: '/catalog', label: '课程目录', icon: BookOpen },
   { to: '/reports', label: '月度总结规划', icon: CalendarRange },
   { to: '/ai-metrics', label: 'AI 指标看板', icon: BarChart3 },
-  { to: '/renewal/upload', label: '续费上传', icon: FileUp },
-  { to: '/renewal', label: '续费看板', icon: TrendingUp },
+  { to: '/renewal/upload', label: '续费上传', icon: FileUp, end: true },
+  { to: '/renewal', label: '续费看板', icon: TrendingUp, end: true },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 
