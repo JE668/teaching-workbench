@@ -45,7 +45,7 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
         {rows.length === 0 ? (
           <EmptyState
             icon={<FolderTree className="h-7 w-7" />}
-            title="本期数据为空，下月开启"
+            title={NOT_AVAILABLE_YET}
             description="该统计表的数据将在下个月录入完成后显示。"
           />
         ) : (

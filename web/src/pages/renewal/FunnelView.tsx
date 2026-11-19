@@ -25,7 +25,7 @@ export default function FunnelView({
         <CardBody>
           <EmptyState
             icon={<Filter className="h-7 w-7" />}
-            title="本期数据为空，下月开启"
+            title={NOT_AVAILABLE_YET}
             description="续生率明细将在下个月录入完成后显示。"
           />
         </CardBody>
