@@ -5,6 +5,8 @@ import fs from 'fs';
 import { AuthenticatedRequest } from '../types/index.js';
 import { log } from '../utils/logger.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { authMiddleware } from '../middleware/auth.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 import { renewalDb, RENEWAL_UPLOAD_DIR } from './db.js';
 import {
   importRenewalFile,
@@ -19,6 +21,10 @@ import {
   getFunnel,
   getRiskStudents,
   getStudentStatusSummary,
+  getMentorMatrix,
+  getTeacherGradeMatrix,
+  getGroupGradeMatrix,
+  getRateOverview,
 } from './analytics.js';
 
 /**
@@ -137,6 +143,45 @@ router.get('/dashboard/teacher-stats', (req: AuthenticatedRequest, res) => {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+/** 学管矩阵（仅 mentor tab） */
+router.get('/analytics/mentor-matrix', (req: AuthenticatedRequest, res) => {
+  const reportId = resolveReportId(req.query.reportId);
+  if (!reportId) {
+    res.status(404).json({ error: '还没有上传任何续费统计表' });
+    return;
+  }
+  try {
+    const matrix = getMentorMatrix(reportId);
+    res.json({ matrix }); // 返回 { matrix: ... } 以兼容前端
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/** 教师 × 年级 矩阵（仅 mentor tab） */
+router.get('/analytics/teacher-grade-matrix', asyncHandler(async (req, res) => {
+  const reportId = Number(req.query.reportId);
+  if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  const matrix = getTeacherGradeMatrix(reportId);
+  res.json({ matrix });
+}));
+
+/** 科组 × 年级 矩阵（仅 mentor tab） */
+router.get('/analytics/group-grade-matrix', asyncHandler(async (req, res) => {
+  const reportId = Number(req.query.reportId);
+  if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  const matrix = getGroupGradeMatrix(reportId);
+  res.json({ matrix });
+}));
+
+/** 整体续费概览（仅 mentor tab） */
+router.get('/analytics/rate-overview', asyncHandler(async (req, res) => {
+  const reportId = Number(req.query.reportId);
+  if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  const overview = getRateOverview(reportId);
+  res.json({ overview });
+}));
 
 /** 科组对比 */
 router.get('/analytics/group-compare', (req: AuthenticatedRequest, res) => {

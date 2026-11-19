@@ -205,3 +205,83 @@ export function rankStyle(index: number): string {
 
 /** 空数据占位：本期缺失、下月开启 */
 export const NOT_AVAILABLE_YET = '下月开启'; // "下月开启"
+
+/** 教师 × 年级 矩阵单元格 */
+export interface TeacherGradeMatrixCell {
+  teacherName: string;
+  grade: string;
+  studentCount: number;
+  prepaidCount: number;
+  renewedCount: number;
+  prepaidRate: number | null;
+  renewRate: number | null;
+  students: { name: string; status: string }[];
+}
+
+/** 教师 × 年级 矩阵 */
+export interface TeacherGradeMatrix {
+  teachers: string[];
+  grades: string[];
+  cells: TeacherGradeMatrixCell[];
+  totalPrepaid: number;
+  totalRenewed: number;
+  totalStudents: number;
+}
+
+/** 科组 × 年级 矩阵单元格 */
+export interface GroupGradeMatrixCell {
+  subjectGroup: string;
+  grade: string;
+  studentCount: number;
+  prepaidCount: number;
+  renewedCount: number;
+  prepaidRate: number | null;
+  renewRate: number | null;
+  students: { name: string; status: string }[];
+}
+
+/** 科组 × 年级 矩阵 */
+export interface GroupGradeMatrix {
+  subjectGroups: string[];
+  grades: string[];
+  cells: GroupGradeMatrixCell[];
+  totalPrepaid: number;
+  totalRenewed: number;
+  totalStudents: number;
+}
+
+/** 整体续费概览 */
+export interface RateOverview {
+  total: number;
+  prepaidCount: number;
+  expiredCount: number;
+  renewedCount: number;
+  lostCount: number;
+  prepaidRate: number;
+  expiredRate: number;
+  renewedRate: number;
+  lostRate: number;
+  overall: {
+    baseCount: number;
+    prepaidCount: number;
+    renewedCount: number;
+    prepaidRate: number;
+    renewRate: number;
+  };
+  byManager: Array<{
+    managerName: string;
+    baseCount: number;
+    prepaidCount: number;
+    renewedCount: number;
+    prepaidRate: number;
+    renewRate: number;
+  }>;
+  byGroup: Array<{
+    subjectGroup: string;
+    baseCount: number;
+    prepaidCount: number;
+    renewedCount: number;
+    prepaidRate: number;
+    renewRate: number;
+  }>;
+}

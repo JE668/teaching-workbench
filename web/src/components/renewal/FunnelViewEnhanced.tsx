@@ -50,7 +50,6 @@ export default function FunnelViewEnhanced({ stages, managerRows }: Props) {
     <Card className="h-full">
       <CardHeader
         title="续生漏斗"
-        description="从在册基数 → 续费意向 → 正式续费 → 到课的转化路径"
         icon={<Funnel className="h-5 w-5" />}
       />
       <CardBody className="space-y-6 p-4">

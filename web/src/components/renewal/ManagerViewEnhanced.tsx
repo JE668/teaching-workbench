@@ -72,7 +72,6 @@ export default function ManagerViewEnhanced({ rows }: Props) {
     <Card className="h-full">
       <CardHeader
         title="学管业绩"
-        description="按现金流降序；任务与完成率为现金流口径，不是人数"
         icon={<Target className="h-5 w-5" />}
         action={<Badge tone="brand">{rows.length} 位学管</Badge>}
       />
@@ -186,10 +185,6 @@ export default function ManagerViewEnhanced({ rows }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <TrendingUp className="h-3.5 w-3.5" />
-          提示：续费/新签各分一对一、一对多、小班、其他四列，已在后端按汇总列读取。
-        </div>
       </CardBody>
     </Card>
   );

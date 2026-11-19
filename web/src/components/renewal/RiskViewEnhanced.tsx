@@ -106,30 +106,34 @@ export default function RiskViewEnhanced({ students }: Props) {
     <Card className="h-full">
       <CardHeader
         title="风险学生清单"
-        description="预警：预存未续、停课未结、高三毕业、课消异常的学生名单"
         icon={<AlertTriangle className="h-5 w-5" />}
-        action={
-          <div className="flex items-center gap-2">
+      />
+      <CardBody className="space-y-6 p-4">
+        {/* 筛选栏 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
             <input
               type="text"
               placeholder="搜索学生/老师/学管..."
               value={search}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-              className="w-56 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none pl-10 relative"
+              className="w-full rounded-lg border border-slate-200 bg-white px-10 py-2 text-sm text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none"
+              aria-label="搜索学生、老师或学管"
             />
-            <select
-              value={filter}
-              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilter(e.target.value as 'all' | 'high' | 'medium' | 'low')}
-              className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none"
-            >
-              {RISK_LEVELS.map(o => (
-                <option key={o.key} value={o.key}>{o.label}</option>
-              ))}
-            </select>
           </div>
-        }
-      />
-      <CardBody className="space-y-6 p-4">
+          <select
+            value={filter}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilter(e.target.value as 'all' | 'high' | 'medium' | 'low')}
+            className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none"
+            aria-label="按风险等级筛选"
+          >
+            {RISK_LEVELS.map(o => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+
         {/* 风险等级分布 */}
         <div className="flex gap-3 flex-wrap">
           {RISK_LEVELS.slice(1).map(l => (

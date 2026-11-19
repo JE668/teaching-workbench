@@ -14,12 +14,7 @@ interface ExecutiveSummaryProps {
   onCompareClick?: () => void;
 }
 
-/**
- * 执行摘要区域 — 仪表盘顶部的核心洞察
- * - 4 个核心 KPI 卡片（基数、续科、预存、激励差额）
- * - 关键洞察卡片（自动生成的文本洞察）
- * - 支持多报表对比入口
- */
+
 export default function ExecutiveSummary({
   teacherRows,
   managerRows,

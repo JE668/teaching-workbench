@@ -34,16 +34,12 @@ import {
   type ReportSummary,
   type RiskStudentRow,
   type TeacherStatRow,
+  type TeacherGradeMatrix,
+  type GroupGradeMatrix,
+  type RateOverview,
 } from '../lib/renewal';
 
-/**
- * 续费看板。
- *
- * 数据全部来自用户上传的那一份续费统计表，后端只读不重算。
- * 五个视图对应 Excel 里已经做好的四张表 + 我从明细里能补出来的两张图：
- *   教师统计（激励/学段/学管/课时 4 个 tab，同一页面切换）
- *   科组对比 · 学管业绩 · 续生漏斗 · 风险清单
- */
+
 type View = 'teacher' | 'group' | 'manager' | 'funnel' | 'risk';
 
 const VIEWS: { key: View; label: string }[] = [
@@ -68,6 +64,10 @@ export default function RenewalDashboard() {
   const [riskRows, setRiskRows] = useState<RiskStudentRow[]>([]);
   const [statusRows, setStatusRows] = useState<{ status: string; count: number }[]>([]);
   const [mentorMatrix, setMentorMatrix] = useState<MentorMatrix | null>(null);
+  const [teacherGradeMatrix, setTeacherGradeMatrix] = useState<TeacherGradeMatrix | null>(null);
+  const [groupGradeMatrix, setGroupGradeMatrix] = useState<GroupGradeMatrix | null>(null);
+  const [rateOverview, setRateOverview] = useState<RateOverview | null>(null);
+  const [matrixLoading, setMatrixLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function loadReports() {
@@ -104,14 +104,35 @@ export default function RenewalDashboard() {
         const res = await api.get('/renewal/analytics/group-compare?tab=' + tab + '&reportId=' + reportId);
         if (!cancelled) setGroupRows(((res as any).rows as GroupSummaryRow[]) || []);
       } catch { /* 科组取数失败不影响主表 */ }
-      // 学管矩阵（仅 mentor tab）
+      // 学管矩阵 + 年级矩阵 + 科组年级矩阵 + Rate Overview（仅 mentor tab）
       if (tab === 'mentor') {
-        try {
-          const res = await api.get('/renewal/analytics/mentor-matrix?reportId=' + reportId);
-          if (!cancelled) setMentorMatrix((res as any).matrix as MentorMatrix);
-        } catch { /* 矩阵取数失败不影响主表 */ }
+        setMatrixLoading(true);
+        const fetchWithError = async (url: string, label: string) => {
+          try {
+            return await api.get(url);
+          } catch (err) {
+            if (!cancelled) toast.error(err instanceof Error ? err.message : label + ' 加载失败');
+            return null;
+          }
+        };
+        const [mentorRes, gradeRes, groupRes, rateRes] = await Promise.all([
+          fetchWithError('/renewal/analytics/mentor-matrix?reportId=' + reportId, '学管矩阵'),
+          fetchWithError('/renewal/analytics/teacher-grade-matrix?reportId=' + reportId, '教师年级矩阵'),
+          fetchWithError('/renewal/analytics/group-grade-matrix?reportId=' + reportId, '科组年级矩阵'),
+          fetchWithError('/renewal/analytics/rate-overview?reportId=' + reportId, '续费概览'),
+        ]);
+        if (!cancelled) {
+          setMatrixLoading(false);
+          if (mentorRes) setMentorMatrix((mentorRes as any).matrix as MentorMatrix);
+          if (gradeRes) setTeacherGradeMatrix((gradeRes as any) as TeacherGradeMatrix);
+          if (groupRes) setGroupGradeMatrix((groupRes as any) as GroupGradeMatrix);
+          if (rateRes) setRateOverview((rateRes as any).overview as RateOverview);
+        }
       } else if (!cancelled) {
         setMentorMatrix(null);
+        setTeacherGradeMatrix(null);
+        setGroupGradeMatrix(null);
+        setRateOverview(null);
       }
     })();
     return () => { cancelled = true; };
@@ -131,6 +152,34 @@ export default function RenewalDashboard() {
     setRiskRows(((risk as any)?.rows as RiskStudentRow[]) || []);
     setStatusRows(((status as any)?.rows as { status: string; count: number }[]) || []);
   }, [reportId]);
+
+  const fetchMentorMatrix = useCallback(async (id: number): Promise<MentorMatrix> => {
+    const res = await api.get('/renewal/analytics/mentor-matrix?reportId=' + id);
+    const matrix = (res as any)?.matrix as MentorMatrix;
+    setMentorMatrix(matrix);
+    return matrix;
+  }, []);
+
+  const fetchTeacherGradeMatrix = useCallback(async (id: number): Promise<TeacherGradeMatrix> => {
+    const res = await api.get('/renewal/analytics/teacher-grade-matrix?reportId=' + id);
+    const matrix = (res as any)?.matrix as TeacherGradeMatrix;
+    setTeacherGradeMatrix(matrix);
+    return matrix;
+  }, []);
+
+  const fetchGroupGradeMatrix = useCallback(async (id: number): Promise<GroupGradeMatrix> => {
+    const res = await api.get('/renewal/analytics/group-grade-matrix?reportId=' + id);
+    const matrix = (res as any)?.matrix as GroupGradeMatrix;
+    setGroupGradeMatrix(matrix);
+    return matrix;
+  }, []);
+
+  const fetchRateOverview = useCallback(async (id: number): Promise<RateOverview> => {
+    const res = await api.get('/renewal/analytics/rate-overview?reportId=' + id);
+    const overview = (res as any)?.overview as RateOverview;
+    setRateOverview(overview);
+    return overview;
+  }, []);
 
   useEffect(() => { loadRest(); }, [loadRest]);
 
@@ -219,13 +268,9 @@ export default function RenewalDashboard() {
 
   return (
     <div className="space-y-6">
-      {/* 头部：标题 + 报表选择 */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-800">续费看板</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            数据来自你上传的汇总表，指标直接读取、不做二次换算。
-          </p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -244,7 +289,6 @@ export default function RenewalDashboard() {
         </div>
       </div>
 
-      {/* 执行摘要 */}
       {teacherRows.length > 0 && managerRows.length > 0 && (
         <ExecutiveSummary
           teacherRows={teacherRows}
@@ -255,7 +299,6 @@ export default function RenewalDashboard() {
         />
       )}
 
-      {/* 汇总卡 */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
           label="学生基数"
@@ -289,7 +332,6 @@ export default function RenewalDashboard() {
         />
       </div>
 
-      {/* 视图切换 */}
       <div role="tablist" aria-label="看板视图" className="flex flex-wrap gap-1.5">
         {VIEWS.map(v => (
           <button
@@ -307,20 +349,32 @@ export default function RenewalDashboard() {
         ))}
       </div>
 
-      {/* 图例：颜色与 Excel 条件格式一致 */}
-      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-        <span className="font-medium">学生色块</span>
+      <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-500" role="group" aria-label="学生状态图例" style={{ '--legend-gap': '8px' } as React.CSSProperties}>
         {gridLegend().map(g => (
-          <span key={g.status} className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: g.hex }} />
-            {g.label}
+          <span key={g.status} className="flex items-center gap-1.5 group" title={g.label}>
+            <span className="w-2.5 h-2.5 rounded-sm ring-1 ring-slate-200 transition-transform group-hover:scale-110" style={{ backgroundColor: g.hex }} aria-hidden="true" />
           </span>
         ))}
       </div>
 
       {loading ? (
         <div className="py-16 text-center text-sm text-slate-400">加载中…</div>
-      ) : view === 'teacher' ? <TeacherViewEnhanced rows={teacherRows} tab={tab} setTab={setTab} expanded={expanded} toggleTeacher={toggleTeacher} mentorMatrix={mentorMatrix ?? undefined} reportId={reportId ?? undefined} />
+      ) : view === 'teacher' ? <TeacherViewEnhanced
+          rows={teacherRows}
+          tab={tab}
+          setTab={setTab}
+          expanded={expanded}
+          toggleTeacher={toggleTeacher}
+          mentorMatrix={mentorMatrix ?? undefined}
+          teacherGradeMatrix={teacherGradeMatrix ?? undefined}
+          groupGradeMatrix={groupGradeMatrix ?? undefined}
+          rateOverview={rateOverview ?? undefined}
+          reportId={reportId ?? undefined}
+          fetchMentorMatrix={fetchMentorMatrix}
+          fetchTeacherGradeMatrix={fetchTeacherGradeMatrix}
+          fetchGroupGradeMatrix={fetchGroupGradeMatrix}
+          fetchRateOverview={fetchRateOverview}
+        />
         : view === 'group' ? <GroupViewEnhanced rows={groupRows} tab={tab} setTab={setTab} />
         : view === 'manager' ? <ManagerViewEnhanced rows={managerRows} />
         : view === 'funnel' ? <FunnelViewEnhanced stages={funnelStages} managerRows={funnelManagerRows} />
