@@ -140,3 +140,128 @@ export function formatShortDate(iso: string): string {
   const m = String(iso).match(/^\d{4}-(\d{1,2})-(\d{1,2})$/);
   return m ? `${m[1]}.${m[2]}` : iso;
 }
+
+// ============ 知识图谱（知识雷达） ============
+
+export type KnowledgePointCategory = 'concept' | 'skill' | 'method' | 'habit';
+
+export interface KnowledgeRadarData {
+  concept: KnowledgeRadarItem[];
+  skill: KnowledgeRadarItem[];
+  method: KnowledgeRadarItem[];
+  habit: KnowledgeRadarItem[];
+}
+
+export interface KnowledgeRadarItem {
+  name: string;
+  mastery: number; // 0-1
+}
+
+export interface WeakPoint {
+  point_name: string;
+  point_category: KnowledgePointCategory;
+  mastery_level: number;
+  evidence_count: number;
+}
+
+export interface RemedialExercise {
+  id: number;
+  content: string;
+  band: string;
+  track: string;
+  seq: number;
+}
+
+export const KNOWLEDGE_CATEGORY_LABELS: Record<KnowledgePointCategory, string> = {
+  concept: '概念',
+  skill: '技能',
+  method: '方法',
+  habit: '习惯',
+};
+
+export const KNOWLEDGE_CATEGORY_COLORS: Record<KnowledgePointCategory, string> = {
+  concept: 'bg-blue-500',
+  skill: 'bg-green-500',
+  method: 'bg-purple-500',
+  habit: 'bg-amber-500',
+};
+
+export const KNOWLEDGE_CATEGORY_ICONS: Record<KnowledgePointCategory, string> = {
+  concept: '🧠',
+  skill: '⚙️',
+  method: '🔍',
+  habit: '📝',
+};
+
+// ============ 阶测错因分析 ============
+
+export interface ExamAnalysisRequest {
+  studentId: number;
+  examId: number;
+  studentName: string;
+  subject: string;
+  grade: string;
+  examName: string;
+  questionCount: number;
+  images?: string[];
+  text?: string;
+  context?: string;
+}
+
+export interface ExamQuestionAnalysis {
+  question_index: number;
+  question_type: string;
+  mistake_tags: string[];      // ["概念不清:定义记错", "计算粗心:符号漏"]
+  root_cause: string;
+  review_actions: string[];
+  confidence: number;
+}
+
+export interface ExamAnalysisSummary {
+  tag_distribution: Record<string, number>;
+  secondary_distribution: Record<string, number>;
+  total_questions: number;
+  analyzed_questions: number;
+}
+
+export interface ExamAnalysisResult {
+  student_id: number;
+  exam_id: number;
+  analyses: ExamQuestionAnalysis[];
+  summary: ExamAnalysisSummary;
+}
+
+export interface StudentMistakeTrendItem {
+  exam_id: number;
+  exam_name: string;
+  tag_distribution: Record<string, number>;
+  date: string;
+}
+
+// 错因标签体系（前端展示用）
+export const MISTAKE_TAG_TAXONOMY: Record<string, string[]> = {
+  '概念不清': ['定义记错', '性质混淆', '公式套用错误', '定理条件遗漏'],
+  '技巧缺失': ['解题路径不熟', '辅助线不会加', '换元思维不到', '分类讨论不全'],
+  '审题失误': ['条件漏读', '单位未换', '问法理解偏', '隐含条件未挖掘'],
+  '计算粗心': ['抄写错', '符号漏', '运算失误', '进位/退位错误'],
+  '表达不规范': ['步骤跳跃', '格式不符', '单位缺失', '结论未写明'],
+  '时间管理': ['易题超时', '难题不放', '卷面分配失衡', '检查时间不足'],
+};
+
+export const MISTAKE_TAG_COLORS: Record<string, string> = {
+  '概念不清': 'bg-blue-500',
+  '技巧缺失': 'bg-purple-500',
+  '审题失误': 'bg-orange-500',
+  '计算粗心': 'bg-red-500',
+  '表达不规范': 'bg-amber-500',
+  '时间管理': 'bg-teal-500',
+};
+
+export const MISTAKE_TAG_ICONS: Record<string, string> = {
+  '概念不清': '📖',
+  '技巧缺失': '🔧',
+  '审题失误': '👁️',
+  '计算粗心': '✏️',
+  '表达不规范': '📐',
+  '时间管理': '⏱️',
+};

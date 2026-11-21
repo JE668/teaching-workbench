@@ -170,7 +170,8 @@ router.get('/:id/draft/stream', (req: AuthenticatedRequest, res: Response) => {
     return res.status(400).json({ error: '缺少 clientId' });
   }
 
-  openSse(req, res);
+  const streamId = `draft-${userId}-${observationId}-${clientId}`;
+  openSse(req, res, streamId);
 
   const key = getClientKey(userId, observationId);
 

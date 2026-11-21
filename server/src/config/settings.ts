@@ -130,6 +130,8 @@ export interface AiConfig {
   qualityMaxRetries: number;
   qualityDedupThreshold: number;
   qualityEnableFactCheck: boolean;
+  // Embedding 模型（用于知识库向量化，默认 text-embedding-3-small）
+  embeddingModel: string;
 }
 
 /** 配置版本号（按账号分桶）：变化时让该账号缓存的 AI 客户端失效 */
@@ -148,6 +150,9 @@ export function getAiConfig(userId: number): AiConfig {
     qualityDedupThreshold: Math.max(0, Math.min(1, parseFloat(getSetting('ai.quality.dedupThreshold', userId)) || 0.7)),
     qualityEnableFactCheck: getSetting('ai.quality.enableFactCheck', userId) !== 'false',
   };
+  // Embedding 模型默认 text-embedding-3-small（1536 维）
+  const embeddingModel = getSetting('ai.embeddingModel', userId) || 'text-embedding-3-small';
+
   if (provider === 'gemini-proxy') {
     const rawBaseUrl = getSetting('ai.geminiProxy.baseUrl', userId);
     return {
@@ -158,6 +163,7 @@ export function getAiConfig(userId: number): AiConfig {
       apiKey: getSetting('ai.geminiProxy.apiKey', userId),
       // gemini-proxy（免费层）偶发慢，适当加大默认超时
       timeoutMs: Math.max(shared.timeoutMs, 120000),
+      embeddingModel,
     };
   }
   return {
@@ -165,6 +171,7 @@ export function getAiConfig(userId: number): AiConfig {
     model: getSetting('ai.model', userId),
     baseUrl: getSetting('ai.baseUrl', userId) || 'https://token.sensenova.cn/v1',
     apiKey: getSetting('ai.apiKey', userId),
+    embeddingModel,
   };
 }
 

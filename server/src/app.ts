@@ -28,6 +28,15 @@ import reportAiRoutes from './routes/reports.ai.js';
 import aiMetricsRoutes from './routes/aiMetrics.js';
 import renewalRoutes from './renewal/renewalRoutes.js';
 import { initRenewalDb } from './renewal/db.js';
+import knowledgeGraphRoutes from './routes/knowledgeGraph.js';
+import examAnalysisRoutes from './routes/examAnalysis.js';
+import unifiedDraftsRoutes from './routes/unifiedDrafts.js';
+import contentReferencesRoutes from './routes/contentReferences.js';
+import studentProfileRoutes from './routes/studentProfile.js';
+import knowledgeRoutes from './routes/knowledge.js';
+import parentViewRoutes from './routes/parentView.js';
+import lessonPlannerRoutes from './routes/lessonPlanner.js';
+import teachingReviewRoutes from './routes/teachingReview.js';
 
 /**
  * 创建 Express 应用（不启动监听）。
@@ -241,12 +250,48 @@ export async function createApp() {
     res.status(200).end();
   });
 
+  // 必须在 app.use('/api', authMiddleware, uploadRoutes) 前注册：
+  // 该全局中间件会拦截所有后续 /api 请求，而家长 token 页面需要公开访问。
+  app.use('/api/parent-view', parentViewRoutes);
+
   app.use('/api', authMiddleware, uploadRoutes);
 
   // ========== 续费看板模块（独立 renewal.db）==========
   // 上传用户在 Excel 里已做好的续费统计表，解析入库；
   // 教师统计表按 激励/学段/学管/课时 4 个 tab 出图，另有科组对比/学管业绩/续生漏斗/风险清单。
   app.use('/api/renewal', authMiddleware, renewalRoutes);
+
+  // ========== 知识图谱模块 ==========
+  // 从月度总结/回访/观察记录中抽取知识点，维护 mastery 动态更新，
+  // 提供知识雷达、薄弱点、补缺推荐。
+  app.use('/api/knowledge', authMiddleware, knowledgeGraphRoutes);
+
+  // ========== 阶测错因分析模块 ==========
+  // 上传试卷图片/文本，AI 分析错因标签、生成复习微计划、全班错因分布统计。
+  app.use('/api/exam-analysis', authMiddleware, examAnalysisRoutes);
+
+  // ========== 统一草稿版本管理模块 ==========
+  // 回访/月报/听评课共用一套草稿协议，支持分支/合并/冲突检测/版本图可视化。
+  app.use('/api/unified-drafts', authMiddleware, unifiedDraftsRoutes);
+
+  // ========== 双向引用 + 变更通知模块 ==========
+  // 前端统一使用 /api/content/references；保留 /api/content 作为旧客户端兼容别名。
+  app.use('/api/content/references', authMiddleware, contentReferencesRoutes);
+  app.use('/api/content', authMiddleware, contentReferencesRoutes);
+
+  // ========== 学生画像模块 ==========
+  // 聚合多模态长时序数据 → LLM 抽取 StudentProfile → 注入后续生成。
+  app.use('/api/student-profiles', authMiddleware, studentProfileRoutes);
+  // ========== 教研组知识库模块 ==========
+  // 语义检索、周报摘要、相似学生匹配、优质范例、增量索引。
+  app.use('/api/knowledge', authMiddleware, knowledgeRoutes);
+
+  // ========== AI 备课助手 ==========
+  app.use('/api/lesson-plans', authMiddleware, lessonPlannerRoutes);
+
+  // ========== 教学复盘仪表盘 ==========
+  // 实时聚合回访/月报/听评课/AI 指标与知识点掌握，不落新表。
+  app.use('/api/teaching-review', authMiddleware, teachingReviewRoutes);
 
   // ========== 错误处理 ==========
   app.use(notFound);

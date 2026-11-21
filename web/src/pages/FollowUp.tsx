@@ -25,6 +25,7 @@ import {
   Zap,
   Users,
   RotateCcw,
+  Link2,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAppCommand } from '../hooks/useAppCommand';
@@ -44,6 +45,9 @@ import {
   CourseType,
   FollowUpModule,
   FollowUpClassmate,
+  MultimodalObservation,
+  MULTIMODAL_OBSERVATION_TYPE_LABELS,
+  MULTIMODAL_OBSERVATION_TYPE_COLORS,
 } from '../types/index';
 import { deriveNickname } from '../lib/nickname';
 import {
@@ -66,6 +70,10 @@ import EmptyState from '../components/ui/EmptyState';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import Modal from '../components/ui/Modal';
+import { ReferencePanel } from '../components/ReferencePanel';
+import { StudentProfilePanel } from '../components/StudentProfile';
+import { ParentViewPushButton } from '../components/ParentViewPushButton';
+import UnifiedDraftPanel from '../components/UnifiedDraftPanel';
 import { countWords, copyText, cn, relativeTime } from '../lib/utils';
 import { Loader2, Trash2, Archive } from 'lucide-react';
 import { extractDroppedImages } from '../lib/dropFiles';
@@ -199,6 +207,7 @@ export default function FollowUp() {
   const redirectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [content, setContent] = useState(() => restored?.content || '');
   const [savedFollowupId, setSavedFollowupId] = useState<number | null>(null);
+  const [creatingParentView, setCreatingParentView] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => restored?.draft || '');
   const [saving, setSaving] = useState(false);
@@ -206,6 +215,10 @@ export default function FollowUp() {
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [draftHistory, setDraftHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  // 多模态观察提取
+  const [observations, setObservations] = useState<MultimodalObservation[]>([]);
+  const [extractingObservations, setExtractingObservations] = useState(false);
+  const [showObservationPanel, setShowObservationPanel] = useState(false);
   // ① 回访文案班级批量复用
   const [showApplyClass, setShowApplyClass] = useState(false);
   const [classmates, setClassmates] = useState<FollowUpClassmate[]>([]);
@@ -508,6 +521,7 @@ export default function FollowUp() {
           modules: orderedModules,
           nickname: form.nickname || deriveNickname(form.studentName),
           images,
+          observations: observations.length > 0 ? observations : undefined,
         },
         {
           onDelta: (text) => setContent((prev) => prev + text),
@@ -555,6 +569,35 @@ export default function FollowUp() {
     }
   };
 
+  /** 从上传的图片中提取结构化观察信息 */
+  const extractObservations = async () => {
+    if (images.length === 0) {
+      toast.error('请先上传课堂图片');
+      return;
+    }
+    if (!form.topic.trim() || !form.performance.trim()) {
+      toast.error('请先填写课程主题和课堂表现');
+      return;
+    }
+
+    setExtractingObservations(true);
+    try {
+      const res = await api.post('/followups/extract-observations', {
+        ...form,
+        modules: orderedModules,
+        nickname: form.nickname || deriveNickname(form.studentName),
+        images,
+      });
+      setObservations(res.observations || []);
+      setShowObservationPanel(true);
+      toast.success('已从图片中提取观察信息，请检查后再生成回访');
+    } catch (err: any) {
+      toast.error('观察提取失败：' + err.message);
+    } finally {
+      setExtractingObservations(false);
+    }
+  };
+
   const cancelGenerate = () => {
     abortRef.current?.abort();
   };
@@ -589,8 +632,8 @@ export default function FollowUp() {
       if (isGroup) {
         toast.success('已为 ' + selectedIds.length + ' 位学生各归档一条回访');
       } else {
-        toast.success('已保存并归档到学生档案');
-        // 记录已保存的回访 id，用于「套用到同班」
+        toast.success('已保存并归档，可生成家长链接');
+        // 记录已保存的回访 id，用于「套用到同班」和家长链接
         if (res?.followup?.id) setSavedFollowupId(res.followup.id);
       }
 
@@ -602,12 +645,14 @@ export default function FollowUp() {
         toast.info('已把 ' + res.backfilled + ' 条同名历史回访归入该学生档案');
       }
 
-      // 清掉刚提交的内容，为"继续下一个"或跳转做准备
-      setContent('');
-      setDraft('');
-      setEditing(false);
-      setImages([]);
-      setSavedFollowupId(null);
+      // 继续下一个或小组批量归档时清理；1 对 1 保留已归档内容和 id，便于生成家长链接。
+      if (keepGoing || isGroup) {
+        setContent('');
+        setDraft('');
+        setEditing(false);
+        setImages([]);
+        setSavedFollowupId(null);
+      }
 
       if (keepGoing) {
         // 留在本页继续写：保留年级/学科/课程类型/课次，清掉学生与内容
@@ -624,8 +669,8 @@ export default function FollowUp() {
         return;
       }
 
-      // 跳转：小组课去第一个学生档案，1对1 去对应学生档案
-      const targetId = isGroup ? selectedIds[0] : form.studentId || res?.followup?.studentId;
+      // 小组课归档后去第一个学生档案；1 对 1 留在结果页，避免家长链接入口被立即跳走。
+      const targetId = isGroup ? selectedIds[0] : null;
       if (targetId) {
         redirectTimer.current = setTimeout(() => navigate('/students/' + targetId), 1200);
       }
@@ -639,6 +684,46 @@ export default function FollowUp() {
   const handleCopy = async () => {
     const ok = await copyText(editing ? draft : content);
     ok ? toast.success('已复制回访内容，可直接发送给家长') : toast.error('复制失败，请手动选择文本复制');
+  };
+
+  const createParentViewLink = async (parentOpenId?: string): Promise<boolean> => {
+    if (!savedFollowupId) {
+      toast.error('请先保存回访，再生成家长链接');
+      return false;
+    }
+    setCreatingParentView(true);
+    try {
+      const data = await api.post(`/parent-view/followup/${savedFollowupId}`, {
+        expiresDays: 30,
+        ...(parentOpenId ? { parentOpenId } : {}),
+      }) as {
+        viewUrl?: string;
+        accessToken?: string;
+        pushResult?: { status: 'sent' | 'skipped' | 'failed'; reason?: string; error?: string };
+      };
+      const viewUrl = data.viewUrl || (data.accessToken ? `/parent-view/${data.accessToken}` : '');
+      if (!viewUrl) throw new Error('服务端未返回家长链接');
+      const absoluteUrl = new URL(viewUrl, window.location.origin).href;
+      const copied = await copyText(absoluteUrl);
+      if (copied) {
+        toast.success('家长链接已复制，可发送给家长（30 天内有效）');
+      } else {
+        toast.error('链接已生成，但复制失败，请检查浏览器剪贴板权限后重试');
+      }
+      if (data.pushResult?.status === 'sent') {
+        toast.success('微信模板消息已推送，家长可打开链接或小程序卡片查看');
+      } else if (data.pushResult?.status === 'skipped') {
+        toast.info('链接已生成；微信推送未配置，请直接分享链接');
+      } else if (data.pushResult?.status === 'failed') {
+        toast.error(`链接已生成，但微信推送失败：${data.pushResult.error || data.pushResult.reason || '未知原因'}`);
+      }
+      return true;
+    } catch (error) {
+      toast.error('生成家长链接失败：' + (error instanceof Error ? error.message : '请稍后重试'));
+      return false;
+    } finally {
+      setCreatingParentView(false);
+    }
   };
 
   /** 手机上直接拉起系统分享面板 → 微信，省掉"复制→切微信→找会话" */
@@ -813,6 +898,14 @@ export default function FollowUp() {
             <History className="h-3.5 w-3.5" />
             <span className="font-medium">草稿历史</span>
           </button>
+          <UnifiedDraftPanel
+            entityType="followup"
+            entityId={savedFollowupId}
+            currentContent={form}
+            autoSave
+            disabled={!savedFollowupId}
+            onRestore={(content: FormState) => setForm(content)}
+          />
         </div>
       </div>
 
@@ -1350,11 +1443,30 @@ export default function FollowUp() {
               description={`流程打卡要求不少于 ${PHOTO_MIN} 张；支持粘贴截图、拖拽或点击上传`}
               icon={<ImagePlus className="h-4 w-4" />}
               action={
-                images.length > 0 ? (
-                  <Badge tone={images.length >= PHOTO_MIN ? 'success' : 'warning'}>
-                    {images.length} / {PHOTO_MIN} 张
-                  </Badge>
-                ) : undefined
+                <div className="flex items-center gap-2">
+                  {images.length > 0 && (
+                    <Badge tone={images.length >= PHOTO_MIN ? 'success' : 'warning'}>
+                      {images.length} / {PHOTO_MIN} 张
+                    </Badge>
+                  )}
+                  {images.length > 0 && !extractingObservations && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={extractObservations}
+                      icon={<Sparkles className="h-3.5 w-3.5" />}
+                      className="gap-1"
+                    >
+                      提取观察
+                    </Button>
+                  )}
+                  {images.length > 0 && extractingObservations && (
+                    <Button variant="outline" size="sm" disabled>
+                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+                      提取中…
+                    </Button>
+                  )}
+                </div>
               }
             />
             <div className="p-5">
@@ -1613,6 +1725,21 @@ export default function FollowUp() {
                       </button>
                     )}
                     <button
+                      type="button"
+                      onClick={() => void createParentViewLink()}
+                      disabled={!savedFollowupId || creatingParentView}
+                      title={savedFollowupId ? '生成家长查阅链接并复制，有效期 30 天' : '请先保存回访，再生成家长链接'}
+                      className="flex items-center gap-1 rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {creatingParentView ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+                      家长链接
+                    </button>
+                    <ParentViewPushButton
+                      disabled={!savedFollowupId}
+                      loading={creatingParentView}
+                      onPush={createParentViewLink}
+                    />
+                    <button
                       onClick={() => void openApplyClass()}
                       title="把这份回访的主题/表现/内容套用到同班同学，再逐个微调"
                       className="flex items-center gap-1 rounded-lg bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 ring-1 ring-brand-200 transition-colors hover:bg-brand-100"
@@ -1719,6 +1846,29 @@ export default function FollowUp() {
           )}
         </div>
       </div>
+
+      {/* 双向引用面板：已保存的回访才有 ID 可建立引用 */}
+      {savedFollowupId && (
+        <div className="mt-6">
+          <ReferencePanel
+            entityType="followup"
+            entityId={savedFollowupId}
+            currentEntityLabel="本回访"
+          />
+        </div>
+      )}
+
+      {/* 学生画像面板：选了学生才有 ID 可显示画像 */}
+      {form.studentId && (
+        <div className="mt-6">
+          <StudentProfilePanel
+            studentId={form.studentId as number}
+            studentName={form.studentName}
+            entityType="followup"
+            entityId={savedFollowupId ?? undefined}
+          />
+        </div>
+      )}
 
       {/* 草稿历史侧边栏（桌面端） */}
       {showHistoryPanel && (
@@ -1959,6 +2109,109 @@ export default function FollowUp() {
               </ul>
             )}
           </div>
+        </div>
+      </Modal>
+
+      {/* 多模态观察预览/编辑面板 */}
+      <Modal
+        open={showObservationPanel}
+        onClose={() => setShowObservationPanel(false)}
+        title="图片观察提取"
+        description="AI 从课堂图片中识别出的教学信息。请检查、修改或删除后，再点击「生成回访」将观察作为上下文传给 AI。"
+        size="lg"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowObservationPanel(false)}>稍后处理</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setShowObservationPanel(false);
+                void generate();
+              }}
+              disabled={!canGenerate}
+            >
+              生成回访
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {/* 观察列表 */}
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {observations.length === 0 ? (
+              <div className="text-center py-8 text-slate-400">
+                <p className="text-sm">未识别出观察信息</p>
+                <p className="text-xs mt-1">可能是图片模糊或内容关联度不高</p>
+              </div>
+            ) : (
+              observations.map((obs, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-start gap-3 p-3 rounded-xl bg-slate-50 ring-1 ring-slate-100"
+                >
+                  <span
+                    className={cn(
+                      'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset mt-0.5',
+                      MULTIMODAL_OBSERVATION_TYPE_COLORS[obs.type]
+                    )}
+                  >
+                    {MULTIMODAL_OBSERVATION_TYPE_LABELS[obs.type]}
+                  </span>
+
+                  {/* 详情编辑 */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className="text-xs text-slate-400">图片 {obs.evidence_image_index + 1}</span>
+                      <button
+                        type="button"
+                        onClick={() => setObservations((prev) => prev.filter((_, i) => i !== idx))}
+                        className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                        aria-label="删除此观察"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <textarea
+                      value={obs.detail}
+                      onChange={(e) => setObservations((prev) => prev.map((o, i) => i === idx ? { ...o, detail: e.target.value } : o))}
+                      rows={2}
+                      className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/10"
+                      placeholder="观察详情"
+                    />
+                  </div>
+                </div>
+              )))}
+          </div>
+
+          {/* 添加观察按钮 */}
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => setObservations((prev) => [
+              ...prev,
+              { type: 'other', detail: '', evidence_image_index: images.length > 0 ? 0 : 0 }
+            ])}
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <span className="h-4 w-4 rounded-full border border-dashed border-slate-300" />
+              添加观察
+            </span>
+          </Button>
+
+          {/* 观察文本预览 */}
+          {observations.length > 0 && (
+            <details className="group">
+              <summary className="flex items-center justify-between cursor-pointer text-xs text-slate-500 hover:text-slate-700">
+                <span>生成的观察文本预览（将作为上下文传给 AI）</span>
+                <span className="transition-transform group-open:rotate-180">▼</span>
+              </summary>
+              <div className="mt-2 p-3 rounded-lg bg-slate-50 text-xs text-slate-600 whitespace-pre-wrap font-mono max-h-40 overflow-auto">
+                {observations
+                  .map((obs) => `【${MULTIMODAL_OBSERVATION_TYPE_LABELS[obs.type]}】图片${obs.evidence_image_index + 1}：${obs.detail}`)
+                  .join('\n')}
+              </div>
+            </details>
+          )}
         </div>
       </Modal>
 

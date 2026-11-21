@@ -62,12 +62,12 @@ export default function RenewalDashboard() {
   const [managerRows, setManagerRows] = useState<ManagerPerfRow[]>([]);
   const [funnelRows, setFunnelRows] = useState<FunnelRow[]>([]);
   const [riskRows, setRiskRows] = useState<RiskStudentRow[]>([]);
-  const [statusRows, setStatusRows] = useState<{ status: string; count: number }[]>([]);
+  const [, setStatusRows] = useState<{ status: string; count: number }[]>([]);
   const [mentorMatrix, setMentorMatrix] = useState<MentorMatrix | null>(null);
   const [teacherGradeMatrix, setTeacherGradeMatrix] = useState<TeacherGradeMatrix | null>(null);
   const [groupGradeMatrix, setGroupGradeMatrix] = useState<GroupGradeMatrix | null>(null);
   const [rateOverview, setRateOverview] = useState<RateOverview | null>(null);
-  const [matrixLoading, setMatrixLoading] = useState(false);
+  const [, setMatrixLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function loadReports() {

@@ -10,6 +10,7 @@
 
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { db } from '../config/database.js';
+import { getAiQueueDepth, getAiInFlightCount } from '../services/ai/index.js';
 
 // ===== HTTP 直方图 =====
 // 延迟桶（ms）。累计计数法，渲染时输出 le 桶，Grafana 侧可算 p50/p95。
@@ -157,6 +158,20 @@ export function renderPrometheus(buildSha: string): string {
   } catch {
     // 指标表不可用不影响 /metrics 其余部分
   }
+
+  // AI 队列与并发指标（实时）
+  push('ai_queue_depth', 'AI tasks waiting in queue by priority', 'gauge',
+    [
+      [{ priority: 'interactive' }, getAiQueueDepth('interactive')],
+      [{ priority: 'batch' }, getAiQueueDepth('batch')],
+      [{ priority: 'background' }, getAiQueueDepth('background')],
+    ] as [Record<string, string>, number][]);
+  push('ai_slot_usage', 'AI slots in use by priority', 'gauge',
+    [
+      [{ priority: 'interactive' }, getAiInFlightCount('interactive')],
+      [{ priority: 'batch' }, getAiInFlightCount('batch')],
+      [{ priority: 'background' }, getAiInFlightCount('background')],
+    ] as [Record<string, string>, number][]);
 
   return out.join('\n') + '\n';
 }

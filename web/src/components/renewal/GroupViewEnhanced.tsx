@@ -1,10 +1,8 @@
-import React from 'react';
 import { FolderTree, TrendingUp, AlertCircle, CheckCircle } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
 import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, type GroupSummaryRow } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
-import Sparkline from './Sparkline';
 
 interface Props {
   rows: GroupSummaryRow[];

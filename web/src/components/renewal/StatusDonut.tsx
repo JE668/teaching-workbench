@@ -79,7 +79,6 @@ export default function StatusDonut({
           {segments.map((seg) => {
             const meta = GRID_STATUS_META[seg.status] ?? GRID_STATUS_META.normal;
             const isHovered = hoveredStatus === seg.status;
-            const ringColor = meta.hex.replace('#', '');
             return (
               <g
                 key={seg.status}

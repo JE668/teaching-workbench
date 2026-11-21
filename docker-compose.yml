@@ -31,6 +31,8 @@ services:
       - DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-admin}
       - DEFAULT_ADMIN_PASS=${DEFAULT_ADMIN_PASS:-123456}
       - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - ADMIN_USERNAMES=${ADMIN_USERNAMES:-}
+      - TEACHING_SUPERVISOR_USERNAMES=${TEACHING_SUPERVISOR_USERNAMES:-}
       # /metrics 监控口令：生产环境留空=端点 404；要开监控请设置（openssl rand -hex 16）
       - METRICS_TOKEN=${METRICS_TOKEN:-}
       # AI 指标保留天数：超期运营遥测行定期删除，防表无限增长。默认 90

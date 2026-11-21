@@ -115,37 +115,53 @@ describe('流式生成接口', () => {
     const done = res.events.find((e) => e.event === 'done');
     assert.ok(done, '应有 done 事件');
     assert.equal(done.data.content, good);
-    assert.equal(done.data.regenerated, false);
+    assert.ok(done.data.structured !== undefined, 'done 应包含 structured 字段');
     assert.equal(done.data.wordCount, good.replace(/[\s\p{P}\p{S}]/gu, '').length);
 
     assert.equal(res.events[res.events.length - 1].event, 'done', 'done 必须是最后一个事件');
   });
 
-  test('字数不达标时发出 regenerating 并以重试结果收尾', async () => {
+  test('结构化解析失败时发出 phase=regenerating 并以重试结果收尾', async () => {
     const tooShort = '太短了。';
     // 注意：必须真的落在 MIN_WORDS-MAX_WORDS 区间内，否则路由会正确判定其不合格
     // （这里曾经写长过——200 上限收紧后 201 字就超出区间了）
-    const good =
-      '【课堂内容】本节课重点讲解异分母分数加减法的通分原理与步骤，通过数轴与图形直观演示，帮助学生理解分数单位统一的数学本质，并结合生活情境设计练习。' +
-      '【学生收获】李小明本节课专注度较高，能够主动举手回答问题，对通分方法的理解比较到位，独立完成基础题型时准确率良好，计算速度还有提升空间，建议通过限时练习逐步改善。' +
-      '【课后任务】完成练习册第12页第1到8题，重点巩固通分步骤；每天用5分钟做10道口算，提升计算速度与准确率。';
+    const structuredGood = {
+      knowledge_gain: '李小明本节课专注度较高，能够主动举手回答问题，对通分方法的理解比较到位，独立完成基础题型时准确率良好，计算速度还有提升空间，建议通过限时练习逐步改善。',
+      class_performance: '本节课重点讲解异分母分数加减法的通分原理与步骤，通过数轴与图形直观演示，帮助学生理解分数单位统一的数学本质，并结合生活情境设计练习。',
+      homework_assign: '完成练习册第12页第1到8题，重点巩固通分步骤；每天用5分钟做10道口算，提升计算速度与准确率。',
+      next_plan: '下节课重点练习异分母分数加减法，巩固通分技能。',
+      teacher_remark: '小明表现很好，建议家长配合监督每日口算练习。',
+    };
+    const textGood =
+      '【学生收获】\n' +
+      structuredGood.knowledge_gain +
+      '\n\n【课堂表现】\n' +
+      structuredGood.class_performance +
+      '\n\n【作业布置】\n' +
+      structuredGood.homework_assign +
+      '\n\n【下步计划】\n' +
+      structuredGood.next_plan +
+      '\n\n【教师评价】\n' +
+      structuredGood.teacher_remark;
 
+    // 首次返回无法解析为结构化的文本，触发重试
     setFollowUpStreamer(streamOf([tooShort]));
-    setFollowUpGenerator(async () => good);
+    // 重试返回结构化结果
+    setFollowUpGenerator(async () => ({ structured: structuredGood, text: textGood, wordCount: textGood.replace(/[\s\p{P}\p{S}]/gu, '').length }));
 
     const res = await collectSse(VALID_BODY);
     assert.equal(res.status, 200);
 
-    const regen = res.events.find((e) => e.event === 'regenerating');
-    assert.ok(regen, '应发出 regenerating 事件');
-    assert.equal(regen.data.wordCount, tooShort.replace(/[\s\p{P}\p{S}]/gu, '').length);
+    // 检查 phase 事件：应有 phase=regenerating
+    const phaseRegen = res.events.find((e) => e.event === 'phase' && e.data?.phase === 'regenerating');
+    assert.ok(phaseRegen, '应发出 phase=regenerating 事件');
 
     const done = res.events.find((e) => e.event === 'done');
     assert.ok(done);
-    assert.equal(done.data.regenerated, true, '应标记为已重新生成');
-    assert.equal(done.data.content, good, '应以重试版本收尾');
+    assert.ok(done.data.structured !== undefined, 'done 应包含 structured 字段');
+    assert.equal(done.data.content, textGood, '应以重试版本收尾');
 
-    const expectedWords = good.replace(/[\s\p{P}\p{S}]/gu, '').length;
+    const expectedWords = textGood.replace(/[\s\p{P}\p{S}]/gu, '').length;
     assert.equal(done.data.wordCount, expectedWords);
     assert.ok(
       expectedWords >= MIN_WORDS && expectedWords <= MAX_WORDS,

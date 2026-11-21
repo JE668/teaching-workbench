@@ -14,6 +14,7 @@ import { countWords } from '../services/ai/index.js';
 import { commitImages } from '../services/imageLifecycle.js';
 import { validateBody } from '../utils/validation.js';
 import { followUpCreateSchema, followUpUpdateSchema } from '../utils/schemas.js';
+import { recordChangeEvent } from '../services/content/references.js';
 
 /**
  * 写操作路由：创建（1对1 + 小组课）/ 更新 / 删除。
@@ -186,6 +187,9 @@ router.post('/', validateBody(followUpCreateSchema), (req: AuthenticatedRequest,
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(result.lastInsertRowid);
 
+    // 记录变更事件
+    recordChangeEvent('followup', Number(result.lastInsertRowid), ['created'], 1, req.userId!);
+
     res.json({
       followup: mapFollowUp(row),
       // 让前端能提示「已自动建档」「已归位 N 条历史记录」
@@ -281,6 +285,9 @@ router.put('/:id', validateBody(followUpUpdateSchema), (req: AuthenticatedReques
       followupId,
       userId
     );
+
+    // 记录变更事件
+    recordChangeEvent('followup', followupId, ['updated'], 2, req.userId!);
 
     const row = db.prepare('SELECT * FROM followups WHERE id = ?').get(followupId);
     res.json({ followup: mapFollowUp(row) });
@@ -410,6 +417,9 @@ router.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
     if (result.changes === 0) {
       return res.status(404).json({ error: '回访记录不存在' });
     }
+
+    // 记录变更事件
+    recordChangeEvent('followup', followupId, ['deleted'], 2, req.userId!);
 
     res.json({ success: true });
   } catch (error: any) {

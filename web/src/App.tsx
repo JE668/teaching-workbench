@@ -32,6 +32,7 @@ import {
 // 首屏不再为「回访 + 听评课 + 看板」等用不到的代码付流量成本。
 // 注：组件测试直接渲染页面（不经由这里），不受懒加载影响。
 const Login = lazy(() => import('./pages/Login'));
+const ParentView = lazy(() => import('./pages/ParentView'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Students = lazy(() => import('./pages/Students'));
 const StudentProfile = lazy(() => import('./pages/StudentProfile'));
@@ -48,6 +49,9 @@ const ReportEdit = lazy(() => import('./pages/ReportEdit'));
 const AiMetrics = lazy(() => import('./pages/AiMetrics'));
 const RenewalUpload = lazy(() => import('./pages/RenewalUpload'));
 const RenewalDashboard = lazy(() => import('./pages/RenewalDashboard'));
+const LessonPlanner = lazy(() => import('./pages/LessonPlanner'));
+const TeachingReview = lazy(() => import('./pages/TeachingReview'));
+const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -91,6 +95,7 @@ function AppRoutes() {
     <Suspense fallback={<LoadingFallback />}>
       <Routes>
         <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/parent-view/:token" element={<ParentView />} />
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="students" element={<Students />} />
@@ -106,6 +111,9 @@ function AppRoutes() {
           <Route path="catalog" element={<Catalog />} />
           <Route path="reports" element={<Reports />} />
           <Route path="reports/:id" element={<ReportEdit />} />
+          <Route path="lesson-planner" element={<LessonPlanner />} />
+          <Route path="review" element={<TeachingReview />} />
+          <Route path="knowledge" element={<KnowledgeBase />} />
           <Route path="ai-metrics" element={<AiMetrics />} />
           <Route path="renewal" element={<RenewalDashboard />} />
           <Route path="renewal/upload" element={<RenewalUpload />} />

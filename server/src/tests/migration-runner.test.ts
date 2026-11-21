@@ -28,6 +28,13 @@ describe('版本化迁移运行器', () => {
     assert.equal(row.user_version, status.migrations.length, 'user_version 应等于迁移总数（最新序号）');
   });
 
+  test('关键业务表确实由迁移创建，而非仅推进版本序号', () => {
+    for (const table of ['student_profiles', 'group_knowledge_chunks', 'parent_views', 'lesson_plans']) {
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+      assert.equal((row as { name?: string } | undefined)?.name, table, `${table} 必须真实存在`);
+    }
+  });
+
   test('迁移按版本号升序排列', async () => {
     const status = await getMigrationStatus();
     const versions = status.migrations.map((m) => m.version);

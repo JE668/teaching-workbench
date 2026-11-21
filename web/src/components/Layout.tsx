@@ -17,6 +17,9 @@ import {
   Settings as SettingsIcon,
   FileUp,
   TrendingUp,
+  NotebookPen,
+  Activity,
+  Library,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { cn } from '../lib/utils';
@@ -30,6 +33,9 @@ const navItems = [
   { to: '/observations', label: '听评课', icon: Eye },
   { to: '/catalog', label: '课程目录', icon: BookOpen },
   { to: '/reports', label: '月度总结规划', icon: CalendarRange },
+  { to: '/lesson-planner', label: 'AI 备课助手', icon: NotebookPen },
+  { to: '/review', label: '教学复盘', icon: Activity },
+  { to: '/knowledge', label: '教研知识库', icon: Library },
   { to: '/ai-metrics', label: 'AI 指标看板', icon: BarChart3 },
   { to: '/renewal/upload', label: '续费上传', icon: FileUp, end: true },
   { to: '/renewal', label: '续费看板', icon: TrendingUp, end: true },

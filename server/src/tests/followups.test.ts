@@ -188,20 +188,33 @@ describe('AI 生成（注入桩实现，不打真实 API）', () => {
     assert.equal(res.status, 400);
   });
 
-  test('生成成功返回内容与字数', async () => {
-    const fake = '【课堂内容】本节课重点讲解分数通分的原理与步骤，通过数轴演示帮助理解。' +
-      '【学生收获】李小明专注度较高，能主动回答问题，对通分方法掌握到位，独立完成基础题准确率良好。' +
-      '【课后任务】完成练习册第12页第1到8题，巩固通分步骤，每天做10道口算提升计算速度。';
+  test('生成成功返回结构化内容与字数', async () => {
+    const structuredFake = {
+      knowledge_gain: '李小明专注度较高，能主动回答问题，对通分方法掌握到位，独立完成基础题准确率良好。',
+      class_performance: '本节课重点讲解分数通分的原理与步骤，通过数轴演示帮助理解。',
+      homework_assign: '完成练习册第12页第1到8题，巩固通分步骤，每天做10道口算提升计算速度。',
+      next_plan: '下节课重点练习异分母分数加减法，巩固通分技能。',
+      teacher_remark: '小明表现很好，建议家长配合监督每日口算练习。',
+    };
+    const textFake =
+      '【学生收获】\n' +
+      structuredFake.knowledge_gain +
+      '\n\n【课堂表现】\n' +
+      structuredFake.class_performance +
+      '\n\n【作业布置】\n' +
+      structuredFake.homework_assign +
+      '\n\n【下步计划】\n' +
+      structuredFake.next_plan +
+      '\n\n【教师评价】\n' +
+      structuredFake.teacher_remark;
 
-    setFollowUpGenerator(async () => fake);
+    setFollowUpGenerator(async () => ({ structured: structuredFake, text: textFake, wordCount: textFake.replace(/[\s\p{P}\p{S}]/gu, '').length }));
 
     const res = await req('POST', '/api/followups/generate', { token, body: VALID_BODY });
     assert.equal(res.status, 200);
-    assert.equal(res.body.content, fake);
-    assert.ok(res.body.wordCount > 0);
-    // 与纯文字计数规则保持一致
-    const expected = fake.replace(/[\s\p{P}\p{S}]/gu, '').length;
-    assert.equal(res.body.wordCount, expected);
+    assert.deepEqual(res.body.structured, structuredFake);
+    assert.equal(res.body.content, textFake);
+    assert.equal(res.body.wordCount, textFake.replace(/[\s\p{P}\p{S}]/gu, '').length);
   });
 
   test('生成器抛错时按类型映射状态码与提示', async () => {

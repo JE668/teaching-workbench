@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { api } from './client';
 
 /** 构造一个 SSE 响应，chunks 会被依次推入流中（用于模拟网络分片） */
-function sseResponse(chunks: string[], init: { ok?: boolean; status?: number; json?: any } = {}) {
+function sseResponse(
+  chunks: string[],
+  init: { ok?: boolean; status?: number; json?: any; headers?: Record<string, string> } = {},
+) {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const enc = new TextEncoder();
@@ -14,12 +17,13 @@ function sseResponse(chunks: string[], init: { ok?: boolean; status?: number; js
     ok: init.ok ?? true,
     status: init.status ?? 200,
     body: stream,
+    headers: { get: (name: string) => init.headers?.[name.toLowerCase()] ?? null },
     json: async () => init.json ?? {},
   } as any;
 }
 
-function frame(event: string, data: unknown) {
-  return 'event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n';
+function frame(event: string, data: unknown, id?: string) {
+  return 'event: ' + event + '\n' + (id ? 'id: ' + id + '\n' : '') + 'data: ' + JSON.stringify(data) + '\n\n';
 }
 
 /** 收集一次 streamPost 的全部回调 */
@@ -143,6 +147,39 @@ describe('streamPost 事件解析', () => {
 
     expect(done).toBeNull();
     expect(errors).toEqual(['生成中断，请重试']);
+  });
+
+  it('断流后按 X-Stream-ID + Last-Event-ID 重连，并按数字 id 去重', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse(
+        [frame('delta', { text: '甲' }, '1')],
+        { headers: { 'x-stream-id': 'stream-resume-1' } },
+      ))
+      .mockResolvedValueOnce(sseResponse([
+        frame('delta', { text: '甲（重复）' }, '1'),
+        frame('delta', { text: '乙' }, '2'),
+        frame('done', { content: '甲乙', wordCount: 2, regenerated: false }),
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const deltas: string[] = [];
+    const errors: string[] = [];
+    let done: any = null;
+
+    await api.streamPost('/followups/generate/stream', { any: 'body' }, {
+      onDelta: (text) => deltas.push(text),
+      onDone: (payload) => { done = payload; },
+      onError: (message) => errors.push(message),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1].headers['Last-Event-ID']).toBeUndefined();
+    expect(fetchMock.mock.calls[1][1].headers).toMatchObject({
+      'X-Stream-ID': 'stream-resume-1',
+      'Last-Event-ID': '1',
+    });
+    expect(deltas).toEqual(['甲', '乙']);
+    expect(done).toEqual({ content: '甲乙', wordCount: 2, regenerated: false });
+    expect(errors).toEqual([]);
   });
 });
 

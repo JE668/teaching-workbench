@@ -1,11 +1,9 @@
-import React from 'react';
-import { Users, Target, TrendingUp, DollarSign, Award, AlertTriangle } from 'lucide-react';
+import { Users, Target, DollarSign, Award } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
 import { clampRatio, count, money, NOT_AVAILABLE_YET, pct, rankStyle, type ManagerPerfRow } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
-import Sparkline from './Sparkline';
 
 interface Props {
   rows: ManagerPerfRow[];

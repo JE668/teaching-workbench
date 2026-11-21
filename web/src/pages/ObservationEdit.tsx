@@ -18,6 +18,7 @@ import { useObservationDraftSync, ObservationDraftPayload } from '../hooks/useOb
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import {
   Observation,
+  Student,
   Teacher,
   LESSON_TYPES,
   OVERALL_GRADES,
@@ -31,6 +32,9 @@ import Button from '../components/ui/Button';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { VoiceButton } from '../components/ui/VoiceButton';
+import { ReferencePanel } from '../components/ReferencePanel';
+import { StudentProfilePanel } from '../components/StudentProfile';
+import UnifiedDraftPanel from '../components/UnifiedDraftPanel';
 import { copyText, saveBlob, relativeTime, localNowISO } from '../lib/utils';
 import { splitReport, buildReportFilename } from '../lib/observation';
 import { downloadObservationCard } from '../lib/observationCard';
@@ -180,6 +184,7 @@ export default function ObservationEdit() {
 
   const [loading, setLoading] = useState(!isNew);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [report, setReport] = useState('');
   const [reportAt, setReportAt] = useState<string | null>(null);
@@ -198,6 +203,12 @@ export default function ObservationEdit() {
 
   // ========== 跨设备实时同步 ==========
   const targetId = recordId ?? localId;
+  // 听课记录只持久化学生姓名；唯一精确匹配现有学生时才关联画像，避免同名误绑。
+  const normalizedStudentName = form.studentName.trim();
+  const matchingStudents = normalizedStudentName
+    ? students.filter((student) => student.name.trim() === normalizedStudentName)
+    : [];
+  const profileStudent = matchingStudents.length === 1 ? matchingStudents[0] : null;
   const draftPayload: ObservationDraftPayload = {
     form,
     report,
@@ -242,6 +253,14 @@ export default function ObservationEdit() {
       .catch(() => {
         /* 老师列表加载失败不影响主流程 */
       });
+  }, []);
+
+  // 学生列表仅用于把姓名唯一匹配到画像；加载失败不影响听课记录主流程。
+  useEffect(() => {
+    api
+      .get('/students')
+      .then((r) => setStudents(r.students || []))
+      .catch(() => {});
   }, []);
 
   // 编辑既有记录
@@ -485,6 +504,18 @@ export default function ObservationEdit() {
             记录课堂实录 → AI 生成评课 → 复制进「星火个性化教学听评课表」
           </p>
         </div>
+        <UnifiedDraftPanel
+          entityType="observation"
+          entityId={targetId}
+          currentContent={draftPayload}
+          autoSave
+          disabled={!targetId}
+          onRestore={(content: ObservationDraftPayload) => {
+            setForm(content.form);
+            setReport(content.report);
+            setReportAt(content.reportAt ?? null);
+          }}
+        />
         {/* 同步状态指示器 */}
         {!isNew && targetId && (
           <div className="flex items-center gap-1.5 text-xs">
@@ -792,6 +823,29 @@ export default function ObservationEdit() {
               />
             </div>
           </Card>
+
+          {/* 双向引用面板：已保存的评课记录才有 ID 可建立引用 */}
+          {targetId && (
+            <div className="mt-6">
+              <ReferencePanel
+                entityType="observation"
+                entityId={targetId}
+                currentEntityLabel="本评课记录"
+              />
+            </div>
+          )}
+
+          {/* 学生画像：姓名唯一匹配现有学生时显示，未保存记录也可查看已有画像 */}
+          {profileStudent && (
+            <div className="mt-6">
+              <StudentProfilePanel
+                studentId={profileStudent.id}
+                studentName={profileStudent.name}
+                entityType="observation"
+                entityId={targetId ?? undefined}
+              />
+            </div>
+          )}
 
           {/* ===== 操作栏 ===== */}
           <div className="flex items-center justify-end gap-3">

@@ -325,6 +325,7 @@ export interface CoverageTeacher {
   daysSince: number | null;
 }
 
+/** 覆盖率数据结构 */
 export interface CoverageData {
   window: { days: number; from: string; to: string };
   totalTeachers: number;
@@ -335,3 +336,196 @@ export interface CoverageData {
   observed: CoverageTeacher[];
   unobserved: CoverageTeacher[];
 }
+
+// ============ 多模态观察（图片直传 + 结构化输出） ============
+export type MultimodalObservationType =
+  | 'question_type'
+  | 'mistake'
+  | 'teacher_mark'
+  | 'handwriting'
+  | 'key_info'
+  | 'other';
+
+export interface MultimodalObservation {
+  type: MultimodalObservationType;
+  detail: string;
+  evidence_image_index: number;
+}
+
+export interface MultimodalObservationsResult {
+  observations: MultimodalObservation[];
+}
+
+export interface ExtractObservationsResponse {
+  observations: MultimodalObservation[];
+  observationText: string;
+}
+
+export const MULTIMODAL_OBSERVATION_TYPE_LABELS: Record<MultimodalObservationType, string> = {
+  question_type: '题目类型',
+  mistake: '错因分析',
+  teacher_mark: '教师批改',
+  handwriting: '书写规范',
+  key_info: '关键信息',
+  other: '其他观察',
+};
+
+export const MULTIMODAL_OBSERVATION_TYPE_COLORS: Record<MultimodalObservationType, string> = {
+  question_type: 'bg-blue-100 text-blue-700',
+  mistake: 'bg-red-100 text-red-700',
+  teacher_mark: 'bg-purple-100 text-purple-700',
+  handwriting: 'bg-green-100 text-green-700',
+  key_info: 'bg-amber-100 text-amber-700',
+  other: 'bg-slate-100 text-slate-700',
+};
+
+// ============ 双向引用 + 变更通知 ============
+export type EntityType = 'observation' | 'followup' | 'report' | 'student_profile' | 'knowledge_index' | 'knowledge_chunk' | 'parent_view';
+
+export type RefRole = 'cites' | 'derives_from' | 'supplements';
+
+export interface ContentReference {
+  id: number;
+  source_type: EntityType;
+  source_id: number;
+  target_type: EntityType;
+  target_id: number;
+  ref_role: RefRole;
+  created_at: string;
+  user_id?: number | null;
+  last_synced_event_id?: number;
+  last_synced_at?: string | null;
+  pendingEvents?: ChangeEvent[];
+  target?: EntitySummary;
+  source?: EntitySummary;
+}
+
+export interface EntitySummary {
+  id: number;
+  title: string;
+  created_at: string;
+}
+
+export interface ChangeEvent {
+  id: number;
+  entity_type: EntityType;
+  entity_id: number;
+  changed_fields: string;
+  version: number;
+  notified: boolean;
+  created_at: string;
+}
+
+export interface CreateReferenceRequest {
+  sourceType: EntityType;
+  sourceId: number;
+  targetType: EntityType;
+  targetId: number;
+  refRole?: RefRole;
+}
+
+export interface BatchCreateReferencesRequest {
+  refs: CreateReferenceRequest[];
+}
+
+export interface ReferencesResponse {
+  references: ContentReference[];
+}
+
+export interface ChangeEventsResponse {
+  events: ChangeEvent[];
+}
+
+export interface ReferenceStats {
+  totalRefs: number;
+  byRole: Record<RefRole, number>;
+  bySourceType: Record<EntityType, number>;
+  byTargetType: Record<EntityType, number>;
+}
+
+export const REF_ROLE_LABELS: Record<RefRole, string> = {
+  cites: '引用',
+  derives_from: '衍生自',
+  supplements: '补充',
+};
+
+// ============ 学生画像 ============
+export interface StudentProfile {
+  learning_style: 'visual' | 'auditory' | 'kinesthetic' | 'reading_writing';
+  weak_points: string[];
+  strong_points: string[];
+  motivation_drivers: string[];
+  pacing_preference: 'fast' | 'steady' | 'slow_deep';
+  communication_style: 'concise' | 'detailed' | 'encouraging' | 'strict';
+  attention_span_minutes: number;
+  homework_compliance: 'high' | 'medium' | 'low';
+  parental_involvement: 'high' | 'medium' | 'low';
+  confidence: number;
+  updated_at: string;
+}
+
+export interface StudentProfileWithMeta extends StudentProfile {
+  id: number;
+  studentId: number;
+  studentName: string;
+  sourceSummary: string;
+  confidence: number;
+  generatedAt: string;
+  confirmedByTeacher: boolean;
+  teacherNotes: string;
+}
+
+export interface StudentProfileListItem {
+  id: number;
+  studentId: number;
+  studentName: string;
+  profile: StudentProfile;
+  sourceSummary: string;
+  confidence: number;
+  generatedAt: string;
+  confirmedByTeacher: boolean;
+  teacherNotes: string;
+}
+
+export const LEARNING_STYLE_LABELS: Record<StudentProfile['learning_style'], string> = {
+  visual: '视觉型',
+  auditory: '听觉型',
+  kinesthetic: '动觉型',
+  reading_writing: '读写型',
+};
+
+export const PACING_PREFERENCE_LABELS: Record<StudentProfile['pacing_preference'], string> = {
+  fast: '快节奏',
+  steady: '稳扎稳打',
+  slow_deep: '慢节奏深度',
+};
+
+export const COMMUNICATION_STYLE_LABELS: Record<StudentProfile['communication_style'], string> = {
+  concise: '简洁明了',
+  detailed: '详细细致',
+  encouraging: '鼓励为主',
+  strict: '严格要求',
+};
+
+export const HOMEWORK_COMPLIANCE_LABELS: Record<StudentProfile['homework_compliance'], string> = {
+  high: '高',
+  medium: '中',
+  low: '低',
+};
+
+export const PARENTAL_INVOLVEMENT_LABELS: Record<StudentProfile['parental_involvement'], string> = {
+  high: '高',
+  medium: '中',
+  low: '低',
+};
+
+// ============ 双向引用 + 变更通知 ============
+export const ENTITY_TYPE_LABELS: Record<EntityType, string> = {
+  observation: '观察记录',
+  followup: '课后回访',
+  report: '月度总结',
+  student_profile: '学生画像',
+  knowledge_index: '知识索引',
+  knowledge_chunk: '知识片段',
+  parent_view: '家长视图',
+};

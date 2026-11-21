@@ -1,0 +1,89 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="state-card" aria-busy="true">
+    <view class="loading-dot"></view>
+    <text>正在打开学习反馈…</text>
+  </view>
+
+  <view wx:elif="{{loadError || !view}}" class="state-card">
+    <view class="state-icon">!</view>
+    <view class="state-title">{{unavailable ? '暂时无法查看' : '加载没有成功'}}</view>
+    <view class="state-message">{{loadError || '暂时没有可展示的内容，请联系老师。'}}</view>
+    <button wx:if="{{!unavailable && token}}" class="primary-button retry" bindtap="loadView">重新加载</button>
+  </view>
+
+  <block wx:else>
+    <view class="hero">
+      <view class="eyebrow">家校共育 · 学习反馈</view>
+      <view class="hero-title">{{view.studentName || '同学'}}的学习反馈</view>
+      <view class="meta">
+        <text class="subject">{{view.subject || '学科未填写'}}</text>
+        <text>{{view.sourceType === 'report' ? '月度学习报告' : '课后回访'}}</text>
+        <text wx:if="{{displayDate}}">{{displayDate}}</text>
+      </view>
+    </view>
+
+    <view class="content">
+      <view wx:if="{{!hasContent}}" class="card empty-content">
+        老师暂未填写学习反馈，您也可以先在下方给老师留言。
+      </view>
+
+      <view wx:if="{{keyProgress.length}}" class="card">
+        <view class="section-title progress-title">关键进展</view>
+        <view class="section-caption">这一阶段值得肯定的成长</view>
+        <view wx:for="{{keyProgress}}" wx:for-item="item" wx:for-index="index" wx:key="index" class="progress-item">
+          <text class="check">✓</text>
+          <text class="item-text">{{item}}</text>
+        </view>
+      </view>
+
+      <view wx:if="{{focusAreas.length}}" class="card">
+        <view class="section-title focus-title">重点关注</view>
+        <view class="section-caption">接下来一起留意的方向</view>
+        <view wx:for="{{focusAreas}}" wx:for-item="item" wx:for-index="index" wx:key="index" class="focus-item">
+          <text class="focus-dot"></text>
+          <text class="item-text">{{item}}</text>
+        </view>
+      </view>
+
+      <view wx:if="{{actionForParent}}" class="card action-card">
+        <view class="section-title">家庭行动建议</view>
+        <view class="action-text">{{actionForParent}}</view>
+      </view>
+
+      <view wx:if="{{teacherNote}}" class="card teacher-card">
+        <view class="section-title teacher-title">老师寄语</view>
+        <view class="teacher-note">{{teacherNote}}</view>
+      </view>
+
+      <view class="card">
+        <view class="section-title">阅读确认</view>
+        <view wx:if="{{view.readAt}}" class="read-status">✓ 已确认阅读</view>
+        <button wx:else class="primary-button action-button" loading="{{readSubmitting}}" disabled="{{readSubmitting}}" bindtap="markRead">
+          {{readSubmitting ? '确认中…' : '我已阅读'}}
+        </button>
+      </view>
+
+      <view class="card">
+        <view class="section-title">给老师留言</view>
+        <view class="section-caption">您的想法会帮助老师更好地陪伴孩子</view>
+        <view wx:if="{{view.parentFeedback}}" class="feedback-sent">
+          <view class="feedback-sent-title">✓ 反馈已提交，老师可以在工作台查看</view>
+          <view class="feedback-content">{{view.parentFeedback}}</view>
+        </view>
+        <block wx:else>
+          <textarea class="feedback-input" value="{{feedback}}" bindinput="onFeedbackInput" maxlength="1000" placeholder="例如：孩子最近在家练习时……" auto-height />
+          <view class="feedback-footer">
+            <text class="counter">{{feedback.length}}/1000</text>
+            <button class="primary-button feedback-button" disabled="{{!feedback || feedbackSubmitting}}" loading="{{feedbackSubmitting}}" bindtap="submitFeedback">
+              {{feedbackSubmitting ? '提交中…' : '提交反馈'}}
+            </button>
+          </view>
+          <view wx:if="{{feedbackError}}" class="feedback-error">{{feedbackError}}</view>
+        </block>
+      </view>
+
+      <button class="share-button" open-type="share">分享给家人</button>
+      <view class="privacy">此页面由老师生成，仅用于本次学习沟通，请勿转发给无关人员。</view>
+    </view>
+  </block>
+</view>

@@ -433,7 +433,9 @@ function collapseEmptyRuns(out: string, cellAnchor: string): string {
 /** 渲染带占位符模板，返回已填充的 .docx（Node Buffer）。 */
 export async function buildObservationDocx(d: ObservationDocxData): Promise<Buffer> {
   const zip = await new PizZip().load(loadTemplateBuffer());
-  let xml = zip.file('word/document.xml').asText();
+  const documentFile = zip.file('word/document.xml');
+  if (!documentFile) throw new Error('听评课模板缺少 word/document.xml');
+  let xml = documentFile.asText();
 
   // 模板里残留的空段落先清掉（评价格子上方各多一行、综合三块下方各多两行，
   // 不清就会把表格整体撑高）——详见 dropAdjacentEmptyParagraphs

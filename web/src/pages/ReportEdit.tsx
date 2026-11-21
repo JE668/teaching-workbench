@@ -21,6 +21,9 @@ import {
   RotateCcw,
   Loader2,
   Users,
+  Target,
+  Link2,
+  NotebookPen,
 } from 'lucide-react';
 import { api } from '../api/client';
 import Button from '../components/ui/Button';
@@ -31,8 +34,13 @@ import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import { Input, Select, Textarea } from '../components/ui/Field';
 import { useToast } from '../components/ui/Toast';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
+import { ReferencePanel } from '../components/ReferencePanel';
+import { StudentProfilePanel } from '../components/StudentProfile';
+import { ParentViewPushButton } from '../components/ParentViewPushButton';
+import { ExcelTemplatePanel } from '../components/ExcelTemplatePanel';
+import UnifiedDraftPanel from '../components/UnifiedDraftPanel';
 import { useAppCommand } from '../hooks/useAppCommand';
-import { cn, saveBlob } from '../lib/utils';
+import { cn, copyText, saveBlob } from '../lib/utils';
 import { downloadReportCard, type ReportCardBlock, type ReportCardInput } from '../lib/reportCard';
 import { getSummaryPlaceholder, getPlanPlaceholder } from '../shared/reportTemplate';
 import {
@@ -46,6 +54,19 @@ import {
   TERM_OPTIONS,
   UndeliveredCourse,
   formatYearMonth,
+  KnowledgeRadarData,
+  WeakPoint,
+  RemedialExercise,
+  KnowledgePointCategory,
+  KNOWLEDGE_CATEGORY_LABELS,
+  KNOWLEDGE_CATEGORY_COLORS,
+  KNOWLEDGE_CATEGORY_ICONS,
+  // 阶测错因分析
+  ExamAnalysisResult,
+  StudentMistakeTrendItem,
+  MISTAKE_TAG_TAXONOMY,
+  MISTAKE_TAG_COLORS,
+  MISTAKE_TAG_ICONS,
 } from '../types/reports';
 
 /** 明细行可编辑的列（顺序即展示顺序） */
@@ -204,6 +225,8 @@ export default function ReportEdit() {
   const [items, setItems] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingText, setSavingText] = useState(false);
+  const [creatingParentView, setCreatingParentView] = useState(false);
+  const [generatingLessonPlans, setGeneratingLessonPlans] = useState(false);
   const [aiField, setAiField] = useState<'summary' | 'plan' | null>(null);
   const aiAbort = useRef<AbortController | null>(null);
 
@@ -236,6 +259,17 @@ export default function ReportEdit() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // 知识图谱（知识雷达）
+  const [knowledgeRadar, setKnowledgeRadar] = useState<KnowledgeRadarData | null>(null);
+  const [weakPoints, setWeakPoints] = useState<WeakPoint[]>([]);
+  const [remedialExercises, setRemedialExercises] = useState<RemedialExercise[]>([]);
+  const [loadingKnowledge, setLoadingKnowledge] = useState(false);
+  const [activeKnowledgeTab, setActiveKnowledgeTab] = useState<'radar' | 'weak' | 'remedial'>('radar');
+  // 阶测错因分析
+  const [examAnalysis, setExamAnalysis] = useState<ExamAnalysisResult | null>(null);
+  const [examTrend, setExamTrend] = useState<StudentMistakeTrendItem[]>([]);
+  const [loadingExamAnalysis, setLoadingExamAnalysis] = useState(false);
+  const [activeExamTab, setActiveExamTab] = useState<'distribution' | 'review' | 'class-focus'>('distribution');
   type AiErrorDetail = { error?: string; message?: string; [key: string]: unknown };
   const [aiError, setAiError] = useState<{ status?: number; detail?: AiErrorDetail; message: string } | null>(null);
 
@@ -288,6 +322,64 @@ export default function ReportEdit() {
   useEffect(() => {
     void loadUndelivered();
   }, [loadUndelivered]);
+
+  // 知识图谱：加载知识雷达、薄弱点、补缺推荐
+  const loadKnowledge = useCallback(async () => {
+    if (!report) return;
+    setLoadingKnowledge(true);
+    try {
+      const [radarRes, weakRes, remedialRes] = await Promise.all([
+        api.request<KnowledgeRadarData>(`/api/knowledge/radar/${report.student_id}/${report.subject}`),
+        api.request<WeakPoint[]>(`/api/knowledge/weak-points/${report.student_id}/${report.subject}`),
+        api.request<RemedialExercise[]>(`/api/knowledge/remedial/${report.student_id}/${report.subject}`),
+      ]);
+      setKnowledgeRadar(radarRes);
+      setWeakPoints(weakRes || []);
+      setRemedialExercises(remedialRes || []);
+    } catch (e) {
+      console.warn('知识图谱加载失败', e);
+      setKnowledgeRadar({ concept: [], skill: [], method: [], habit: [] });
+      setWeakPoints([]);
+      setRemedialExercises([]);
+    } finally {
+      setLoadingKnowledge(false);
+    }
+  }, [report]);
+
+  useEffect(() => {
+    void loadKnowledge();
+  }, [loadKnowledge]);
+
+  // 阶测错因分析：加载错因分析结果和趋势
+  const loadExamAnalysis = useCallback(async () => {
+    if (!report) return;
+    // 只有当有阶测明细时才加载分析
+    const hasExamItems = items.some((i) => i.kind === 'exam');
+    if (!hasExamItems) {
+      setExamAnalysis(null);
+      setExamTrend([]);
+      return;
+    }
+    setLoadingExamAnalysis(true);
+    try {
+      const [analysisRes, trendRes] = await Promise.all([
+        api.request<ExamAnalysisResult>('/api/exam-analysis/' + report.student_id + '/latest?subject=' + encodeURIComponent(report.subject)),
+        api.request<StudentMistakeTrendItem[]>('/api/exam-analysis/student/' + report.student_id + '/trend?subject=' + encodeURIComponent(report.subject)),
+      ]);
+      setExamAnalysis(analysisRes);
+      setExamTrend(trendRes || []);
+    } catch (e) {
+      console.warn('阶测错因分析加载失败', e);
+      setExamAnalysis(null);
+      setExamTrend([]);
+    } finally {
+      setLoadingExamAnalysis(false);
+    }
+  }, [report, items]);
+
+  useEffect(() => {
+    void loadExamAnalysis();
+  }, [loadExamAnalysis]);
 
   const summaryItems = useMemo(() => items.filter((i) => i.kind === 'summary'), [items]);
   const planItems = useMemo(() => items.filter((i) => i.kind === 'plan'), [items]);
@@ -751,6 +843,73 @@ export default function ReportEdit() {
     }
   }
 
+  async function generateLessonPlans() {
+    if (!report?.id) {
+      toast.error('请先保存报告，再生成备课草案');
+      return;
+    }
+    setGeneratingLessonPlans(true);
+    try {
+      const data = await api.request<{
+        plans: Array<{ id: number }>;
+        failures: Array<{ studentId: number; message: string }>;
+      }>(`/reports/${report.id}/generate-lesson-plans`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      if (data.failures.length) {
+        toast.info(`已生成 ${data.plans.length} 份，${data.failures.length} 份失败；可在备课助手重试`);
+      } else {
+        toast.success(`已生成 ${data.plans.length} 份备课草案，请逐周核对后确认`);
+      }
+      navigate(`/lesson-plans?planId=${data.plans[0].id}`);
+    } catch (error) {
+      toast.error('从月报生成备课草案失败：' + (error instanceof Error ? error.message : '请稍后重试'));
+    } finally {
+      setGeneratingLessonPlans(false);
+    }
+  }
+
+  async function createParentViewLink(parentOpenId?: string): Promise<boolean> {
+    if (!report?.id) {
+      toast.error('请先保存报告，再生成家长链接');
+      return false;
+    }
+    setCreatingParentView(true);
+    try {
+      const data = await api.post(`/parent-view/report/${report.id}`, {
+        expiresDays: 30,
+        ...(parentOpenId ? { parentOpenId } : {}),
+      }) as {
+        viewUrl?: string;
+        accessToken?: string;
+        pushResult?: { status: 'sent' | 'skipped' | 'failed'; reason?: string; error?: string };
+      };
+      const viewUrl = data.viewUrl || (data.accessToken ? `/parent-view/${data.accessToken}` : '');
+      if (!viewUrl) throw new Error('服务端未返回家长链接');
+      const absoluteUrl = new URL(viewUrl, window.location.origin).href;
+      const copied = await copyText(absoluteUrl);
+      if (copied) {
+        toast.success('家长链接已复制，可发送给家长（30 天内有效）');
+      } else {
+        toast.error('链接已生成，但复制失败，请检查浏览器剪贴板权限后重试');
+      }
+      if (data.pushResult?.status === 'sent') {
+        toast.success('微信模板消息已推送，家长可打开链接或小程序卡片查看');
+      } else if (data.pushResult?.status === 'skipped') {
+        toast.info('链接已生成；微信推送未配置，请直接分享链接');
+      } else if (data.pushResult?.status === 'failed') {
+        toast.error(`链接已生成，但微信推送失败：${data.pushResult.error || data.pushResult.reason || '未知原因'}`);
+      }
+      return true;
+    } catch (error) {
+      toast.error('生成家长链接失败：' + (error instanceof Error ? error.message : '请稍后重试'));
+      return false;
+    } finally {
+      setCreatingParentView(false);
+    }
+  }
+
   async function deleteAll() {
     if (!report) return;
     setDeleting(true);
@@ -811,6 +970,33 @@ export default function ReportEdit() {
           <Button
             variant="outline"
             size="sm"
+            icon={<NotebookPen className="h-4 w-4" />}
+            loading={generatingLessonPlans}
+            disabled={!report.id}
+            onClick={() => void generateLessonPlans()}
+            title="结合这份月报、学生画像、教材和历史教学记录生成备课草案"
+          >
+            从月报备课
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<Link2 className="h-4 w-4" />}
+            loading={creatingParentView}
+            disabled={!report.id}
+            onClick={() => void createParentViewLink()}
+            title="生成家长查阅链接并复制，有效期 30 天"
+          >
+            家长链接
+          </Button>
+          <ParentViewPushButton
+            disabled={!report.id}
+            loading={creatingParentView}
+            onPush={createParentViewLink}
+          />
+          <Button
+            variant="outline"
+            size="sm"
             icon={<FileSpreadsheet className="h-4 w-4" />}
             loading={exporting}
             disabled={items.length === 0 && !report.farewell}
@@ -856,8 +1042,20 @@ export default function ReportEdit() {
             <History className="h-3.5 w-3.5" />
             <span className="font-medium">草稿历史</span>
           </button>
+          <UnifiedDraftPanel
+            entityType="report"
+            entityId={report.id}
+            currentContent={{ report, items }}
+            autoSave
+            onRestore={(content: { report: MonthlyReport; items: ReportItem[] }) => {
+              setReport(content.report);
+              setItems(content.items);
+            }}
+          />
         </div>
       </header>
+
+      {report.id ? <ExcelTemplatePanel reportId={report.id} /> : null}
 
       {/* 方向 B：上月规划了、本月却没上的课，提示老师一键顺延，省去人工核对两张表 */}
       {undelivered.length > 0 && (
@@ -1101,6 +1299,659 @@ export default function ReportEdit() {
       }
       />
 
+      {/* 知识雷达 */}
+      <Panel
+        title="知识雷达"
+        icon={<Target className="h-4 w-4" />}
+        enabled={true}
+        onToggle={() => {}}
+        empty={!knowledgeRadar && !loadingKnowledge}
+        body={
+          <div className="space-y-4">
+            {loadingKnowledge ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+                <span className="ml-2 text-sm text-slate-500">加载知识图谱中…</span>
+              </div>
+            ) : knowledgeRadar ? (
+              <>
+                {/* Tab 切换 */}
+                <div className="flex gap-1 rounded-lg bg-slate-100 p-1" role="tablist">
+                  <button
+                    role="tab"
+                    aria-selected={activeKnowledgeTab === 'radar'}
+                    onClick={() => setActiveKnowledgeTab('radar')}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                      activeKnowledgeTab === 'radar'
+                        ? 'bg-white text-brand-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    知识雷达
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={activeKnowledgeTab === 'weak'}
+                    onClick={() => setActiveKnowledgeTab('weak')}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                      activeKnowledgeTab === 'weak'
+                        ? 'bg-white text-brand-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    薄弱点（{weakPoints.length}）
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={activeKnowledgeTab === 'remedial'}
+                    onClick={() => setActiveKnowledgeTab('remedial')}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                      activeKnowledgeTab === 'remedial'
+                        ? 'bg-white text-brand-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    补缺推荐（{remedialExercises.length}）
+                  </button>
+                </div>
+
+                {/* 知识雷达图 */}
+                {activeKnowledgeTab === 'radar' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {(['concept', 'skill', 'method', 'habit'] as KnowledgePointCategory[]).map((cat) => (
+                        <div
+                          key={cat}
+                          className="rounded-xl p-4 ring-1 ring-slate-100 bg-white"
+                        >
+                          <div className="flex items-center gap-2 mb-3">
+                            <span
+                              className="flex h-6 w-6 items-center justify-center rounded-lg text-xs font-medium"
+                              style={{
+                                backgroundColor: KNOWLEDGE_CATEGORY_COLORS[cat] + '20',
+                                color: KNOWLEDGE_CATEGORY_COLORS[cat],
+                              }}
+                            >
+                              {KNOWLEDGE_CATEGORY_ICONS[cat]}
+                            </span>
+                            <span className="font-medium text-slate-700">{KNOWLEDGE_CATEGORY_LABELS[cat]}</span>
+                          </div>
+                          <div className="space-y-2">
+                            {knowledgeRadar[cat].map((point, idx) => (
+                              <div key={idx} className="flex items-center gap-2 text-xs">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex justify-between mb-0.5">
+                                    <span className="truncate text-slate-600">{point.name}</span>
+                                    <span className="text-slate-400 font-mono">{Math.round(point.mastery)}%</span>
+                                  </div>
+                                  <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full transition-all duration-500"
+                                      style={{
+                                        width: point.mastery + '%',
+                                        backgroundColor: KNOWLEDGE_CATEGORY_COLORS[cat],
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                            {knowledgeRadar[cat].length === 0 && (
+                              <p className="text-xs text-slate-400 text-center py-2">暂无知识点</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* 总览统计 */}
+                    <div className="grid grid-cols-4 gap-3 text-center">
+                      {(['concept', 'skill', 'method', 'habit'] as KnowledgePointCategory[]).map((cat) => {
+                        const points = knowledgeRadar[cat];
+                        const avg = points.length > 0 ? Math.round(points.reduce((s, p) => s + p.mastery, 0) / points.length) : 0;
+                        return (
+                          <div key={cat} className="rounded-xl p-3 ring-1 ring-slate-100 bg-white">
+                            <div className="text-2xl font-bold" style={{ color: KNOWLEDGE_CATEGORY_COLORS[cat] }}>{avg}%</div>
+                            <div className="text-xs text-slate-500">{KNOWLEDGE_CATEGORY_LABELS[cat]} 平均掌握度</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 薄弱点列表 */}
+                {activeKnowledgeTab === 'weak' && (
+                  <div className="space-y-2">
+                    {weakPoints.length === 0 ? (
+                      <div className="flex flex-col items-center py-8 text-center text-sm text-slate-400">
+                        <Target className="mb-2 h-8 w-8 text-slate-300" />
+                        <p>暂无薄弱点，太棒了！</p>
+                      </div>
+                    ) : (
+                      weakPoints.map((wp, idx) => (
+                        <div
+                          key={idx}
+                          className="rounded-xl p-3 ring-1 ring-slate-100 bg-white hover:ring-brand-200 transition"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-medium"
+                              style={{
+                                backgroundColor: KNOWLEDGE_CATEGORY_COLORS[wp.point_category] + '20',
+                                color: KNOWLEDGE_CATEGORY_COLORS[wp.point_category],
+                              }}
+                            >
+                              {KNOWLEDGE_CATEGORY_ICONS[wp.point_category]}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-700 truncate">{wp.point_name}</span>
+                                <span
+                                  className="px-2 py-0.5 text-[10px] font-medium rounded-full ring-1 ring-inset"
+                                  style={{
+                                    backgroundColor: KNOWLEDGE_CATEGORY_COLORS[wp.point_category] + '20',
+                                    color: KNOWLEDGE_CATEGORY_COLORS[wp.point_category],
+                                    borderColor: KNOWLEDGE_CATEGORY_COLORS[wp.point_category] + '40',
+                                  }}
+                                >
+                                  {KNOWLEDGE_CATEGORY_LABELS[wp.point_category]}
+                                </span>
+                              </div>
+                              <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                                <span className="flex items-center gap-1">
+                                  <span className="font-mono" style={{ color: KNOWLEDGE_CATEGORY_COLORS[wp.point_category] }}>{Math.round(wp.mastery_level)}%</span> 掌握度
+                                </span>
+                                <span className="flex items-center gap-1 text-amber-600">
+                                  ⚠ {wp.evidence_count} 次薄弱记录
+                                </span>
+                              </div>
+                              <p className="mt-1.5 text-xs text-slate-500">{wp.evidence_count}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* 补缺推荐 */}
+                {activeKnowledgeTab === 'remedial' && (
+                  <div className="space-y-2">
+                    {remedialExercises.length === 0 ? (
+                      <div className="flex flex-col items-center py-8 text-center text-sm text-slate-400">
+                        <Target className="mb-2 h-8 w-8 text-slate-300" />
+                        <p>暂无补缺推荐</p>
+                      </div>
+                    ) : (
+                      remedialExercises.map((re, idx) => (
+                        <div
+                          key={idx}
+                          className="rounded-xl p-3 ring-1 ring-slate-100 bg-white hover:ring-brand-200 transition"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-medium"
+                              style={{
+                                backgroundColor: KNOWLEDGE_CATEGORY_COLORS.skill + '20',
+                                color: KNOWLEDGE_CATEGORY_COLORS.skill,
+                              }}
+                            >
+                              {KNOWLEDGE_CATEGORY_ICONS.skill}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-slate-700 truncate">{re.content}</span>
+                                <span
+                                  className="px-2 py-0.5 text-[10px] font-medium rounded-full ring-1 ring-inset"
+                                  style={{
+                                    backgroundColor: KNOWLEDGE_CATEGORY_COLORS.skill + '20',
+                                    color: KNOWLEDGE_CATEGORY_COLORS.skill,
+                                    borderColor: KNOWLEDGE_CATEGORY_COLORS.skill + '40',
+                                  }}
+                                >
+                                  {KNOWLEDGE_CATEGORY_LABELS.skill}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-slate-500 line-clamp-2">{re.content}</p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                                <span className="flex items-center gap-1">
+                                  关联：{re.track}
+                                </span>
+                                <span className="flex items-center gap-1 text-emerald-600">
+                                  {re.seq} 序号
+                                </span>
+                                <span className="flex items-center gap-1 text-blue-600">
+                                  {re.band}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center py-8 text-center text-sm text-slate-400">
+                <Target className="mb-2 h-8 w-8 text-slate-300" />
+                <p>暂无知识图谱数据</p>
+              </div>
+            )}
+          </div>
+        }
+      />
+
+      {/* 阶测错因分析 */}
+      <Panel
+        title="阶测错因分析"
+        icon={<AlertCircle className="h-4 w-4" />}
+        enabled={true}
+        onToggle={() => {}}
+        empty={!examAnalysis && !loadingExamAnalysis && !examTrend.length}
+        body={
+          <div className="space-y-4">
+            {loadingExamAnalysis ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-brand-500" />
+                <span className="ml-2 text-sm text-slate-500">加载阶测分析中…</span>
+              </div>
+            ) : examAnalysis ? (
+              <>
+                {/* Tab 切换 */}
+                <div className="flex gap-1 rounded-lg bg-slate-100 p-1" role="tablist">
+                  <button
+                    role="tab"
+                    aria-selected={activeExamTab === 'distribution'}
+                    onClick={() => setActiveExamTab('distribution')}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                      activeExamTab === 'distribution'
+                        ? 'bg-white text-brand-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    错因分布
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={activeExamTab === 'review'}
+                    onClick={() => setActiveExamTab('review')}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                      activeExamTab === 'review'
+                        ? 'bg-white text-brand-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    复习微计划
+                  </button>
+                  <button
+                    role="tab"
+                    aria-selected={activeExamTab === 'class-focus'}
+                    onClick={() => setActiveExamTab('class-focus')}
+                    className={cn(
+                      'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                      activeExamTab === 'class-focus'
+                        ? 'bg-white text-brand-700 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    )}
+                  >
+                    全班重点
+                  </button>
+                </div>
+
+                {/* 错因分布 */}
+                {activeExamTab === 'distribution' && (
+                  <div className="space-y-4">
+                    {/* 一级标签分布 */}
+                    <div>
+                      <h4 className="mb-2 text-xs font-medium text-slate-500">一级错因分布</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {Object.entries(MISTAKE_TAG_TAXONOMY).map(([primary, secondaries]) => {
+                          const count = examAnalysis.summary.tag_distribution[primary] || 0;
+                          const total = examAnalysis.summary.analyzed_questions || 1;
+                          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                          const color = MISTAKE_TAG_COLORS[primary] || 'bg-slate-500';
+                          const icon = MISTAKE_TAG_ICONS[primary] || '•';
+                          return (
+                            <div key={primary} className="rounded-xl p-3 ring-1 ring-slate-100 bg-white">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-lg">{icon}</span>
+                                <span className="font-medium text-slate-700">{primary}</span>
+                              </div>
+                              <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-500"
+                                  style={{
+                                    width: pct + '%',
+                                    backgroundColor: color.replace('bg-', '').replace('-500', '-500'),
+                                  }}
+                                />
+                              </div>
+                              <div className="mt-1 flex items-center justify-between text-xs">
+                                <span className="text-slate-500">{count} / {total} 题</span>
+                                <span className="font-mono font-medium" style={{ color: color.replace('bg-', '').replace('-500', '-500') }}>
+                                  {pct}%
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 二级标签分布 */}
+                    <div>
+                      <h4 className="mb-2 text-xs font-medium text-slate-500">二级错因明细</h4>
+                      <div className="space-y-2">
+                        {Object.entries(examAnalysis.summary.secondary_distribution || {}).map(([tag, count]) => {
+                          let primaryCategory = '';
+                          for (const [primary, secondaries] of Object.entries(MISTAKE_TAG_TAXONOMY)) {
+                            if (secondaries.includes(tag)) {
+                              primaryCategory = primary;
+                              break;
+                            }
+                          }
+                          const color = primaryCategory ? MISTAKE_TAG_COLORS[primaryCategory] : 'bg-slate-500';
+                          const total = examAnalysis.summary.analyzed_questions || 1;
+                          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                          return (
+                            <div key={tag} className="rounded-lg p-2 ring-1 ring-slate-100 bg-white">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-medium text-slate-700">{tag}</span>
+                                <span className="text-xs font-mono font-medium" style={{ color: color.replace('bg-', '').replace('-500', '-500') }}>
+                                  {count} 题 ({pct}%)
+                                </span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: pct + '%',
+                                    backgroundColor: color.replace('bg-', '').replace('-500', '-500'),
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 题目级错因详情 */}
+                    <div>
+                      <h4 className="mb-2 text-xs font-medium text-slate-500">题目级错因详情</h4>
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {examAnalysis.analyses.map((a, idx) => (
+                          <div key={idx} className="rounded-lg p-2 ring-1 ring-slate-100 bg-white">
+                            <div className="flex items-start gap-2">
+                              <span className="shrink-0 text-xs font-mono text-slate-400 w-6">Q{a.question_index + 1}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 text-xs text-slate-600 mb-1">
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-violet-50 text-violet-700">{a.question_type}</span>
+                                  <span className="text-[10px] text-slate-400">置信度 {Math.round(a.confidence * 100)}%</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1 mb-1">
+                                  {a.mistake_tags.map((tag, ti) => {
+                                    const parts = tag.split(':');
+                                    const primary = parts[0];
+                                    const secondary = parts[1] || tag;
+                                    const color = MISTAKE_TAG_COLORS[primary] || 'bg-slate-500';
+                                    return (
+                                      <span
+                                        key={ti}
+                                        className="px-1.5 py-0.5 rounded text-[10px] font-medium ring-1 ring-inset"
+                                        style={{
+                                          backgroundColor: color.replace('bg-', '').replace('-500', '-100'),
+                                          color: color.replace('bg-', '').replace('-500', '-700'),
+                                          borderColor: color.replace('bg-', '').replace('-500', '-300'),
+                                        }}
+                                      >
+                                        {secondary}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                                <p className="text-xs text-slate-600 line-clamp-2">{a.root_cause}</p>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {a.review_actions.map((action, ai) => (
+                                    <span
+                                      key={ai}
+                                      className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                                    >
+                                      {action}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 复习微计划 */}
+                {activeExamTab === 'review' && (
+                  <div className="space-y-4">
+                    <p className="text-sm text-slate-600">
+                      基于错因分析生成的个性化复习微计划，建议在下次阶测前完成：
+                    </p>
+                    <div className="space-y-2">
+                      {Object.entries(examAnalysis.summary.tag_distribution || {})
+                        .filter(([, count]) => count > 0)
+                        .sort(([, a], [, b]) => b - a)
+                        .map(([primary, count]) => {
+                          const secondaries = MISTAKE_TAG_TAXONOMY[primary] || [];
+                          const color = MISTAKE_TAG_COLORS[primary] || 'bg-slate-500';
+                          const icon = MISTAKE_TAG_ICONS[primary] || '•';
+                          const reviewTips: Record<string, string[]> = {
+                            '概念不清': [
+                              '重读教材对应章节，梳理核心定义/公式/定理条件',
+                              '制作概念卡片：定义、性质、易混淆点对比',
+                              '做同类型基础题 5-8 道，巩固概念应用',
+                            ],
+                            '技巧缺失': [
+                              '复盘典型例题，提炼解题路径/辅助线/换元套路',
+                              '专项练习对应技巧题 3-5 道，形成肌肉记忆',
+                              '整理「必会技巧」清单，考前速览',
+                            ],
+                            '审题失误': [
+                              '养成「圈画关键条件/单位/问法」习惯，做题前 30 秒必圈画',
+                              '练习「逆向验证」：算出答案后代入原题检查',
+                              '错题标注「漏读条件/单位/隐含条件」具体类型',
+                            ],
+                            '计算粗心': [
+                              '草稿纸分区书写，竖式计算对齐，符号单独核对',
+                              '设「1 分钟心算/笔算自检」环节，专查抄写/符号/进退位',
+                              '高频易错计算类型（如二次函数顶点、向量模长）单独专练',
+                            ],
+                            '表达不规范': [
+                              '对照评分标准，补全步骤/格式/单位/结论四要素',
+                              '模拟规范作答 2-3 道大题，计时+自评',
+                              '建立「扣分清单」：跳步、缺单位、格式错、不写结论',
+                            ],
+                            '时间管理': [
+                              '按「易→中→难」分级，设分级时间上限（易 30%/中 50%/难 20%）',
+                              '模拟限时实战，练习「遇难题 3 分钟无思路果断标记跳过」',
+                              '预留 8-10 分钟检查时间，优先查高分值题/易错点',
+                            ],
+                          };
+                          const tips = reviewTips[primary] || ['针对性练习相关题型', '复盘错题根因', '考前重点速览'];
+                          return (
+                            <div key={primary} className="rounded-xl p-3 ring-1 ring-slate-100 bg-white">
+                              <div className="flex items-start gap-2 mb-2">
+                                <div
+                                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm font-medium"
+                                  style={{
+                                    backgroundColor: color.replace('bg-', '').replace('-500', '-100'),
+                                    color: color.replace('bg-', '').replace('-500', '-700'),
+                                  }}
+                                >
+                                  {icon}
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-medium text-slate-700">{primary}</span>
+                                    <span className="text-xs font-mono" style={{ color: color.replace('bg-', '').replace('-500', '-700') }}>
+                                      {count} 题
+                                    </span>
+                                  </div>
+                                  <p className="mt-0.5 text-xs text-slate-500">涉及二级标签：{secondaries.join('、')}</p>
+                                </div>
+                              </div>
+                              <ul className="space-y-1 text-xs text-slate-600 pl-4">
+                                {tips.map((tip, ti) => (
+                                  <li key={ti} className="flex items-start gap-1">
+                                    <span className="shrink-0 text-emerald-500">→</span>
+                                    <span>{tip}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          );
+                        })}
+                    </div>
+                    {Object.keys(examAnalysis.summary.tag_distribution || {}).length === 0 && (
+                      <div className="flex flex-col items-center py-8 text-center text-sm text-slate-400">
+                        <CheckCircle2 className="mb-2 h-8 w-8 text-emerald-400" />
+                        <p>暂无明显错因，建议保持现有复习节奏</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 全班重点复习 */}
+                {activeExamTab === 'class-focus' && (
+                  <div className="space-y-4">
+                    {examTrend.length > 0 ? (
+                      <>
+                        <p className="text-sm text-slate-600">
+                          基于该生历史 {examTrend.length} 次阶测错因趋势，结合本次分析，建议全班重点关注：
+                        </p>
+                        <div>
+                          <h4 className="mb-2 text-xs font-medium text-slate-500">个人历史高频错因 Top 3</h4>
+                          {(() => {
+                            const trendAgg: Record<string, number> = {};
+                            examTrend.forEach((t) => {
+                              Object.entries(t.tag_distribution || {}).forEach(([tag, count]) => {
+                                trendAgg[tag] = (trendAgg[tag] || 0) + count;
+                              });
+                            });
+                            return Object.entries(trendAgg)
+                              .sort(([, a], [, b]) => b - a)
+                              .slice(0, 3);
+                          })().map(([tag, count], idx) => {
+                            let primaryCategory = '';
+                            for (const [primary, secondaries] of Object.entries(MISTAKE_TAG_TAXONOMY)) {
+                              if (secondaries.includes(tag)) {
+                                primaryCategory = primary;
+                                break;
+                              }
+                            }
+                            const color = primaryCategory ? MISTAKE_TAG_COLORS[primaryCategory] : 'bg-slate-500';
+                            return (
+                              <div key={tag} className="flex items-center gap-2 rounded-lg p-2 ring-1 ring-slate-100 bg-white">
+                                <span className="w-6 text-center font-medium text-brand-600">#{idx + 1}</span>
+                                <span className="flex-1 text-sm font-medium text-slate-700">{tag}</span>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden" style={{ maxWidth: '120px' }}>
+                                    <div
+                                      className="h-full rounded-full"
+                                      style={{
+                                        width: Math.min(100, (count / (examTrend.length * 3)) * 100) + '%',
+                                        backgroundColor: color.replace('bg-', '').replace('-500', '-500'),
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-mono text-slate-500 w-16 text-right">{count} 次</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div>
+                          <h4 className="mb-2 text-xs font-medium text-slate-500">本次阶测需警惕的错因（对比历史）</h4>
+                          <div className="space-y-2">
+                            {Object.entries(examAnalysis.summary.tag_distribution || {})
+                              .filter(([, count]) => count > 0)
+                              .sort(([, a], [, b]) => b - a)
+                              .map(([primary, count]) => {
+                                const trendCount = examTrend.reduce((sum, t) => sum + (t.tag_distribution[primary] || 0), 0);
+                                const avgTrend = examTrend.length > 0 ? trendCount / examTrend.length : 0;
+                                const isRising = count > avgTrend * 1.2;
+                                const color = MISTAKE_TAG_COLORS[primary] || 'bg-slate-500';
+                                return (
+                                  <div key={primary} className="rounded-lg p-2 ring-1 ring-slate-100 bg-white">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className="px-1.5 py-0.5 rounded text-xs font-medium ring-1 ring-inset"
+                                          style={{
+                                            backgroundColor: color.replace('bg-', '').replace('-500', '-100'),
+                                            color: color.replace('bg-', '').replace('-500', '-700'),
+                                            borderColor: color.replace('bg-', '').replace('-500', '-300'),
+                                          }}
+                                        >
+                                          {primary}
+                                        </span>
+                                        {isRising && (
+                                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-red-50 text-red-600 ring-1 ring-red-200">
+                                            上升趋势 ⚠
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-3 text-xs text-slate-500">
+                                        <span>本次：<span className="font-mono" style={{ color: color.replace('bg-', '').replace('-500', '-700') }}>{count}</span></span>
+                                        <span>历史均值：<span className="font-mono">{avgTrend.toFixed(1)}</span></span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl p-3 bg-brand-50 ring-1 ring-brand-200">
+                          <h4 className="mb-2 text-xs font-medium text-brand-700 flex items-center gap-1">
+                            <span>💡</span> 建议全班同步行动
+                          </h4>
+                          <ul className="space-y-1 text-xs text-brand-600">
+                            <li>• 针对上升趋势错因，安排 1 节专项复习课或早自习专练</li>
+                            <li>• 发布对应类型的「避坑指南」到班级群/学习通，家长协同监督</li>
+                            <li>• 下次阶测命题时，同类型题目适当降低难度或增加引导条件</li>
+                            <li>• 该生个性化：建议错题本按「一级错因」分类整理，周末专项复盘</li>
+                          </ul>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center py-8 text-center text-sm text-slate-400">
+                        <Target className="mb-2 h-8 w-8 text-slate-300" />
+                        <p>暂无历史阶测数据，无法生成趋势对比</p>
+                        <p className="text-xs mt-1">积累 2 次以上阶测后可查看趋势分析</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex flex-col items-center py-8 text-center text-sm text-slate-400">
+                <AlertCircle className="mb-2 h-8 w-8 text-slate-300" />
+                <p>暂无阶测错因分析数据</p>
+                <p className="text-xs mt-1">添加阶测明细后，系统将自动分析错因分布</p>
+              </div>
+            )}
+          </div>
+        }
+      />
+
       <Card>
         <CardBody className="p-5">
           <Textarea
@@ -1113,6 +1964,32 @@ export default function ReportEdit() {
           />
         </CardBody>
       </Card>
+
+      {/* 双向引用面板：已加载的报告才有 ID 可建立引用 */}
+      {report && (
+        <div className="mt-6">
+          <ReferencePanel
+            entityType="report"
+            entityId={report.id}
+            currentEntityLabel="本报告"
+            onSync={({ targetField, content }) => {
+              setReport((previous) => previous ? { ...previous, [targetField]: content } as MonthlyReport : previous);
+            }}
+          />
+        </div>
+      )}
+
+      {/* 学生画像面板：报告有学生 ID 才有 ID 可显示画像 */}
+      {report?.student_id && (
+        <div className="mt-6">
+          <StudentProfilePanel
+            studentId={report.student_id}
+            studentName={report.student_name}
+            entityType="report"
+            entityId={report.id}
+          />
+        </div>
+      )}
 
       <CoursePicker
         open={showPicker !== null}

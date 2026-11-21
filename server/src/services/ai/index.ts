@@ -1,6 +1,16 @@
 import { getAiConfig, AiConfig } from '../../config/settings.js';
 import { getClient, getSharedClient } from './client.js';
-import { buildPrompt, FollowUpGenerateParams } from './prompt.js';
+import {
+  buildPrompt,
+  buildStructuredPrompt,
+  buildMultimodalPrompt,
+  FollowUpGenerateParams,
+  STRUCTURED_RESPONSE_FORMAT,
+  MULTIMODAL_RESPONSE_FORMAT,
+  structuredToText,
+  parseStructuredOutput,
+  parseMultimodalObservations,
+} from './prompt.js';
 import { getOcrText } from '../ocr.js';
 import { imageToBase64DataUrl, countWords } from './utils.js';
 import { recordAiMetrics } from '../aiMetrics.js';
@@ -10,7 +20,7 @@ import { env } from '../../config/env.js';
 // Re-export getAiConfig for use by other services (e.g., reportAi.ts)
 export { getAiConfig };
 
-// ============ 并发闸门 ============
+// ============ 并发闸门 + 优先级队列 ============
 // 老师连点两次「生成」，或两个学生在两个标签页同时生成，就是两个请求一起打出去：
 // 双倍计费，而且两份结果会互相覆盖（后返回的把先返回的冲掉）。
 // 早期是整站共用一个全局计数（MAX_CONCURRENT_AI=2）：多用户一起用时，后台批量任务
@@ -18,25 +28,51 @@ export { getAiConfig };
 // 最后一起撞上 2 分钟排队超时 —— 一个人卡住全站 AI 不可用。
 // 现在按用户分桶：每个用户各自限并发，互不饿死；全局再留一个更高的保护上限，
 // 防止多用户叠加把上游供应商的配额打爆。
+// 新增：按优先级分队（interactive > batch > background），高优可抢占低优。
+
+/** AI 任务优先级：交互式生成 > 批量任务 > 后台任务 */
+export type AiTaskPriority = 'interactive' | 'batch' | 'background';
+
 /** 单个用户同时最多几个 AI 请求 */
 export const MAX_CONCURRENT_AI = 2;
 /** 全站同时最多几个（多用户叠加时的保护上限，防上游限流/爆预算） */
 export const MAX_CONCURRENT_AI_GLOBAL = 8;
 
+/** 优先级对应的并发限制（单用户/全局） */
+export const PRIORITY_LIMITS: Record<AiTaskPriority, { user: number; global: number }> = {
+  interactive: { user: 2, global: 6 },  // 交互式优先，预留大部分槽位
+  batch: { user: 2, global: 4 },        // 批量任务限制更严
+  background: { user: 1, global: 2 },   // 后台任务最低优先级
+};
+
 /** 没有登录用户上下文的调用（启动时的后台任务、单测）统一算进这个桶 */
 const UNBOUND_AI_USER = 0;
 
-interface AiWaiter {
+interface QueuedTask {
+  priority: AiTaskPriority;
   userId: number;
   resolve: () => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+  enqueuedAt: number;
 }
 
-let aiInFlight = 0;
-/** userId -> 该用户正在跑的 AI 请求数（归零即删键，不会无限增长） */
-const aiInFlightByUser = new Map<number, number>();
-const aiWaiters: AiWaiter[] = [];
+/** 当前按优先级分桶的并发计数 */
+let aiInFlightByPriority: Record<AiTaskPriority, number> = {
+  interactive: 0,
+  batch: 0,
+  background: 0,
+};
+
+/** userId -> 该用户按优先级分桶的并发计数 */
+const aiInFlightByUser = new Map<number, Record<AiTaskPriority, number>>();
+
+/** 等待队列（按优先级分组，组内 FIFO） */
+const aiWaitersByPriority: Record<AiTaskPriority, QueuedTask[]> = {
+  interactive: [],
+  batch: [],
+  background: [],
+};
 
 /** 排队上限：超过就快速失败，而不是无限挂在某个卡死的生成上 */
 export const AI_QUEUE_TIMEOUT_MS = 120_000;
@@ -48,98 +84,198 @@ export class AiQueueTimeoutError extends Error {
   }
 }
 
+/** 归一化用户标识：未登录/非法值都落到匿名桶，绝不因为缺 userId 就跳过限流 */
+function bucketOf(userId?: number | null): number {
+  return typeof userId === 'number' && Number.isFinite(userId) && userId > 0 ? userId : UNBOUND_AI_USER;
+}
+
+function getUserBuckets(userId: number): Record<AiTaskPriority, number> {
+  const buckets = aiInFlightByUser.get(userId);
+  if (!buckets) {
+    const empty: Record<AiTaskPriority, number> = { interactive: 0, batch: 0, background: 0 };
+    aiInFlightByUser.set(userId, empty);
+    return empty;
+  }
+  return buckets;
+}
+
+/** 该用户在指定优先级是否还有余量 */
+function hasRoomForPriority(userId: number, priority: AiTaskPriority): boolean {
+  const limits = PRIORITY_LIMITS[priority];
+  const userBuckets = getUserBuckets(userId);
+  return userBuckets[priority] < limits.user && aiInFlightByPriority[priority] < limits.global;
+}
+
+/** 唤醒指定优先级队列中第一个有余量的等待者 */
+function wakeNextWaiterForPriority(priority: AiTaskPriority): void {
+  const queue = aiWaitersByPriority[priority];
+  const idx = queue.findIndex((w) => hasRoomForPriority(w.userId, priority));
+  if (idx < 0) return;
+  const [next] = queue.splice(idx, 1);
+  clearTimeout(next.timer);
+  next.resolve();
+}
+
+/** 任务完成后唤醒所有优先级队列（高优先级先被唤醒） */
+function wakeAllWaiters(): void {
+  // 按优先级顺序唤醒：interactive -> batch -> background
+  for (const priority of ['interactive', 'batch', 'background'] as AiTaskPriority[]) {
+    wakeNextWaiterForPriority(priority);
+  }
+}
+
+/** 抢占检查：若有 interactive 任务等待且全局/用户槽位满，尝试抢占最旧的低优任务 */
+function tryPreemptLowPriority(newPriority: AiTaskPriority): void {
+  // 只有 interactive 可以抢占 batch/background
+  if (newPriority !== 'interactive') return;
+
+  // 检查是否有 interactive 任务在等待
+  if (aiWaitersByPriority.interactive.length === 0) return;
+
+  // 寻找可抢占的低优任务（优先抢占 background，再 batch）
+  for (const victimPriority of ['background', 'batch'] as AiTaskPriority[]) {
+    // 只有当低优任务占用了本该给 interactive 的全局/用户槽位时才抢占
+    if (aiInFlightByPriority[victimPriority] === 0) continue;
+
+    // 找到该优先级中最早入队的任务（最旧的）
+    const userEntries = Array.from(aiInFlightByUser.entries());
+    let victim: { userId: number; priority: AiTaskPriority } | null = null;
+    let oldestEnqueued = Infinity;
+
+    for (const [userId, buckets] of userEntries) {
+      if (buckets[victimPriority] > 0) {
+        // 找到该用户在该优先级下最旧的等待任务
+        for (const task of aiWaitersByPriority[victimPriority]) {
+          if (task.userId === userId && task.enqueuedAt < oldestEnqueued) {
+            oldestEnqueued = task.enqueuedAt;
+            victim = { userId, priority: victimPriority };
+          }
+        }
+      }
+    }
+
+    if (victim) {
+      // 标记抢占：从等待队列中移除并拒绝
+      const victimQueue = aiWaitersByPriority[victim.priority];
+      const idx = victimQueue.findIndex((t) => t.userId === victim!.userId && t.priority === victim!.priority);
+      if (idx >= 0) {
+        const [preempted] = victimQueue.splice(idx, 1);
+        clearTimeout(preempted.timer);
+        preempted.reject(new Error('AI 任务被高优先级交互式请求抢占，请稍后重试'));
+        log.info({ victimPriority: victim.priority, victimUserId: victim.userId }, 'AI 低优任务被抢占');
+      }
+      return; // 一次只抢占一个槽位
+    }
+  }
+}
+
+/**
+ * 占用一个 AI 并发槽（支持优先级）。
+ * @param priority 任务优先级，默认 interactive
+ * @param timeoutMs 排队上限，超时抛 AiQueueTimeoutError
+ * @param userId 按用户分桶的键；不传算匿名桶
+ */
+export async function acquireAiSlot(
+  priority: AiTaskPriority = 'interactive',
+  timeoutMs: number = AI_QUEUE_TIMEOUT_MS,
+  userId?: number | null
+): Promise<void> {
+  const bucket = bucketOf(userId);
+  const enqueuedAt = Date.now();
+
+  // 抢占检查：interactive 到来时尝试抢占低优任务
+  tryPreemptLowPriority(priority);
+
+  // 用循环而不是单次判断：被唤醒时可能刚好被同桶的其他人抢先，重新排队即可
+  while (!hasRoomForPriority(bucket, priority)) {
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const queue = aiWaitersByPriority[priority];
+        const k = queue.findIndex((w) => w.timer === timer);
+        if (k >= 0) queue.splice(k, 1);
+        reject(new AiQueueTimeoutError());
+      }, timeoutMs);
+      aiWaitersByPriority[priority].push({ priority, userId: bucket, resolve, reject, timer, enqueuedAt });
+    });
+  }
+  aiInFlightByPriority[priority]++;
+  getUserBuckets(bucket)[priority]++;
+}
+
+/** 释放一个 AI 并发槽（必须传与 acquireAiSlot 相同的 userId 和 priority，否则桶会对不上） */
+export function releaseAiSlot(
+  userId?: number | null,
+  priority: AiTaskPriority = 'interactive'
+): void {
+  const bucket = bucketOf(userId);
+  aiInFlightByPriority[priority] = Math.max(0, aiInFlightByPriority[priority] - 1);
+  const userBuckets = getUserBuckets(bucket);
+  userBuckets[priority] = Math.max(0, userBuckets[priority] - 1);
+  // 清理空桶
+  if (userBuckets.interactive === 0 && userBuckets.batch === 0 && userBuckets.background === 0) {
+    aiInFlightByUser.delete(bucket);
+  }
+  wakeAllWaiters();
+}
+
+/** 把一次 AI 调用放进并发闸门（支持优先级） */
+export async function withAiSlot<T>(
+  fn: () => Promise<T>,
+  priority: AiTaskPriority = 'interactive',
+  userId?: number | null
+): Promise<T> {
+  await acquireAiSlot(priority, AI_QUEUE_TIMEOUT_MS, userId);
+  try {
+    return await fn();
+  } finally {
+    releaseAiSlot(userId, priority);
+  }
+}
+
+/** 按用户分桶的闸门包装：AI 入口一律用这个，别用无 userId 的 withAiSlot */
+export async function withUserAiSlot<T>(
+  userId: number,
+  fn: () => Promise<T>,
+  priority: AiTaskPriority = 'interactive'
+): Promise<T> {
+  return withAiSlot(fn, priority, userId);
+}
+
+/** 当前正在跑的 AI 请求数：不传 priority 返回全站总数 */
+export function getAiInFlightCount(priority?: AiTaskPriority | null, userId?: number | null): number {
+  if (priority === undefined || priority === null) {
+    return aiInFlightByPriority.interactive + aiInFlightByPriority.batch + aiInFlightByPriority.background;
+  }
+  if (userId === undefined || userId === null) {
+    return aiInFlightByPriority[priority];
+  }
+  return getUserBuckets(bucketOf(userId))[priority];
+}
+
+/** 获取队列深度（用于 metrics 监控） */
+export function getAiQueueDepth(priority?: AiTaskPriority): number {
+  if (priority === undefined || priority === null) {
+    return aiWaitersByPriority.interactive.length + aiWaitersByPriority.batch.length + aiWaitersByPriority.background.length;
+  }
+  return aiWaitersByPriority[priority].length;
+}
+
+/** 重置闸门计数（仅供测试） */
+export function resetAiGate(): void {
+  aiInFlightByPriority = { interactive: 0, batch: 0, background: 0 };
+  aiInFlightByUser.clear();
+  for (const priority of ['interactive', 'batch', 'background'] as AiTaskPriority[]) {
+    for (const w of aiWaitersByPriority[priority]) clearTimeout(w.timer);
+    aiWaitersByPriority[priority].length = 0;
+  }
+}
+
 /** OpenAI 流式 chunk 的最小结构（SDK Stream 泛型收窄用） */
 interface ChatStreamChunk {
   choices?: Array<{
     delta?: { content?: string | null };
     finish_reason?: string | null;
   }>;
-}
-
-/** 归一化用户标识：未登录/非法值都落到匿名桶，绝不因为缺 userId 就跳过限流 */
-function bucketOf(userId?: number | null): number {
-  return typeof userId === 'number' && Number.isFinite(userId) && userId > 0 ? userId : UNBOUND_AI_USER;
-}
-
-function inFlightOf(userId: number): number {
-  return aiInFlightByUser.get(userId) ?? 0;
-}
-
-/** 该用户是否还有余量（同时受用户上限和全局上限约束） */
-function hasRoom(userId: number): boolean {
-  return inFlightOf(userId) < MAX_CONCURRENT_AI && aiInFlight < MAX_CONCURRENT_AI_GLOBAL;
-}
-
-/** 唤醒队首中「自己的桶与全局都还有余量」的第一个等待者 */
-function wakeNextWaiter(): void {
-  const idx = aiWaiters.findIndex((w) => hasRoom(w.userId));
-  if (idx < 0) return;
-  const [next] = aiWaiters.splice(idx, 1);
-  clearTimeout(next.timer);
-  next.resolve();
-}
-
-/**
- * 占用一个 AI 并发槽。
- * @param timeoutMs 排队上限，超时抛 AiQueueTimeoutError（首位参数保持旧签名，老调用不受影响）
- * @param userId 按用户分桶的键；不传算匿名桶
- */
-export async function acquireAiSlot(
-  timeoutMs: number = AI_QUEUE_TIMEOUT_MS,
-  userId?: number | null
-): Promise<void> {
-  const bucket = bucketOf(userId);
-  // 用循环而不是单次判断：被唤醒时可能刚好被同桶的其他人抢先，重新排队即可
-  while (!hasRoom(bucket)) {
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const k = aiWaiters.findIndex((w) => w.timer === timer);
-        if (k >= 0) aiWaiters.splice(k, 1);
-        reject(new AiQueueTimeoutError());
-      }, timeoutMs);
-      aiWaiters.push({ userId: bucket, resolve, reject, timer });
-    });
-  }
-  aiInFlight++;
-  aiInFlightByUser.set(bucket, inFlightOf(bucket) + 1);
-}
-
-/** 释放一个 AI 并发槽（必须传与 acquireAiSlot 相同的 userId，否则桶会对不上） */
-export function releaseAiSlot(userId?: number | null): void {
-  const bucket = bucketOf(userId);
-  aiInFlight = Math.max(0, aiInFlight - 1);
-  const left = inFlightOf(bucket) - 1;
-  if (left > 0) aiInFlightByUser.set(bucket, left);
-  else aiInFlightByUser.delete(bucket);
-  wakeNextWaiter();
-}
-
-/** 把一次 AI 调用放进并发闸门（fn 里若还要拿 userId，注意别把桶传错） */
-export async function withAiSlot<T>(fn: () => Promise<T>, userId?: number | null): Promise<T> {
-  await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
-  try {
-    return await fn();
-  } finally {
-    releaseAiSlot(userId);
-  }
-}
-
-/** 按用户分桶的闸门包装：AI 入口一律用这个，别用无 userId 的 withAiSlot */
-export async function withUserAiSlot<T>(userId: number, fn: () => Promise<T>): Promise<T> {
-  return withAiSlot(fn, userId);
-}
-
-/** 当前正在跑的 AI 请求数：不传 userId 返回全站总数（仅供测试断言） */
-export function getAiInFlightCount(userId?: number | null): number {
-  return userId === undefined || userId === null ? aiInFlight : inFlightOf(bucketOf(userId));
-}
-
-/** 重置闸门计数（仅供测试） */
-export function resetAiGate(): void {
-  aiInFlight = 0;
-  aiInFlightByUser.clear();
-  for (const w of aiWaiters) clearTimeout(w.timer);
-  aiWaiters.length = 0;
 }
 
 // ============ 流式空闲中断 ============
@@ -247,14 +383,17 @@ async function buildRequest(
   userId: number,
   params: FollowUpGenerateParams,
   correction?: string,
-  stream = false
+  stream = false,
+  structured = false
 ): Promise<any> {
   const body: any = {
     model: config.model,
     messages: [
       {
         role: 'system',
-        content: '你是一位专业的1对1教育咨询师，擅长撰写课后回访反馈。输出简洁、专业、有温度。',
+        content: structured
+          ? await buildStructuredPrompt(params, correction, userId)
+          : '你是一位专业的1对1教育咨询师，擅长撰写课后回访反馈。输出简洁、专业、有温度。',
       },
       { role: 'user', content: await buildUserContent(params, correction, userId) },
     ],
@@ -263,6 +402,7 @@ async function buildRequest(
     reasoning_effort: config.reasoningEffort,
   };
   if (stream) body.stream = true;
+  if (structured) body.response_format = STRUCTURED_RESPONSE_FORMAT;
   return body;
 }
 
@@ -274,7 +414,7 @@ export async function generateOnce(
   params: FollowUpGenerateParams,
   correction?: string,
   endpoint = 'followup_once'
-): Promise<string> {
+): Promise<StructuredFollowUpResult> {
   return withUserAiSlot(userId, async () => {
     const config = getAiConfig(userId);
     const ai = getClient(userId, config);
@@ -282,9 +422,11 @@ export async function generateOnce(
     let response;
     try {
       response = await ai.chat.completions.create(
-        await buildRequest(config, userId, params, correction)
+        await buildRequest(config, userId, params, correction, false, true)
       );
       const content = (response.choices[0].message.content || '').trim();
+      const structured = parseStructuredOutput(content);
+      const text = structured ? structuredToText(structured) : content;
       await recordAiMetrics({
         userId,
         provider: config.provider,
@@ -295,9 +437,9 @@ export async function generateOnce(
         totalTokens: response.usage?.total_tokens,
         latencyMs: Date.now() - start,
         status: 'success',
-        wordCount: countWords(content),
+        wordCount: countWords(text),
       });
-      return content;
+      return { structured, text, wordCount: countWords(text) };
     } catch (error: any) {
       await recordAiMetrics({
         userId,
@@ -323,7 +465,7 @@ export async function* streamOnce(
   endpoint = 'followup_stream',
   externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
-  await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
+  await acquireAiSlot('interactive', AI_QUEUE_TIMEOUT_MS, userId);
   const config = getAiConfig(userId);
   const ai = getClient(userId, config);
   const start = Date.now();
@@ -336,7 +478,7 @@ export async function* streamOnce(
     : watchdog.signal;
   try {
     const stream = (await ai.chat.completions.create(
-      await buildRequest(config, userId, params, correction, true),
+      await buildRequest(config, userId, params, correction, true, true),
       { signal: mergedSignal }
     )) as unknown as AsyncIterable<ChatStreamChunk>;
     for await (const chunk of stream) {
@@ -374,7 +516,7 @@ export async function* streamOnce(
     throw error;
   } finally {
     watchdog.done();
-    releaseAiSlot(userId);
+    releaseAiSlot(userId, 'interactive');
   }
 }
 
@@ -432,7 +574,7 @@ export async function* streamChat(
   opts: ChatOptions = {},
   externalSignal?: AbortSignal
 ): AsyncGenerator<string> {
-  await acquireAiSlot(AI_QUEUE_TIMEOUT_MS, userId);
+  await acquireAiSlot('interactive', AI_QUEUE_TIMEOUT_MS, userId);
   const watchdog = startStreamWatchdog();
   const mergedSignal = externalSignal
     ? AbortSignal.any([watchdog.signal, externalSignal])
@@ -452,26 +594,139 @@ export async function* streamChat(
     }
   } finally {
     watchdog.done();
-    releaseAiSlot(userId);
+    releaseAiSlot(userId, 'interactive');
   }
 }
 
 // Re-export utilities
 export { countWords, imageToBase64DataUrl, correctionText, MIN_WORDS, MAX_WORDS } from './utils.js';
-export { followUpWordRangeForParams, isWordCountOk, MODULE_GUIDANCE } from './prompt.js';
-export type { FollowUpGenerateParams, FollowUpHistoryItem } from './prompt.js';
+export { followUpWordRangeForParams, isWordCountOk, MODULE_GUIDANCE, structuredToText, parseStructuredOutput, STRUCTURED_RESPONSE_FORMAT, STRUCTURED_FOLLOWUP_SCHEMA, STRUCTURED_BLOCKS } from './prompt.js';
+export type { FollowUpGenerateParams, FollowUpHistoryItem, StructuredBlockKey } from './prompt.js';
 export { getSharedClient, getClient } from './client.js';
+export { recordAiMetrics } from '../aiMetrics.js';
+
+// ============ 多模态融合：观察结构化提取 ============
+
+export interface MultimodalObservation {
+  type: 'question_type' | 'mistake' | 'teacher_mark' | 'handwriting' | 'key_info' | 'other';
+  detail: string;
+  evidence_image_index: number;
+}
+
+export interface MultimodalObservationsResult {
+  observations: MultimodalObservation[];
+}
+
+/**
+ * 从上传的图片中提取结构化观察信息
+ * 两步：
+ * 1) 调用模型输出 JSON 格式的 observations（使用 response_format json_schema 强制结构化）
+ * 2) 解析并校验，返回 MultimodalObservationsResult
+ */
+export async function extractMultimodalObservations(
+  userId: number,
+  params: FollowUpGenerateParams,
+  endpoint = 'multimodal_observations'
+): Promise<MultimodalObservationsResult> {
+  return withUserAiSlot(userId, async () => {
+    const config = getAiConfig(userId);
+    const ai = getClient(userId, config);
+    const start = Date.now();
+    let response;
+    try {
+      const body: any = {
+        model: config.model,
+        messages: [
+          {
+            role: 'system',
+            content: buildMultimodalPrompt(params),
+          },
+          { role: 'user', content: await buildUserContent(params, undefined, userId) },
+        ],
+        max_tokens: 2000,
+        temperature: 0.3,
+        reasoning_effort: config.reasoningEffort,
+        response_format: MULTIMODAL_RESPONSE_FORMAT,
+      };
+      response = await ai.chat.completions.create(body);
+      const content = (response.choices[0].message.content || '').trim();
+      const parsed = parseMultimodalObservations(content);
+      if (!parsed) {
+        throw new Error('多模态观察输出解析失败：格式不符合 JSON Schema');
+      }
+      await recordAiMetrics({
+        userId,
+        provider: config.provider,
+        model: config.model,
+        endpoint,
+        promptTokens: response.usage?.prompt_tokens,
+        completionTokens: response.usage?.completion_tokens,
+        totalTokens: response.usage?.total_tokens,
+        latencyMs: Date.now() - start,
+        status: 'success',
+        wordCount: 0,
+      });
+      return parsed;
+    } catch (error: any) {
+      await recordAiMetrics({
+        userId,
+        provider: config.provider,
+        model: config.model,
+        endpoint,
+        latencyMs: Date.now() - start,
+        status: 'error',
+        errorMessage: error.message,
+      });
+      throw error;
+    }
+  });
+}
+
+export { parseMultimodalObservations, multimodalObservationsToText, MULTIMODAL_RESPONSE_FORMAT, MULTIMODAL_OBSERVATIONS_SCHEMA } from './prompt.js';
+
+// ============ 知识图谱 ============
+export {
+  extractKnowledgePoints,
+  upsertKnowledgePoints,
+  getKnowledgeRadar,
+  getWeakPoints,
+  recommendRemedialExercises,
+  buildKnowledgeExtractionPrompt,
+  KNOWLEDGE_EXTRACTION_SCHEMA,
+  type ExtractedKnowledgePoint,
+  type KnowledgeExtractionResult,
+  type KnowledgePointCategory,
+} from '../knowledge/graph.js';
+// ============ 阶测错因分析 ============
+export {
+  analyzeExam,
+  getExamAnalysis,
+  getStudentMistakeTrend,
+  buildExamAnalysisPrompt,
+  MISTAKE_TAG_TAXONOMY,
+  type ExamQuestionAnalysis,
+  type ExamAnalysisResult,
+  type MistakePrimaryTag,
+  type MistakeSecondaryTag,
+} from './examAnalysis.js';
+
 
 // ============ 兼容层：旧路由/测试依赖的导出 ============
 
 // 回访生成的测试注入点
-type FollowUpGenerator = (userId: number, params: FollowUpGenerateParams) => Promise<string>;
+export interface StructuredFollowUpResult {
+  structured: Record<string, string> | null;
+  text: string;
+  wordCount: number;
+}
+
+type FollowUpGenerator = (userId: number, params: FollowUpGenerateParams) => Promise<StructuredFollowUpResult>;
 type FollowUpStreamer = (userId: number, params: FollowUpGenerateParams) => AsyncGenerator<string>;
 type OnceGenerator = (
   userId: number,
   params: FollowUpGenerateParams,
   correction?: string
-) => Promise<string>;
+) => Promise<StructuredFollowUpResult>;
 
 let generatorImpl: FollowUpGenerator = generateOnce;
 let streamerImpl: FollowUpStreamer = streamOnce;
@@ -496,7 +751,7 @@ export function resetFollowUpGenerator(): void {
 }
 
 /** 路由统一入口：非流式（含字数重试） */
-export function runFollowUpGeneration(userId: number, params: FollowUpGenerateParams): Promise<string> {
+export function runFollowUpGeneration(userId: number, params: FollowUpGenerateParams): Promise<StructuredFollowUpResult> {
   return generatorImpl(userId, params);
 }
 
@@ -517,7 +772,7 @@ export function retryGeneration(
   userId: number,
   params: FollowUpGenerateParams,
   correction: string
-): Promise<string> {
+): Promise<StructuredFollowUpResult> {
   return onceImpl(userId, params, correction);
 }
 

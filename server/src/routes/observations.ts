@@ -21,6 +21,7 @@ import { parseObservationReport, buildObservationDocx, buildDocxFilename } from 
 import { readPreferences } from '../services/preferences.js';
 import { log } from '../utils/logger.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { recordChangeEvent } from '../services/content/references.js';
 
 const router = Router();
 
@@ -262,6 +263,8 @@ router.post('/', validateBody(observationCreateSchema), (req: AuthenticatedReque
         f.teacherReply
       );
 
+    recordChangeEvent('observation', Number(result.lastInsertRowid), ['created'], 1, req.userId!);
+
     const row = fetchWithTeacher(userId, result.lastInsertRowid as number);
     res.json({ observation: mapObservation(row, row?.teacher_name ?? null) });
   } catch (error: any) {
@@ -486,6 +489,8 @@ router.put('/:id', validateBody(observationUpdateSchema), (req: AuthenticatedReq
       id, userId
     );
 
+    recordChangeEvent('observation', id, ['updated'], 2, req.userId!);
+
     const row = fetchWithTeacher(userId, id);
     res.json({ observation: mapObservation(row, row?.teacher_name ?? null) });
   } catch (error: any) {
@@ -497,11 +502,13 @@ router.put('/:id', validateBody(observationUpdateSchema), (req: AuthenticatedReq
 router.delete('/:id', (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.userId!;
+    const id = parseInt(req.params.id, 10);
     const result = db.prepare('DELETE FROM observations WHERE id = ? AND user_id = ?').run(
-      parseInt(req.params.id, 10),
+      id,
       userId
     );
     if (result.changes === 0) return res.status(404).json({ error: '听评课记录不存在' });
+    recordChangeEvent('observation', id, ['deleted'], 2, req.userId!);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: '删除听评课记录失败', message: error.message });
