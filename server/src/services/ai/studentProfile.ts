@@ -114,7 +114,7 @@ export async function gatherProfileSourceData(
         `SELECT topic, content, blocks, mastery AS overall_grade, created_at AS observed_at, images
            FROM followups
           WHERE user_id = ? AND student_id = ?
-            AND created_at >= datetime('now', '-6 months')
+            AND created_at >= datetime('now', '-6 months', '+8 hours')
           ORDER BY created_at DESC`
       )
       .all(userId, studentId) as RawProfileSourceData['followups'],
