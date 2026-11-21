@@ -1,0 +1,240 @@
+.page {
+  min-height: 100vh;
+  background: #f4f7fb;
+  color: #24324a;
+  font-size: 28rpx;
+}
+
+.state-card {
+  margin: 180rpx 40rpx 0;
+  padding: 64rpx 40rpx;
+  border-radius: 32rpx;
+  background: #ffffff;
+  text-align: center;
+  color: #64748b;
+}
+
+.loading-dot {
+  width: 32rpx;
+  height: 32rpx;
+  margin: 0 auto 28rpx;
+  border-radius: 50%;
+  background: #3157c8;
+}
+
+.state-icon {
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  margin: 0 auto 24rpx;
+  border-radius: 50%;
+  background: #fff4df;
+  color: #b66a00;
+  font-size: 40rpx;
+  font-weight: 600;
+}
+
+.state-title {
+  color: #24324a;
+  font-size: 34rpx;
+  font-weight: 600;
+}
+
+.state-message {
+  margin-top: 20rpx;
+  line-height: 1.7;
+}
+
+.hero {
+  padding: 48rpx 40rpx 116rpx;
+  background: linear-gradient(135deg, #2748a3, #3157c8 55%, #7256b8);
+  color: #ffffff;
+}
+
+.eyebrow {
+  opacity: 0.82;
+  font-size: 25rpx;
+}
+
+.hero-title {
+  margin-top: 40rpx;
+  font-size: 44rpx;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20rpx;
+  margin-top: 28rpx;
+  font-size: 24rpx;
+  opacity: 0.9;
+}
+
+.subject {
+  padding: 8rpx 18rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.content {
+  position: relative;
+  margin: -64rpx 28rpx 0;
+  padding-bottom: 56rpx;
+}
+
+.card {
+  margin-bottom: 28rpx;
+  padding: 36rpx;
+  border-radius: 28rpx;
+  background: #ffffff;
+  box-shadow: 0 8rpx 32rpx rgba(32, 55, 95, 0.06);
+}
+
+.empty-content {
+  text-align: center;
+  color: #8290a6;
+  line-height: 1.8;
+}
+
+.section-title {
+  color: #24324a;
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.section-caption {
+  margin-top: 8rpx;
+  color: #96a1b3;
+  font-size: 23rpx;
+}
+
+.progress-title { color: #16775c; }
+.focus-title { color: #9a610b; }
+.teacher-title { color: #7150a5; }
+
+.progress-item,
+.focus-item {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 28rpx;
+  line-height: 1.75;
+}
+
+.progress-item {
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #eef9f4;
+}
+
+.check {
+  margin-right: 18rpx;
+  color: #16966f;
+  font-weight: 700;
+}
+
+.item-text { flex: 1; }
+
+.focus-item {
+  padding-bottom: 24rpx;
+  border-bottom: 1rpx solid #edf0f5;
+}
+
+.focus-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.focus-dot {
+  flex-shrink: 0;
+  width: 10rpx;
+  height: 10rpx;
+  margin: 20rpx 18rpx 0 4rpx;
+  border-radius: 50%;
+  background: #dfa337;
+}
+
+.action-card {
+  border-top: 8rpx solid #e8efff;
+}
+
+.action-text,
+.teacher-note,
+.feedback-content {
+  margin-top: 26rpx;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.teacher-card { background: #faf8ff; }
+
+.read-status {
+  margin-top: 24rpx;
+  color: #168462;
+  font-weight: 600;
+}
+
+.primary-button,
+.share-button {
+  border-radius: 18rpx;
+  background: #3157c8;
+  color: #ffffff;
+  font-size: 28rpx;
+  line-height: 1.4;
+}
+
+.primary-button::after,
+.share-button::after { border: 0; }
+.primary-button[disabled] { background: #aab8d9; color: #ffffff; }
+
+.action-button { margin-top: 28rpx; }
+.retry { margin-top: 36rpx; }
+
+.feedback-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 190rpx;
+  margin-top: 28rpx;
+  padding: 24rpx;
+  border: 2rpx solid #e2e8f0;
+  border-radius: 20rpx;
+  background: #f8fafc;
+  line-height: 1.7;
+}
+
+.feedback-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20rpx;
+}
+
+.counter { color: #96a1b3; font-size: 23rpx; }
+
+.feedback-button {
+  width: 220rpx;
+  margin: 0;
+}
+
+.feedback-sent {
+  margin-top: 28rpx;
+  padding: 26rpx;
+  border-radius: 20rpx;
+  background: #eef9f4;
+}
+
+.feedback-sent-title { color: #16775c; font-weight: 600; }
+.feedback-error { margin-top: 20rpx; color: #c43d4b; font-size: 24rpx; }
+
+.share-button { margin-top: 12rpx; }
+
+.privacy {
+  padding: 32rpx 20rpx 0;
+  color: #96a1b3;
+  text-align: center;
+  font-size: 22rpx;
+  line-height: 1.7;
+}

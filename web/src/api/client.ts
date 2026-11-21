@@ -285,89 +285,175 @@ class ApiClient {
     },
     signal?: AbortSignal
   ): Promise<void> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
-
-    const res = await fetchApi(BASE_URL + path, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({} as Record<string, unknown>));
-      if (res.status === 401) {
-        this.handleUnauthorized(path, !!this.token);
-      }
-      // 抛出带 status / detail 的错误，便于上层展示完整信息
-      const e = new Error(err.error || '请求失败') as Error & { status?: number; detail?: any };
-      e.status = res.status;
-      e.detail = err;
-      throw e;
-    }
-    if (!res.body) {
-      throw new Error('当前环境不支持流式响应');
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    const resumeEnabled = path === '/followups/generate/stream';
+    const maxResumeAttempts = 3;
+    let streamId = '';
+    let lastEventId = 0;
+    let resumeAttempts = 0;
     let finished = false;
 
-    const dispatch = (frame: string) => {
-      let event = 'message';
-      const dataLines: string[] = [];
-      for (const line of frame.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
-      }
-      if (dataLines.length === 0) return;
+    const waitBeforeResume = async () => {
+      resumeAttempts++;
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', onAbort);
+          const error = new Error('Aborted');
+          error.name = 'AbortError';
+          reject(error);
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, 100);
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener('abort', onAbort, { once: true });
+      });
 
-      let data: any = null;
-      try {
-        data = JSON.parse(dataLines.join('\n'));
-      } catch {
-        return;
-      }
-
-      if (event === 'delta' && handlers.onDelta) handlers.onDelta(data.text || '');
-      else if (event === 'regenerating' && handlers.onRegenerating) handlers.onRegenerating(data.wordCount);
-      else if (event === 'done') {
-        finished = true;
-        handlers.onDone?.(data);
-      } else if (event === 'error') {
-        finished = true;
-        handlers.onError?.(data.error || '生成失败', { status: data.status, detail: data.detail });
+      // 浏览器仍离线时不要快速烧完重试次数；恢复网络后继续同一条流。
+      if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && !navigator.onLine) {
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            window.removeEventListener('online', onOnline);
+            signal?.removeEventListener('abort', onAbort);
+          };
+          const onOnline = () => { cleanup(); resolve(); };
+          const onAbort = () => {
+            cleanup();
+            const error = new Error('Aborted');
+            error.name = 'AbortError';
+            reject(error);
+          };
+          window.addEventListener('online', onOnline, { once: true });
+          if (signal?.aborted) onAbort();
+          else {
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (navigator.onLine) onOnline();
+          }
+        });
       }
     };
 
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+    for (;;) {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+      if (resumeEnabled && streamId) {
+        headers['X-Stream-ID'] = streamId;
+        headers['Last-Event-ID'] = String(lastEventId);
+      }
 
-        let sep: number;
-        while ((sep = buffer.indexOf('\n\n')) !== -1) {
-          const frame = buffer.slice(0, sep);
-          buffer = buffer.slice(sep + 2);
-          if (frame.trim()) dispatch(frame);
+      let res: Response;
+      try {
+        res = await fetchApi(BASE_URL + path, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        });
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || signal?.aborted) throw error;
+        if (resumeEnabled && streamId && resumeAttempts < maxResumeAttempts) {
+          await waitBeforeResume();
+          continue;
+        }
+        throw error;
+      }
+
+      if (resumeEnabled) {
+        const responseStreamId = res.headers?.get?.('x-stream-id');
+        if (responseStreamId) streamId = responseStreamId;
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as Record<string, unknown>));
+        if (
+          resumeEnabled && streamId && res.status === 409 && err.code === 'STREAM_IN_PROGRESS' &&
+          resumeAttempts < maxResumeAttempts
+        ) {
+          await waitBeforeResume();
+          continue;
+        }
+        if (res.status === 401) this.handleUnauthorized(path, !!this.token);
+        const e = new Error(err.error || '请求失败') as Error & { status?: number; detail?: any };
+        e.status = res.status;
+        e.detail = err;
+        throw e;
+      }
+      if (!res.body) throw new Error('当前环境不支持流式响应');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      const dispatch = (frame: string) => {
+        let event = 'message';
+        let id: string | null = null;
+        const dataLines: string[] = [];
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('id:')) id = line.slice(3).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length === 0) return;
+
+        let data: any = null;
+        try {
+          data = JSON.parse(dataLines.join('\n'));
+        } catch {
+          return;
+        }
+
+        if (event === 'delta') {
+          if (id && /^\d+$/.test(id)) {
+            const seq = Number(id);
+            if (seq <= lastEventId) return;
+            lastEventId = seq;
+          }
+          handlers.onDelta?.(data.text || '');
+        } else if (event === 'regenerating') {
+          handlers.onRegenerating?.(data.wordCount);
+        } else if (event === 'done') {
+          finished = true;
+          handlers.onDone?.(data);
+        } else if (event === 'error') {
+          finished = true;
+          handlers.onError?.(data.error || '生成失败', { status: data.status, detail: data });
+        }
+      };
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let sep: number;
+          while ((sep = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            if (frame.trim()) dispatch(frame);
+          }
+        }
+        if (buffer.trim()) dispatch(buffer);
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || signal?.aborted) throw error;
+        if (!resumeEnabled || !streamId) throw error;
+        // reader 的网络错误与正常 EOF 一样进入下面的有限次续传。
+      } finally {
+        try {
+          reader.releaseLock();
+        } catch {
+          /* ignore */
         }
       }
-      // 处理末尾可能残留的帧
-      if (buffer.trim()) dispatch(buffer);
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        /* ignore */
-      }
-    }
 
-    // 流结束但既没 done 也没 error，说明被中断
-    if (!finished) {
+      if (finished) return;
+      if (resumeEnabled && streamId && resumeAttempts < maxResumeAttempts) {
+        await waitBeforeResume();
+        continue;
+      }
       handlers.onError?.('生成中断，请重试');
+      return;
     }
   }
 

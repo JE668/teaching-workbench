@@ -3,7 +3,6 @@ import { TrendingUp, Target, Users, AlertTriangle, Calendar, ArrowRight } from '
 import { cn } from '../../lib/utils';
 import { count, pct, money, clampRatio, NOT_AVAILABLE_YET, type TeacherStatRow, type ManagerPerfRow } from '../../lib/renewal';
 import KpiCard from './KpiCard';
-import Sparkline from './Sparkline';
 
 interface ExecutiveSummaryProps {
   teacherRows: TeacherStatRow[];

@@ -135,7 +135,11 @@ test.describe('课后回访生成', () => {
     });
 
     await page.getByRole('button', { name: /保存/ }).click();
-    await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
+    await expect(page.getByText('已保存并归档，可生成家长链接')).toBeVisible({ timeout: 15_000 });
+    // 1 对 1 保存后留在结果页，保留家长链接/微信推送入口；档案归档单独验证。
+    await expect(page).toHaveURL(/\/followups$/);
+    await expect(page.getByRole('button', { name: '家长链接', exact: true })).toBeEnabled();
+    await page.goto('/students/' + studentId);
 
     // 档案时间线应显示课次徽章。
     // 注意 exact：否则 "3 次课" 会同时命中 "涵盖 3 次课"
@@ -164,7 +168,9 @@ test.describe('课后回访生成', () => {
     });
 
     await page.getByRole('button', { name: /保存/ }).click();
-    await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
+    await expect(page.getByText('已保存并归档，可生成家长链接')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: '家长链接', exact: true })).toBeEnabled();
+    await page.goto('/students/' + studentId);
 
     // 覆盖的每个板块都要传到落库并回显在档案时间线上
     await expect(page.getByText('错题专练', { exact: true })).toBeVisible();
@@ -174,7 +180,7 @@ test.describe('课后回访生成', () => {
     await expect(page.getByText('成绩分析', { exact: true })).toHaveClass(/violet|purple/);
   });
 
-  test('保存后自动归档到学生档案', async ({ page }) => {
+  test('保存后归档到学生档案并保留家长链接入口', async ({ page }) => {
     const studentId = await seedStudent(page, '归档测试');
 
     await gotoFollowUp(page);
@@ -189,8 +195,10 @@ test.describe('课后回访生成', () => {
 
     await page.getByRole('button', { name: /保存/ }).click();
 
-    // 保存后自动跳转到该学生档案
-    await expect(page).toHaveURL(new RegExp('/students/' + studentId + '$'), { timeout: 15_000 });
+    await expect(page.getByText('已保存并归档，可生成家长链接')).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/followups$/);
+    await expect(page.getByRole('button', { name: '家长链接', exact: true })).toBeEnabled();
+    await page.goto('/students/' + studentId);
     // exact 必须为 true：回访主题 "归档测试课程" 会与标题 "归档测试" 产生子串匹配
     await expect(
       page.locator('main').getByRole('heading', { name: '归档测试', exact: true })

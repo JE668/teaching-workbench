@@ -5,6 +5,7 @@ import ReportEdit from './ReportEdit';
 import { renderWithProviders } from '../test/test-utils';
 import { api } from '../api/client';
 import { downloadReportCard } from '../lib/reportCard';
+import { Route, Routes, useLocation } from 'react-router-dom';
 
 vi.mock('../api/client', () => ({
   api: {
@@ -77,7 +78,7 @@ let storeSeq = 100;
  * 用一个可变 store 模拟数据库，让「新增 / 改格 / 排序 / 删除」都有真实副作用，
  * 这样才能测出前端状态和请求是否一致。
  */
-function mockStore(opts: { report?: any; items?: any[]; notFound?: boolean } = {}) {
+function mockStore(opts: { report?: any; items?: any[]; notFound?: boolean; generateLessonPlans?: () => unknown } = {}) {
   const report = { ...baseReport(), ...(opts.report || {}) };
   let items = (opts.items || []).map((i) => ({ ...i, id: ++storeSeq }));
   report.item_count = items.length;
@@ -106,6 +107,11 @@ function mockStore(opts: { report?: any; items?: any[]; notFound?: boolean } = {
     }
     if (path === `/reports/${REPORT_ID}` && method === 'DELETE') {
       return Promise.resolve({ deleted: 1, itemsDeleted: items.length });
+    }
+
+    if (path === `/reports/${REPORT_ID}/generate-lesson-plans` && method === 'POST') {
+      if (!opts.generateLessonPlans) return Promise.reject(new Error('未配置月报备课接口'));
+      return Promise.resolve(opts.generateLessonPlans());
     }
 
     if (path === `/reports/${REPORT_ID}/exams` && method === 'POST') {
@@ -201,6 +207,23 @@ function mockStore(opts: { report?: any; items?: any[]; notFound?: boolean } = {
 
 function render() {
   return renderWithProviders(<ReportEdit />, { route: `/reports/${REPORT_ID}`, path: '/reports/:id' });
+}
+
+function LessonPlanNavigationHarness() {
+  const location = useLocation();
+  return (
+    <>
+      <output data-testid="current-location">{location.pathname + location.search}</output>
+      <Routes>
+        <Route path="/reports/:id" element={<ReportEdit />} />
+        <Route path="/lesson-plans" element={<div>备课助手目标页</div>} />
+      </Routes>
+    </>
+  );
+}
+
+function renderLessonPlanNavigation() {
+  return renderWithProviders(<LessonPlanNavigationHarness />, { route: `/reports/${REPORT_ID}` });
 }
 
 /** 表格里按显示值找到单元格所在行 */
@@ -538,6 +561,67 @@ describe('月度报告编辑器', () => {
       const del = request.mock.calls.find(([p, init]) => p === `/reports/${REPORT_ID}` && init?.method === 'DELETE');
       expect(del).toBeDefined();
     });
+  });
+});
+
+describe('月报一键备课', () => {
+  it('成功生成后按首个教案 ID 跳转，并提交空对象请求体', async () => {
+    mockStore({
+      items: [makeItem({ kind: 'plan', content: '凸透镜成像' })],
+      generateLessonPlans: () => ({ plans: [{ id: 91 }, { id: 92 }], failures: [] }),
+    });
+    const user = userEvent.setup();
+    renderLessonPlanNavigation();
+
+    await user.click(await screen.findByRole('button', { name: '从月报备课' }));
+
+    expect(await screen.findByText('备课助手目标页')).toBeInTheDocument();
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/lesson-plans?planId=91');
+    expect(screen.getByText('已生成 2 份备课草案，请逐周核对后确认')).toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith(`/reports/${REPORT_ID}/generate-lesson-plans`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    expect(screen.queryByText('李小明')).not.toBeInTheDocument();
+  });
+
+  it('生成失败时不跳转，保留报告内容并恢复备课按钮', async () => {
+    mockStore({
+      items: [makeItem({ kind: 'plan', content: '凸透镜成像' })],
+      generateLessonPlans: () => Promise.reject(new Error('模型服务超时')),
+    });
+    const user = userEvent.setup();
+    renderLessonPlanNavigation();
+
+    await user.click(await screen.findByRole('button', { name: '从月报备课' }));
+
+    expect(await screen.findByText('从月报生成备课草案失败：模型服务超时')).toBeInTheDocument();
+    expect(screen.getByTestId('current-location')).toHaveTextContent(`/reports/${REPORT_ID}`);
+    expect(screen.getByText('李小明')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('凸透镜成像')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '从月报备课' })).toBeEnabled();
+    expect(screen.queryByText('备课助手目标页')).not.toBeInTheDocument();
+    expect(request).toHaveBeenCalledWith(`/reports/${REPORT_ID}/generate-lesson-plans`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  });
+
+  it('部分学生生成失败时显示数量提示，并跳转到首个成功教案', async () => {
+    mockStore({
+      generateLessonPlans: () => ({
+        plans: [{ id: 105 }, { id: 106 }],
+        failures: [{ studentId: 8, message: '缺少教材目录' }],
+      }),
+    });
+    const user = userEvent.setup();
+    renderLessonPlanNavigation();
+
+    await user.click(await screen.findByRole('button', { name: '从月报备课' }));
+
+    expect(await screen.findByText('已生成 2 份，1 份失败；可在备课助手重试')).toBeInTheDocument();
+    expect(await screen.findByText('备课助手目标页')).toBeInTheDocument();
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/lesson-plans?planId=105');
   });
 });
 

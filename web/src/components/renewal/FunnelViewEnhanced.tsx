@@ -1,11 +1,8 @@
-import React from 'react';
 import { Funnel, Users, TrendingUp, AlertTriangle, Target } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
-import { cn } from '../../lib/utils';
-import { count, NOT_AVAILABLE_YET, pct, type FunnelRow } from '../../lib/renewal';
+import { count, NOT_AVAILABLE_YET, pct } from '../../lib/renewal';
 import FunnelChart from './FunnelChart';
-import Sparkline from './Sparkline';
-import BarList, { BarListRow } from './BarList';
+import BarList from './BarList';
 
 interface Props {
   stages: { name: string; value: number }[];

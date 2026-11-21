@@ -1,6 +1,7 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { db } from '../config/database.js';
 import { AuthenticatedRequest } from '../types/index.js';
+import { log } from '../utils/logger.js';
 import { generateExamScheduleWithCourses, dateSpan } from '../utils/examSchedule.js';
 import {
   buildReportXlsx,
@@ -11,6 +12,17 @@ import {
 import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
 import { diffPlannedVsTaught, type ContinuityCourse } from '../utils/planContinuity.js';
 import { suggestNextCourses } from '../utils/nextCourse.js';
+import { recordChangeEvent } from '../services/content/references.js';
+import {
+  createExcelTemplate,
+  getExcelTemplates,
+  getExcelTemplateById,
+  updateExcelTemplate,
+  deleteExcelTemplate,
+  TemplateEngine,
+  type ReportData,
+} from '../services/excel/templateEngine.js';
+import { ExcelTemplateInspectError, inspectTemplate } from '../services/excel/inspectTemplate.js';
 
 /**
  * 月度总结与课程规划。
@@ -82,6 +94,12 @@ interface StudentRow {
 }
 
 const router = Router();
+
+/** 未知异常只写服务端日志；客户端始终收到稳定的公共错误。 */
+function respondInternalError(res: Response, error: unknown, publicMessage: string): void {
+  log.error({ err: error }, publicMessage);
+  res.status(500).json({ error: publicMessage });
+}
 
 const KINDS = new Set(['summary', 'plan', 'exam']);
 
@@ -204,7 +222,7 @@ router.get('/', (req: AuthenticatedRequest, res) => {
       .all(...params) as ReportRow[];
     res.json({ reports: rows.map(mapReport) });
   } catch (error: any) {
-    res.status(500).json({ error: '获取月度报告失败', message: error.message });
+    respondInternalError(res, error, '获取月度报告失败');
   }
 });
 
@@ -246,17 +264,23 @@ router.post('/', (req: AuthenticatedRequest, res) => {
       .run(userId, studentId, yearMonth, term, grade, subject).lastInsertRowid as number;
 
     const created = db.prepare('SELECT * FROM monthly_reports WHERE id = ?').get(id) as { m: number } | undefined;
+
+    // 记录变更事件
+    recordChangeEvent('report', id, ['created'], 1, req.userId!);
+
     res.json({
       report: mapReport({ ...created, student_name: student.name }),
       duplicated: false,
     });
   } catch (error: any) {
-    res.status(500).json({ error: '创建月度报告失败', message: error.message });
+    respondInternalError(res, error, '创建月度报告失败');
   }
 });
 
 /** 单块报告 + 明细 */
-router.get('/:id', (req: AuthenticatedRequest, res) => {
+router.get('/:id', (req: AuthenticatedRequest, res, next) => {
+  // 静态模板列表路由注册在后方，不能让这里的报告 id 提前截获。
+  if (req.params.id === 'excel-templates') return next();
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的报告 id' });
@@ -275,7 +299,7 @@ router.get('/:id', (req: AuthenticatedRequest, res) => {
       .all(id, req.userId!) as ReportItemRow[];
     res.json({ report: mapReport(row), items: items.map(mapItem) });
   } catch (error: any) {
-    res.status(500).json({ error: '获取月度报告失败', message: error.message });
+    respondInternalError(res, error, '获取月度报告失败');
   }
 });
 
@@ -330,7 +354,7 @@ router.get('/:id/undelivered', (req: AuthenticatedRequest, res) => {
     const undelivered = diffPlannedVsTaught(toContinuity(prevItems), toContinuity(curItems));
     res.json({ prevReportId: prev.id, undelivered });
   } catch (error: any) {
-    res.status(500).json({ error: '核对上月规划失败', message: error.message });
+    respondInternalError(res, error, '核对上月规划失败');
   }
 });
 
@@ -393,7 +417,7 @@ router.get('/:id/next-courses', (req: AuthenticatedRequest, res) => {
     const suggestions = suggestNextCourses(catalog, takenCourseIds);
     res.json({ suggestions, takenCount: takenCourseIds.length });
   } catch (error: any) {
-    res.status(500).json({ error: '推荐下月课程失败', message: error.message });
+    respondInternalError(res, error, '推荐下月课程失败');
   }
 });
 
@@ -440,7 +464,7 @@ router.get('/:id/classmates', (req: AuthenticatedRequest, res) => {
     }));
     res.json({ classmates });
   } catch (error: any) {
-    res.status(500).json({ error: '查询同班同学失败', message: error.message });
+    respondInternalError(res, error, '查询同班同学失败');
   }
 });
 
@@ -535,9 +559,16 @@ router.post('/:id/apply-to-class', (req: AuthenticatedRequest, res) => {
       ).run(...values).changes;
     }
 
+    // 记录批量更新的变更事件
+    if (updated > 0) {
+      for (const t of targets) {
+        recordChangeEvent('report', t.id, ['updated'], 2, req.userId!);
+      }
+    }
+
     res.json({ updated, studentIds: targets.map((t) => t.id) });
   } catch (error: any) {
-    res.status(500).json({ error: '套用到同班失败', message: error.message });
+    respondInternalError(res, error, '套用到同班失败');
   }
 });
 
@@ -588,7 +619,321 @@ router.get('/:id/xlsx', async (req: AuthenticatedRequest, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.send(buf);
   } catch (error: any) {
-    res.status(500).json({ error: '导出 Excel 失败', message: error.message });
+    respondInternalError(res, error, '导出 Excel 失败');
+  }
+});
+
+// ============ Excel 模板管理 ============
+
+/** 列出用户的所有 Excel 模板 */
+router.get('/excel-templates', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const templates = getExcelTemplates(userId);
+    // 不返回 fileBlob，只返回元数据
+    const safeTemplates = templates.map((t) => ({
+      id: t.id,
+      name: t.name,
+      sheetName: t.sheetName,
+      fieldMappings: t.fieldMappings,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    }));
+    res.json({ templates: safeTemplates });
+  } catch (error: any) {
+    respondInternalError(res, error, '获取模板列表失败');
+  }
+});
+
+/** 读取工作表与有限单元格，供前端可视化映射。必须放在 /excel-templates/:id 前。 */
+router.post('/excel-templates/inspect', async (req: AuthenticatedRequest, res) => {
+  try {
+    const result = await inspectTemplate(req.body?.fileBase64, req.body?.sheetName);
+    res.json(result);
+  } catch (error: any) {
+    if (error instanceof ExcelTemplateInspectError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    respondInternalError(res, error, '读取 Excel 模板失败，请稍后重试');
+  }
+});
+
+function validatedTemplateName(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 120) {
+    throw new ExcelTemplateInspectError('模板名称不能为空，且不能超过 120 个字符');
+  }
+  return value.trim();
+}
+
+/** 新建 Excel 模板：保存前即验证工作簿与映射，避免把不可用的配置留到导出时才发现。 */
+router.post('/excel-templates', async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const { name, fileBase64, fieldMappings, sheetName } = req.body;
+    if (!name || !fileBase64 || !fieldMappings) {
+      return res.status(400).json({ error: '缺少必填字段：name, fileBase64, fieldMappings' });
+    }
+    const validName = validatedTemplateName(name);
+    validateExcelTemplateMappings(fieldMappings);
+    const inspection = await inspectTemplate(fileBase64, sheetName);
+    const fileBlob = Buffer.from(fileBase64.replace(/\s/g, ''), 'base64');
+    const id = createExcelTemplate(userId, validName, fileBlob, fieldMappings, inspection.sheetName);
+    const template = getExcelTemplateById(id, userId)!;
+    res.json({ template: { ...template, fileBlob: undefined } });
+  } catch (error: any) {
+    if (error instanceof ExcelTemplateInspectError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    respondInternalError(res, error, '创建模板失败');
+  }
+});
+
+/** 获取单个模板（含文件内容） */
+router.get('/excel-templates/:id', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的模板 id' });
+    const template = getExcelTemplateById(id, userId);
+    if (!template) return res.status(404).json({ error: '模板不存在' });
+    const { fileBlob, ...metadata } = template;
+    res.json({ template: { ...metadata, fileBase64: fileBlob.toString('base64') } });
+  } catch (error: any) {
+    respondInternalError(res, error, '获取模板失败');
+  }
+});
+
+/** 更新模板：文件或工作表变化时重新检查；仅改名称不必重复解析工作簿。 */
+router.put('/excel-templates/:id', async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的模板 id' });
+    const { name, fileBase64, fieldMappings, sheetName } = req.body;
+    const existing = getExcelTemplateById(id, userId);
+    if (!existing) return res.status(404).json({ error: '模板不存在' });
+    const updates: any = {};
+    if (name !== undefined) updates.name = validatedTemplateName(name);
+    if (fieldMappings !== undefined) {
+      validateExcelTemplateMappings(fieldMappings);
+      updates.fieldMappings = fieldMappings;
+    }
+    if (fileBase64 !== undefined || sheetName !== undefined) {
+      const effectiveBase64 = fileBase64 !== undefined ? fileBase64 : existing.fileBlob.toString('base64');
+      const inspection = await inspectTemplate(effectiveBase64, sheetName ?? existing.sheetName);
+      if (fileBase64 !== undefined) updates.fileBlob = Buffer.from(effectiveBase64.replace(/\s/g, ''), 'base64');
+      updates.sheetName = inspection.sheetName;
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: '没有可更新的字段' });
+    }
+    updateExcelTemplate(id, userId, updates);
+    const template = getExcelTemplateById(id, userId)!;
+    res.json({ template: { ...template, fileBlob: undefined } });
+  } catch (error: any) {
+    if (error instanceof ExcelTemplateInspectError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    respondInternalError(res, error, '更新模板失败');
+  }
+});
+
+/** 删除模板 */
+router.delete('/excel-templates/:id', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的模板 id' });
+    const ok = deleteExcelTemplate(id, userId);
+    if (!ok) return res.status(404).json({ error: '模板不存在' });
+    res.json({ deleted: true });
+  } catch (error: any) {
+    respondInternalError(res, error, '删除模板失败');
+  }
+});
+
+const EXCEL_REPORT_FIELDS = new Set([
+  'id', 'student_name', 'year_month', 'term', 'grade', 'subject',
+  'summary_enabled', 'plan_enabled', 'summary_intro', 'plan_intro',
+  'farewell', 'created_at', 'updated_at',
+]);
+const EXCEL_STUDENT_FIELDS = new Set(['id', 'name', 'grade', 'subject', 'phone', 'notes']);
+const EXCEL_ITEM_FIELDS = new Set([
+  'id', 'kind', 'seq', 'content', 'type', 'score', 'difficulty', 'scheduled_at',
+  'attendance', 'notes_done', 'mistakes_done', 'homework_done', 'exam', 'sort', 'course_id',
+]);
+const EXCEL_LOOP_SOURCES = new Set(['report_items', 'summary_items', 'plan_items', 'exam_items']);
+
+function isKnownExcelItemPath(source: string, field: string): boolean {
+  if (!/^\w+$/.test(field)) return false;
+  return EXCEL_ITEM_FIELDS.has(field) || (source !== 'report_items' && field === 'row_index');
+}
+
+function isKnownExcelPath(path: string): boolean {
+  const reportMatch = path.match(/^report\.(\w+)$/);
+  if (reportMatch) return EXCEL_REPORT_FIELDS.has(reportMatch[1]);
+  const studentMatch = path.match(/^student\.(\w+)$/);
+  if (studentMatch) return EXCEL_STUDENT_FIELDS.has(studentMatch[1]);
+  const itemMatch = path.match(/^(report_items|summary_items|plan_items|exam_items)\[\d+\]\.(\w+)$/);
+  return itemMatch ? isKnownExcelItemPath(itemMatch[1], itemMatch[2]) : false;
+}
+
+/** 与 TemplateEngine 的解析规则保持一致，避免未知路径静默导出空白。 */
+function isValidExcelMapping(mapping: string): boolean {
+  const loopMatch = mapping.match(/^loop:(right:)?(\w+)(?:\[(\w+)=([^\]]+)\])?->(.+)$/);
+  if (loopMatch) {
+    const [, , source, filterKey, , itemPath] = loopMatch;
+    return EXCEL_LOOP_SOURCES.has(source)
+      && (!filterKey || isKnownExcelItemPath(source, filterKey))
+      && isKnownExcelItemPath(source, itemPath);
+  }
+  const conditionalMatch = mapping.match(/^if:([\w.]+)=(.*?)->([^:]+)(?::(.*))?$/);
+  if (conditionalMatch) {
+    const [, conditionPath, , truePath, falsePath] = conditionalMatch;
+    return isKnownExcelPath(conditionPath)
+      && isKnownExcelPath(truePath)
+      && (!falsePath || isKnownExcelPath(falsePath));
+  }
+  return !mapping.startsWith('loop:') && !mapping.startsWith('if:') && isKnownExcelPath(mapping);
+}
+
+function validateExcelTemplateMappings(value: unknown): asserts value is Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ExcelTemplateInspectError('字段映射必须是以单元格地址为键的对象');
+  }
+  const entries = Object.entries(value);
+  if (entries.length > 1000) throw new ExcelTemplateInspectError('单个模板最多支持 1000 个单元格映射');
+  for (const [cellAddr, mapping] of entries) {
+    const match = cellAddr.match(/^([A-Z]{1,3})([1-9]\d*)$/);
+    const column = match?.[1].split('').reduce((total, char) => total * 26 + char.charCodeAt(0) - 64, 0) ?? 0;
+    const row = Number(match?.[2] ?? 0);
+    if (!match || column > 16384 || row > 1048576) {
+      throw new ExcelTemplateInspectError(`无效的单元格地址：${cellAddr}`);
+    }
+    if (typeof mapping !== 'string' || !mapping.trim() || mapping.length > 2000 || !isValidExcelMapping(mapping)) {
+      throw new ExcelTemplateInspectError(`单元格 ${cellAddr} 的映射包含未知字段或不支持的语法`);
+    }
+  }
+}
+
+/** 使用模板生成报告 Excel（核心：按映射填充） */
+router.post('/:reportId/excel-templates/:templateId/generate', async (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const reportId = Number(req.params.reportId);
+    const templateId = Number(req.params.templateId);
+    if (!Number.isInteger(reportId) || !Number.isInteger(templateId)) {
+      return res.status(400).json({ error: '非法的 id' });
+    }
+
+    const report = loadReport(reportId, userId);
+    if (!report) return res.status(404).json({ error: '月度报告不存在' });
+
+    const template = getExcelTemplateById(templateId, userId);
+    if (!template) return res.status(404).json({ error: '模板不存在' });
+
+    for (const [cellAddr, mapping] of Object.entries(template.fieldMappings)) {
+      if (!isValidExcelMapping(mapping)) {
+        return res.status(400).json({ error: `单元格 ${cellAddr} 的映射包含未知字段或不支持的语法：${mapping}` });
+      }
+    }
+
+    const student = db.prepare('SELECT phone, notes FROM students WHERE id = ? AND user_id = ?')
+      .get(report.student_id, userId) as { phone: string | null; notes: string | null } | undefined;
+    if (!student) return res.status(404).json({ error: '学生不存在' });
+
+    const items = db
+      .prepare('SELECT * FROM report_items WHERE report_id = ? AND user_id = ? ORDER BY sort, id')
+      .all(reportId, userId) as ReportItemRow[];
+
+    const reportData: ReportData = {
+      report: {
+        id: report.id,
+        student_id: report.student_id,
+        student_name: report.student_name,
+        year_month: report.year_month,
+        term: report.term,
+        grade: report.grade,
+        subject: report.subject,
+        summary_enabled: report.summary_enabled,
+        plan_enabled: report.plan_enabled,
+        summary_intro: report.summary_intro || '',
+        plan_intro: report.plan_intro || '',
+        farewell: report.farewell || '',
+        created_at: report.created_at,
+        updated_at: report.updated_at,
+      },
+      items: items.map((item) => ({
+        id: item.id,
+        report_id: item.report_id,
+        kind: item.kind as 'summary' | 'plan' | 'exam',
+        seq: item.seq,
+        content: item.content,
+        type: item.type,
+        score: item.score,
+        difficulty: item.difficulty,
+        scheduled_at: item.scheduled_at,
+        attendance: item.attendance,
+        notes_done: item.notes_done,
+        mistakes_done: item.mistakes_done,
+        homework_done: item.homework_done,
+        exam: item.exam,
+        sort: item.sort,
+        course_id: item.course_id,
+      })),
+      student: {
+        id: report.student_id,
+        name: report.student_name,
+        grade: report.grade || '',
+        subject: report.subject || '',
+        phone: student.phone,
+        notes: student.notes,
+      },
+    };
+
+    const engine = new TemplateEngine(template);
+    const buf = await engine.generate(reportData);
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`${report.student_name}_${report.year_month}_${template.name}.xlsx`)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (error: any) {
+    respondInternalError(res, error, '生成 Excel 失败');
+  }
+});
+
+/** 预览模板映射结构（不生成文件，只返回解析后的映射树） */
+router.post('/excel-templates/:id/preview', (req: AuthenticatedRequest, res) => {
+  try {
+    const userId = req.userId!;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '非法的模板 id' });
+    const template = getExcelTemplateById(id, userId);
+    if (!template) return res.status(404).json({ error: '模板不存在' });
+
+    // 返回解析后的映射结构，前端可用于可视化映射配置
+    const mappings = template.fieldMappings;
+    const parsed: Record<string, { type: string; path: string; details?: any }> = {};
+    for (const [cellAddr, mappingStr] of Object.entries(mappings)) {
+      // 简单解析用于预览
+      let type = 'static';
+      let path = mappingStr;
+      let details: any = {};
+      if (mappingStr.startsWith('loop:')) {
+        type = 'loop';
+        const match = mappingStr.match(/^loop:(right:)?(\w+)(?:\[(\w+)=([^\]]+)\])?->(.+)$/);
+        if (match) {
+          details = { direction: match[1] ? 'right' : 'down', source: match[2], filter: match[3] ? { key: match[3], value: match[4] } : null, itemPath: match[5] };
+        }
+      } else if (mappingStr.startsWith('if:')) {
+        type = 'conditional';
+      }
+      parsed[cellAddr] = { type, path, details };
+    }
+    res.json({ template: { id: template.id, name: template.name, sheetName: template.sheetName }, mappings: parsed });
+  } catch (error: any) {
+    respondInternalError(res, error, '预览映射失败');
   }
 });
 
@@ -627,9 +972,12 @@ router.patch('/:id', (req: AuthenticatedRequest, res) => {
     const r = db.prepare(`UPDATE monthly_reports SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
     if (!r.changes) return res.status(404).json({ error: '月度报告不存在' });
 
+    // 记录变更事件
+    recordChangeEvent('report', id, ['updated'], 2, req.userId!);
+
     res.json({ report: mapReport(loadReport(id, userId)!) });
   } catch (error: any) {
-    res.status(500).json({ error: '更新失败', message: error.message });
+    respondInternalError(res, error, '更新失败');
   }
 });
 
@@ -700,7 +1048,7 @@ router.post('/:id/exams', (req: AuthenticatedRequest, res) => {
 
     res.json({ term: report.term, startDate: span.startDate, endDate: span.endDate, suggestions, inserted });
   } catch (error: any) {
-    res.status(500).json({ error: '生成阶测安排失败', message: error.message });
+    respondInternalError(res, error, '生成阶测安排失败');
   }
 });
 
@@ -740,7 +1088,7 @@ router.post('/:id/items/move', (req: AuthenticatedRequest, res) => {
       .all(reportId, userId) as ReportItemRow[];
     res.json({ moved: result.moved, items: list.map(mapItem) });
   } catch (error: any) {
-    res.status(500).json({ error: '排序失败', message: error.message });
+    respondInternalError(res, error, '排序失败');
   }
 });
 
@@ -787,9 +1135,13 @@ router.post('/:id/items', (req: AuthenticatedRequest, res) => {
       ).lastInsertRowid as number;
 
     db.prepare("UPDATE monthly_reports SET updated_at = datetime('now', '+8 hours') WHERE id = ?").run(reportId);
+
+    // 记录变更事件
+    recordChangeEvent('report', reportId, ['updated'], 2, req.userId!);
+
     res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(id) as ReportItemRow | undefined) });
   } catch (error: any) {
-    res.status(500).json({ error: '新增明细失败', message: error.message });
+    respondInternalError(res, error, '新增明细失败');
   }
 });
 
@@ -836,9 +1188,12 @@ router.patch('/:id/items/:itemId', (req: AuthenticatedRequest, res) => {
     db.prepare(`UPDATE report_items SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`).run(...params);
     db.prepare("UPDATE monthly_reports SET updated_at = datetime('now', '+8 hours') WHERE id = ?").run(reportId);
 
+    // 记录变更事件
+    recordChangeEvent('report', reportId, ['updated'], 2, req.userId!);
+
     res.json({ item: mapItem(db.prepare('SELECT * FROM report_items WHERE id = ?').get(itemId) as ReportItemRow | undefined) });
   } catch (error: any) {
-    res.status(500).json({ error: '更新明细失败', message: error.message });
+    respondInternalError(res, error, '更新明细失败');
   }
 });
 
@@ -856,9 +1211,13 @@ router.delete('/:id/items/:itemId', (req: AuthenticatedRequest, res) => {
       .run(itemId, reportId, userId).changes;
     if (!changes) return res.status(404).json({ error: '明细不存在' });
     db.prepare("UPDATE monthly_reports SET updated_at = datetime('now', '+8 hours') WHERE id = ?").run(reportId);
+
+    // 记录变更事件
+    recordChangeEvent('report', reportId, ['updated'], 2, req.userId!);
+
     res.json({ deleted: changes });
   } catch (error: any) {
-    res.status(500).json({ error: '删除明细失败', message: error.message });
+    respondInternalError(res, error, '删除明细失败');
   }
 });
 
@@ -878,9 +1237,15 @@ router.delete('/:id', (req: AuthenticatedRequest, res) => {
       const reports = deleteReport.run(id, userId).changes;
       return { reports, items };
     })();
+
+    // 记录变更事件
+    if (removed.reports > 0) {
+      recordChangeEvent('report', id, ['deleted'], 2, req.userId!);
+    }
+
     res.json({ deleted: removed.reports, itemsDeleted: removed.items });
   } catch (error: any) {
-    res.status(500).json({ error: '删除失败', message: error.message });
+    respondInternalError(res, error, '删除失败');
   }
 });
 

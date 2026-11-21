@@ -15,6 +15,8 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { parseImages } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
 import { z } from 'zod';
+import { getStudentProfileForGeneration } from '../services/ai/studentProfile.js';
+import { generateAndSaveLessonPlan, type LessonPlanRecord } from '../services/ai/lessonPlanner.js';
 
 /**
  * 月度总结 / 课程规划的 AI 编写。
@@ -74,6 +76,17 @@ const reportAiSchema = z.object({
   // 设置页里给家长的称呼；不传就按学生姓名推导
   nickname: z.string().max(20).optional(),
 });
+
+const reportLessonPlanSchema = z.object({
+  studentIds: z.array(z.number().int().positive()).min(1).max(20)
+    .transform((ids) => [...new Set(ids)])
+    .optional(),
+  courseId: z.number().int().positive().optional(),
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+  durationMinutes: z.number().int().min(15).max(240).optional(),
+  weekCount: z.number().int().min(1).max(8).optional(),
+  requirements: z.string().trim().max(2000).optional(),
+}).strict();
 
 router.post('/:id/ai/stream', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
   const id = Number(req.params.id);
@@ -184,6 +197,9 @@ router.post('/:id/ai/stream', asyncHandler(async (req: AuthenticatedRequest, res
     prevSummary: field === 'summary' ? String(prevRow?.summary_intro || '') : undefined,
     recentSummaries: recentRows.map((r) => ({ yearMonth: String(r.year_month || ''), text: String(r.summary_intro || '') })),
     // ③ 观察记录素材：当月听评课记录，供总结/规划参考课堂细节
+    studentProfile: report.student_id
+      ? getStudentProfileForGeneration(userId, report.student_id) ?? undefined
+      : undefined,
     observations: observations.map(o => ({
       topic: o.topic,
       classNotes: o.class_notes,
@@ -195,7 +211,8 @@ router.post('/:id/ai/stream', asyncHandler(async (req: AuthenticatedRequest, res
     })),
   };
 
-  const sse = openSse(req, res);
+  const streamId = `report-${req.userId!}-${req.params.id}-${field}`;
+  const sse = openSse(req, res, streamId);
   const { send } = sse;
 
   /** 距离字数区间的距离（用于两版都不达标时择优） */
@@ -263,6 +280,63 @@ router.post('/:id/ai/stream', asyncHandler(async (req: AuthenticatedRequest, res
   } finally {
     sse.end();
   }
+}));
+
+interface LessonGenerationFailure {
+  studentId: number;
+  message: string;
+}
+
+/**
+ * 从一份月报批量备课。month 默认就是报告的 year_month（不是下一月），
+ * 响应只通过 sourceReportId 表示来源，不向 lesson_plans 伪造 report_id。
+ */
+router.post('/:id/generate-lesson-plans', asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: '非法的报告 id' });
+
+  const parsed = reportLessonPlanSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: '参数校验失败', details: parsed.error.issues });
+  }
+
+  const userId = req.userId!;
+  const report = db.prepare('SELECT id, student_id, year_month FROM monthly_reports WHERE id = ? AND user_id = ?')
+    .get(id, userId) as { id: number; student_id: number; year_month: string } | undefined;
+  if (!report) return res.status(404).json({ error: '报告不存在或不属于当前账号' });
+
+  const studentIds = parsed.data.studentIds ?? [report.student_id];
+  const findStudent = db.prepare('SELECT id FROM students WHERE id = ? AND user_id = ?');
+  // 所有归属检查必须先于任何 AI 调用，避免部分生成后才因越权中断。
+  for (const studentId of studentIds) {
+    if (!findStudent.get(studentId, userId)) {
+      return res.status(404).json({ error: '学生不存在或不属于当前账号', studentId });
+    }
+  }
+
+  const month = parsed.data.month ?? report.year_month;
+  const plans: LessonPlanRecord[] = [];
+  const failures: LessonGenerationFailure[] = [];
+  for (const studentId of studentIds) {
+    try {
+      // 顺序执行，避免一次月报批量请求同时打满 AI 并发。
+      const plan = await generateAndSaveLessonPlan(userId, {
+        studentId,
+        courseId: parsed.data.courseId,
+        month,
+        durationMinutes: parsed.data.durationMinutes,
+        weekCount: parsed.data.weekCount,
+        requirements: parsed.data.requirements,
+      });
+      plans.push(plan);
+    } catch (error: any) {
+      failures.push({ studentId, message: String(error?.message || '教案生成失败') });
+    }
+  }
+
+  const body = { plans, failures, sourceReportId: report.id, month };
+  if (!plans.length) return res.status(502).json({ ...body, error: '所有学生的教案均生成失败' });
+  return res.status(201).json(body);
 }));
 
 export default router;

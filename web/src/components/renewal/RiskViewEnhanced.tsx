@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Search, Filter, Download, Users, TrendingDown, Award, Target } from 'lucide-react';
+import { AlertTriangle, Search, Award } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
-import { count, money, NOT_AVAILABLE_YET, pct, type RiskStudentRow } from '../../lib/renewal';
+import { count, NOT_AVAILABLE_YET } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
-import Sparkline from './Sparkline';
 
 /** 风险学生增强视图所需字段（在 RenewalDashboard 中由基础数据转换而来） */
 interface RiskStudentEnhanced {

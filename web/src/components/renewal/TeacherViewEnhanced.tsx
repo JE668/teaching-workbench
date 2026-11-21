@@ -1,10 +1,9 @@
-import React, { useState, useMemo } from 'react';
-import { ChevronDown, Users, TrendingUp, Target, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ChevronDown, Users, TrendingUp, Target, AlertCircle } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
 import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, GRID_STATUS_META, type TeacherStatRow, type MentorMatrix, type TeacherGradeMatrix, type GroupGradeMatrix, type RateOverview, type MentorMatrixCell, type TeacherGradeMatrixCell, type GroupGradeMatrixCell, type GridStatus } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
-import Sparkline from './Sparkline';
 import StudentGrid from './StudentGrid';
 import Modal from '../../components/ui/Modal';
 
@@ -87,23 +86,6 @@ function textColorForHex(hex: string): string {
   const b = parseInt(hex.slice(5, 7), 16);
   const yiq = (r * 299 + g * 587 + b * 114) / 1000;
   return yiq >= 128 ? '#1e293b' : '#f8fafc';
-}
-
-function renderLegendDot(status: GridStatus): React.ReactNode {
-  const meta = GRID_STATUS_META[status];
-  return (
-    <span
-      className="inline-flex items-center gap-1.5"
-      style={{ color: textColorForHex(meta.hex) }}
-    >
-      <span
-        className="w-2.5 h-2.5 rounded-full ring-1 ring-slate-300"
-        style={{ backgroundColor: meta.hex }}
-        aria-hidden="true"
-      />
-      <span className="text-xs font-medium">{meta.label}</span>
-    </span>
-  );
 }
 
 function TeacherRow({
@@ -276,7 +258,6 @@ export default function TeacherViewEnhanced({
 
   const cols = useMemo(() => tabColumns(tab), [tab]);
   const maxRenewed = rows.reduce((m, r) => Math.max(m, r.renewedCount || 0), 0);
-  const maxBase = rows.reduce((m, r) => Math.max(m, r.baseCount || 0), 0);
   const gapPositive = rows.filter(r => (r.incentiveGap || 0) > 0).sort((a, b) => (b.incentiveGap || 0) - (a.incentiveGap || 0));
   const maxGap = gapPositive.reduce((m, r) => Math.max(m, r.incentiveGap || 0), 0);
 
@@ -341,26 +322,45 @@ export default function TeacherViewEnhanced({
           icon={<Users className="h-5 w-5" />}
           action={
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">矩阵视图：</span>
-                <div className="flex rounded-lg bg-slate-100 p-1" role="radiogroup" aria-label="矩阵维度切换">
-                  {(['mentor', 'grade', 'group'] as const).map(view => (
+              <div className="flex items-center gap-4">
+                <div role="tablist" aria-label="统计表 tab" className="flex gap-1">
+                  {TAB_ORDER.map(t => (
                     <button
-                      key={view}
+                      key={t}
                       type="button"
-                      role="radio"
-                      aria-checked={matrixView === view}
-                      onClick={() => setMatrixView(view)}
+                      role="tab"
+                      aria-selected={tab === t}
+                      onClick={() => setTab(t)}
                       className={cn(
-                        'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                        matrixView === view
-                          ? 'bg-white text-brand-600 shadow-sm'
-                          : 'text-slate-600 hover:text-slate-800',
+                        'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                        tab === t ? 'bg-brand-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
                       )}
                     >
-                      {view === 'mentor' ? '教师×学管' : view === 'grade' ? '教师×年级' : '科组×年级'}
+                      {TAB_LABELS[t] || t}
                     </button>
                   ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">矩阵视图：</span>
+                  <div className="flex rounded-lg bg-slate-100 p-1" role="radiogroup" aria-label="矩阵维度切换">
+                    {(['mentor', 'grade', 'group'] as const).map(view => (
+                      <button
+                        key={view}
+                        type="button"
+                        role="radio"
+                        aria-checked={matrixView === view}
+                        onClick={() => setMatrixView(view)}
+                        className={cn(
+                          'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                          matrixView === view
+                            ? 'bg-white text-brand-600 shadow-sm'
+                            : 'text-slate-600 hover:text-slate-800',
+                        )}
+                      >
+                        {view === 'mentor' ? '教师×学管' : view === 'grade' ? '教师×年级' : '科组×年级'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <MatrixLegend />

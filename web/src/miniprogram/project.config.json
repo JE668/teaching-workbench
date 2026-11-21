@@ -1,0 +1,26 @@
+{
+  "description": "教学服务工作台家长视图小程序",
+  "compileType": "miniprogram",
+  "libVersion": "3.5.5",
+  "appid": "touristappid",
+  "projectname": "teaching-workbench-parent",
+  "miniprogramRoot": "./",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": false
+  },
+  "condition": {
+    "miniprogram": {
+      "list": [
+        {
+          "name": "家长视图（替换真实 token）",
+          "pathName": "pages/parent-view/parent-view",
+          "query": "token=replace-with-real-token"
+        }
+      ]
+    }
+  }
+}

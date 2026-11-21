@@ -5,7 +5,6 @@ import fs from 'fs';
 import { AuthenticatedRequest } from '../types/index.js';
 import { log } from '../utils/logger.js';
 import { rateLimit } from '../middleware/rateLimit.js';
-import { authMiddleware } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { renewalDb, RENEWAL_UPLOAD_DIR } from './db.js';
 import {

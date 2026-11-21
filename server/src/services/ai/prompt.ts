@@ -1,6 +1,8 @@
 import type { FollowUpModule } from '../../types/index.js';
 import { MODULE_GUIDANCE } from '../../shared/promptTemplates.js';
 import { getSetting } from '../../config/settings.js';
+import type { StudentProfilePromptData } from './studentProfileContext.js';
+import { formatStudentProfileForPrompt } from './studentProfileContext.js';
 
 // ========== 常量 ==========
 
@@ -21,6 +23,8 @@ export interface FollowUpGenerateParams {
   nickname?: string;
   images: string[];
   history?: FollowUpHistoryItem[];
+  /** 长期画像仅作参考；小组课不注入个人画像。 */
+  studentProfile?: StudentProfilePromptData;
 }
 
 export interface FollowUpHistoryItem {
@@ -303,10 +307,360 @@ export function buildPrompt(params: FollowUpGenerateParams, correction?: string,
     allRules.forEach((r, i) => lines.push(String(i + 1) + '. ' + r));
   }
 
+  const profileContext = !isGroup ? formatStudentProfileForPrompt(params.studentProfile) : '';
+  if (profileContext) lines.push('', profileContext);
+
   // 字数纠偏：追加为一条指令
   if (correction && correction.trim()) {
     lines.push('# 字数纠偏指令', correction.trim());
   }
 
   return lines.join('\n');
+}
+
+// ========== 结构化输出：JSON Schema + 5 板块独立字段 ==========
+
+/** 结构化回访输出的 5 个标准板块 */
+export const STRUCTURED_BLOCKS = [
+  { key: 'knowledge_gain', label: '学生收获', description: '结合本次课内容，具体写掌握了什么、还有哪里跟不上，能写出哪怕一道题的细节。' },
+  { key: 'class_performance', label: '课堂表现', description: '描述课堂上的专注度、互动情况、解题过程、答题状态等具体表现。' },
+  { key: 'homework_assign', label: '作业布置', description: '针对上面提到的薄弱点或卡点，安排配套练习。写明做什么、大概花多久。' },
+  { key: 'next_plan', label: '下步计划', description: '基于本次课掌握情况，规划下一步教学重点、进度、专项强化方向。' },
+  { key: 'teacher_remark', label: '教师评价', description: '教师的综合鼓励、建议、对家长的配合提醒等整体性话术。' },
+] as const;
+
+export type StructuredBlockKey = typeof STRUCTURED_BLOCKS[number]['key'];
+
+/** JSON Schema for structured followup output */
+export const STRUCTURED_FOLLOWUP_SCHEMA = {
+  type: 'object',
+  properties: {
+    knowledge_gain: { type: 'string', description: '学生收获/掌握情况，约 50-65 字' },
+    class_performance: { type: 'string', description: '课堂表现/互动情况，约 40-55 字' },
+    homework_assign: { type: 'string', description: '作业布置/完成要求，约 35-50 字' },
+    next_plan: { type: 'string', description: '下步教学计划/重点，约 35-50 字' },
+    teacher_remark: { type: 'string', description: '教师综合评价/建议，约 30-45 字' },
+  },
+  required: ['knowledge_gain', 'class_performance', 'homework_assign', 'next_plan', 'teacher_remark'],
+  additionalProperties: false,
+} as const;
+
+/** 结构化输出的响应格式配置（用于 OpenAI response_format） */
+export const STRUCTURED_RESPONSE_FORMAT = {
+  type: 'json_schema' as const,
+  json_schema: {
+    name: 'structured_followup',
+    strict: true,
+    schema: STRUCTURED_FOLLOWUP_SCHEMA,
+  },
+};
+
+/** 构建结构化输出的 system prompt（引导模型输出 5 个独立字段的 JSON） */
+export function buildStructuredPrompt(params: FollowUpGenerateParams, correction?: string, userId?: number): string {
+  const isGroup = params.courseType === 'group';
+
+  const sessionCount = Math.min(3, Math.max(1, parseInt(String(params.sessionCount ?? 1), 10) || 1));
+  const multi = sessionCount > 1;
+  const scope = multi ? '最近 ' + sessionCount + ' 次课' : '本次课';
+
+  const nickname = params.nickname || (params.studentName ? params.studentName.slice(-2) : '学生');
+  const call = isGroup ? '孩子们' : (nickname || '学生');
+
+  const grade = params.grade || '';
+  const subject = params.subject || '';
+  const topic = params.topic || '';
+
+  // 历史回访（去重 + 轮转，最多 3 条）
+  const historyPool = !isGroup && params.history ? (params.history || []).filter((h) => (h.content || '').trim()) : [];
+  const history = historyPool.slice(0, 3);
+
+  const wordRange = followUpWordRangeForParams(params);
+  const totalMin = wordRange.min;
+  const totalMax = wordRange.max;
+  // 5 个板块的字数分配（近似）
+  const perBlockRange = {
+    knowledge_gain: { min: 45, max: 70 },
+    class_performance: { min: 35, max: 55 },
+    homework_assign: { min: 30, max: 50 },
+    next_plan: { min: 30, max: 50 },
+    teacher_remark: { min: 25, max: 45 },
+  };
+
+  const lines: string[] = [];
+
+  lines.push(
+    '# Role',
+    '你是一位专业的 1 对 1 教育咨询师，擅长撰写结构化的课后回访反馈。',
+    '输出必须是严格的 JSON，包含 5 个固定字段：knowledge_gain、class_performance、homework_assign、next_plan、teacher_remark。',
+    '',
+    '# 学生与本次课程信息',
+    '学生称呼：' + call,
+    '年级：' + grade,
+    '学科：' + subject,
+    '课程主题：' + topic,
+    '课堂表现（老师原文）：' + (params.performance || '（未提供）'),
+    '掌握程度（老师原文）：' + (params.mastery || '（未提供）'),
+    '课次数：' + (params.sessionCount || 1) + ' 节',
+    '课程类型：' + (isGroup ? '小组课' : '1 对 1'),
+    multi
+      ? '- 本次回访**涵盖' + scope + '**，请把这几次课作为一个阶段来整体反馈，体现内容的递进关系与学生的阶段性变化，而不是逐次罗列流水账。'
+      : '',
+    '- 涵盖课次：' + (multi ? scope : '本次课'),
+    // 称呼
+    !isGroup && nickname
+      ? '- 对学生的称呼：' + nickname + '（行文中请用这个亲切的称呼，不要反复使用全名「' + (params.studentName || '学生') + '」）'
+      : !isGroup && params.studentName
+        ? '- 学生姓名：' + params.studentName
+        : '',
+    // 历史上下文
+    history.length === 0
+      ? '（该学生暂无历史回访，直接依据本次信息撰写）'
+      : [
+          '# 历史回访（若有，用于避免重复、体现进步轨迹）',
+          '下面是这个孩子最近几次回访已经写给家长的内容。你只负责本次课，因此：',
+          '- 【不要】复述下面已有的内容，也不要重复相同的句子、句式或细节',
+          '- 如果本次课在某个方面确有进展或改善，【可以】用一句话呼应它（例如"上次提到的漏乘分子问题这次已经掌握"），但必须落到本次课信息里真实发生的事',
+          '- 历史记录里出现但本次课信息里没有再次出现的具体题目、数字、细节，一律不要写',
+          '',
+          ...history.map(
+            (h) => '【' + h.when + (h.topic ? ' · ' + h.topic : '') + '】\n' + h.content.trim()
+          ),
+        ].join('\n'),
+    '',
+    '# 关于课堂照片（务必注意）',
+    (params.images?.length ?? 0) > 0
+      ? '你会看到课堂照片。照片是给老师看的，**家长看不到这些照片** —— ' +
+        '因此【严禁】出现"图中""图片中""如图所示""照片里""图中的题目"这类指代图片的字眼。' +
+        '需要传达的信息，请直接用文字描述出来（例如写"第 3 题漏乘了分子"，而不要写"图中第 3 题"）。'
+      : '（本次没有课堂照片，直接依据文字信息撰写即可。）',
+    '',
+    '# 语气与表情',
+    '语气亲切自然，像老师和家长聊天，可以适度使用 emoji 让表达更温暖（如 ✨📚💪🌟👍），全文用 2-4 个即可，放在句子或段落末尾；不要每句都加，不要堆砌，也不要使用与学习场景无关的表情。',
+    '',
+    '# 硬性要求',
+    '1. 全文总字数必须控制在 ' + totalMin + '-' + totalMax + ' 字之间（中文字符计，不含标点与空白）',
+    '2. 各字段字数建议范围：' +
+      'knowledge_gain ' + perBlockRange.knowledge_gain.min + '-' + perBlockRange.knowledge_gain.max + ' 字，' +
+      'class_performance ' + perBlockRange.class_performance.min + '-' + perBlockRange.class_performance.max + ' 字，' +
+      'homework_assign ' + perBlockRange.homework_assign.min + '-' + perBlockRange.homework_assign.max + ' 字，' +
+      'next_plan ' + perBlockRange.next_plan.min + '-' + perBlockRange.next_plan.max + ' 字，' +
+      'teacher_remark ' + perBlockRange.teacher_remark.min + '-' + perBlockRange.teacher_remark.max + ' 字',
+    '3. 语气专业、温和、以鼓励为主',
+    '4. 通俗易懂：用家长日常能听懂的话写，不用学科术语和教研行话；确需保留的术语（如"通分""异分母"）紧跟一句大白话解释',
+    '5. 真实：只写老师提供的课堂情况里出现的事实，严禁编造分数、排名、成绩、未布置的作业或未发生的事',
+    '6. 个性化：每一句都要具体到这节课和这个学生，换成别人就不成立的写法；禁止"表现良好""继续努力""认真听讲"这类能套用到任何学生的空话',
+    '7. 无错误：不出现错别字，句子读起来通顺，标点使用正确',
+    '8. 全程使用中文',
+    '9. 输出严格的 JSON，包含且仅包含 5 个字段：knowledge_gain、class_performance、homework_assign、next_plan、teacher_remark',
+    '10. 【严禁】出现"图中""图片中""如图所示""照片里"这类指代图片的字眼',
+    isGroup
+      ? '11. 【严禁】出现任何学生姓名、昵称，一律使用"孩子们""同学们"等通用称呼'
+      : '11. 行文使用亲切称呼，不要反复使用学生全名',
+  );
+
+  // 小组课最高优先级要求
+  if (isGroup) {
+    lines.push(
+      '',
+      '# ⚠️ 小组课最高优先级要求',
+      '这段内容会由老师**分别私发给多位家长**，请务必遵守：',
+      '- 【严禁】出现任何学生姓名、昵称、小名，也不要写"某某同学""XX 同学"',
+      '- 【严禁】描述只有某个孩子才有的个性化细节（如"某某做错了第 3 题"）',
+      '- 统一使用「孩子们」「同学们」「孩子」这类通用称呼',
+      '- 内容写成对全班都适用的通用反馈，让每位家长读起来都自然贴切',
+      ''
+    );
+  }
+
+  // 老师自定义风格
+  const styleHint = userId ? getSetting('ai.prompt.style', userId).trim() : '';
+  if (styleHint) {
+    lines.push('# 风格偏好（老师自定义，优先遵循)', styleHint, '');
+  }
+
+  const profileContext = !isGroup ? formatStudentProfileForPrompt(params.studentProfile) : '';
+  if (profileContext) lines.push('', profileContext);
+
+  // 字数纠偏指令
+  if (correction && correction.trim()) {
+    lines.push('# 字数纠偏指令', correction.trim());
+  }
+
+  return lines.join('\n');
+}
+
+/** 将结构化 JSON 结果转换为兼容旧格式的纯文本（用于向后兼容/显示） */
+export function structuredToText(result: Record<StructuredBlockKey, string>): string {
+  const blocks = STRUCTURED_BLOCKS.map(b => '【' + b.label + '】\n' + (result[b.key] || '').trim()).filter(b => b.includes('】') && b.split('】')[1].trim());
+  return blocks.join('\n\n');
+}
+
+// ========== 多模态融合：图片直传 + 观察结构化输出 ==========
+
+/** 多模态观察输出的结构 */
+export interface MultimodalObservation {
+  type: 'question_type' | 'mistake' | 'teacher_mark' | 'handwriting' | 'key_info' | 'other';
+  detail: string;
+  evidence_image_index: number;
+}
+
+export interface MultimodalObservationsResult {
+  observations: MultimodalObservation[];
+}
+
+/** JSON Schema for multimodal observations output */
+export const MULTIMODAL_OBSERVATIONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    observations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['question_type', 'mistake', 'teacher_mark', 'handwriting', 'key_info', 'other'] },
+          detail: { type: 'string' },
+          evidence_image_index: { type: 'integer', minimum: 0 },
+        },
+        required: ['type', 'detail', 'evidence_image_index'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['observations'],
+  additionalProperties: false,
+} as const;
+
+/** 多模态观察输出的响应格式配置 */
+export const MULTIMODAL_RESPONSE_FORMAT = {
+  type: 'json_schema' as const,
+  json_schema: {
+    name: 'multimodal_observations',
+    strict: true,
+    schema: MULTIMODAL_OBSERVATIONS_SCHEMA,
+  },
+};
+
+/** 构建多模态观察提示词：引导模型输出结构化观察 JSON */
+export function buildMultimodalPrompt(params: FollowUpGenerateParams): string {
+  const isGroup = params.courseType === 'group';
+
+  const nickname = params.nickname || (params.studentName ? params.studentName.slice(-2) : '学生');
+  const call = isGroup ? '孩子们' : (nickname || '学生');
+
+  const grade = params.grade || '';
+  const subject = params.subject || '';
+  const topic = params.topic || '';
+
+  const imageCount = params.images?.length ?? 0;
+
+  const lines: string[] = [];
+
+  lines.push(
+    '# Role',
+    '你是一位专业的 1 对 1 教育咨询师。请先仔细观察所有上传图片，识别关键教学信息。',
+    '输出必须是严格的 JSON，包含 observations 数组。',
+    '',
+    '# 学生与本次课程信息',
+    '学生称呼：' + call,
+    '年级：' + grade,
+    '学科：' + subject,
+    '课程主题：' + topic,
+    '课堂表现（老师原文）：' + (params.performance || '（未提供）'),
+    '掌握程度（老师原文）：' + (params.mastery || '（未提供）'),
+    '课次数：' + (params.sessionCount || 1) + ' 节',
+    '课程类型：' + (isGroup ? '小组课' : '1 对 1'),
+    '上传图片数量：' + imageCount + ' 张',
+    '',
+    '# 观察任务',
+    '请仔细观察每一张图片，识别以下 5 类信息，每类可产出多条观察：',
+    '1. question_type：题目类型（计算/应用题/阅读/写作/实验/几何/函数等）',
+    '2. mistake：学生的出错位置与错因（概念/计算/审题/粗心/格式）',
+    '3. teacher_mark：老师批改痕迹（红笔标记/打分/评语/圈画）',
+    '4. handwriting：书写/卷面规范（工整/潦草/步骤清晰/格式规范）',
+    '5. key_info：板书/笔记/草稿纸/教材页的关键信息（公式/定理/重点标记）',
+    '',
+    '# 输出格式（严格 JSON）',
+    '{\n  "observations": [\n    {"type": "question_type", "detail": "第3题为分数应用题，涉及通分、单位换算", "evidence_image_index": 0},\n    {"type": "mistake", "detail": "通分时漏乘分子，导致结果错误", "evidence_image_index": 0},\n    {"type": "teacher_mark", "detail": "红笔圈出第3步，写 标记 -2分", "evidence_image_index": 0},\n    {"type": "handwriting", "detail": "书写工整，步骤清晰", "evidence_image_index": 1}\n  ]\n}',
+    '',
+    '# 硬性要求',
+    '1. 输出严格的 JSON，包含且仅包含 observations 字段',
+    '2. evidence_image_index 必须是 0 到 ' + (imageCount - 1) + ' 之间的整数，对应上传图片的顺序',
+    '3. detail 必须具体、可验证，禁止泛泛而谈（如"有进步""表现良好"）',
+    '4. 只写实际观察到的内容，不要凭空编造图片里没有的细节',
+    '5. 如果图片模糊、关联度低或无法辨识，该图片可不产出观察，但不要编造',
+    '6. 全程使用中文',
+    '7. 不要任何前言、总结或额外说明，直接输出 JSON',
+  );
+
+  // 小组课最高优先级要求
+  if (isGroup) {
+    lines.push(
+      '',
+      '# ⚠️ 小组课最高优先级要求',
+      '这段内容会由老师**分别私发给多位家长**，请务必遵守：',
+      '- 【严禁】出现任何学生姓名、昵称、小名，也不要写"某某同学""XX 同学"',
+      '- 【严禁】描述只有某个孩子才有的个性化细节（如"某某做错了第 3 题"）',
+      '- 统一使用「孩子们」「同学们」「孩子」这类通用称呼',
+      '- 内容写成对全班都适用的通用反馈，让每位家长读起来都自然贴切',
+      ''
+    );
+  }
+
+  return lines.join('\n');
+}
+
+/** 解析并校验多模态观察输出 */
+export function parseMultimodalObservations(text: string): MultimodalObservationsResult | null {
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed.observations || !Array.isArray(parsed.observations)) {
+      return null;
+    }
+    for (const obs of parsed.observations) {
+      if (!obs.type || !obs.detail || typeof obs.evidence_image_index !== 'number') {
+        return null;
+      }
+      const validTypes = ['question_type', 'mistake', 'teacher_mark', 'handwriting', 'key_info', 'other'];
+      if (!validTypes.includes(obs.type)) {
+        return null;
+      }
+    }
+    return parsed as MultimodalObservationsResult;
+  } catch {
+    return null;
+  }
+}
+
+/** 将多模态观察结果转换为可读文本（用于嵌入回访生成上下文） */
+export function multimodalObservationsToText(result: MultimodalObservationsResult): string {
+  if (!result.observations || result.observations.length === 0) {
+    return '（未从图片中识别出有效观察）';
+  }
+  const typeLabels: Record<MultimodalObservation['type'], string> = {
+    question_type: '题目类型',
+    mistake: '错因分析',
+    teacher_mark: '教师批改',
+    handwriting: '书写规范',
+    key_info: '关键信息',
+    other: '其他观察',
+  };
+  return result.observations
+    .map((obs) => '【' + typeLabels[obs.type] + '】图片' + (obs.evidence_image_index + 1) + '：' + obs.detail)
+    .join('\n');
+}
+
+/** 解析并校验结构化输出 */
+export function parseStructuredOutput(text: string): Record<StructuredBlockKey, string> | null {
+  try {
+    const parsed = JSON.parse(text);
+    // 校验必填字段
+    for (const block of STRUCTURED_BLOCKS) {
+      if (!parsed[block.key] || typeof parsed[block.key] !== 'string') {
+        return null;
+      }
+    }
+    return parsed as Record<StructuredBlockKey, string>;
+  } catch {
+    return null;
+  }
 }

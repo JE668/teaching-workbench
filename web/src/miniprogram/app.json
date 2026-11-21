@@ -1,0 +1,12 @@
+{
+  "pages": [
+    "pages/parent-view/parent-view"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#3157c8",
+    "navigationBarTitleText": "学习反馈",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f4f7fb",
+    "backgroundTextStyle": "dark"
+  }
+}

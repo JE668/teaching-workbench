@@ -4,6 +4,8 @@ import { monthLabel, nextYearMonth } from '../utils/reportMonth.js';
 import { SUMMARY_SECTION_TITLES, PLAN_SECTION_TITLES, SUMMARY_WORD_RANGE, planWordRange } from '../shared/reportTemplate.js';
 import { COMMON_RULES } from '../shared/promptTemplates.js';
 import { recordAiMetrics } from './aiMetrics.js';
+import type { StudentProfilePromptData } from './ai/studentProfileContext.js';
+import { formatStudentProfileForPrompt } from './ai/studentProfileContext.js';
 
 /**
  * 月度总结与课程规划的 AI 编写。
@@ -66,6 +68,8 @@ export interface ReportAiParams {
    * ③ 观察记录素材：当月听评课记录，供总结/规划参考课堂细节
    * 老师不需要重复回忆，AI 直接用观察记录里的 class_notes / report 写总结
    */
+  /** 长期画像仅作参考，不得替代本月课程、回访与听评课事实。 */
+  studentProfile?: StudentProfilePromptData;
   observations?: {
     topic: string;
     classNotes: string;
@@ -270,6 +274,7 @@ export function buildReportSummaryMessages(p: ReportAiParams): ChatMessage[] {
     '',
     ...prevSummarySection(p.prevSummary),
     ...recentSummariesSection(p.recentSummaries),
+    ...(formatStudentProfileForPrompt(p.studentProfile) ? ['', formatStudentProfileForPrompt(p.studentProfile)] : []),
     '# 硬性要求',
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格。emoji 只用在段落开头的小标题上。',
     ...COMMON_RULES,
@@ -340,6 +345,7 @@ export function buildReportPlanMessages(p: ReportAiParams): ChatMessage[] {
       followUpImages.map((img, i) => `${i + 1}. ${img}`).join('\n'),
       '',
     ].join('\n') : '',
+    ...(formatStudentProfileForPrompt(p.studentProfile) ? [formatStudentProfileForPrompt(p.studentProfile), ''] : []),
     '# 硬性要求',
     '1. 全程中文，纯文本。**禁止**任何 Markdown 标记（#、*、-、>、反引号）、代码块、表格，也**不要用 emoji**。',
     '2. 必须针对上月「不足/建议」给出本月的具体教学安排，不能只罗列课程名称。',
