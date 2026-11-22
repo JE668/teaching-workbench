@@ -166,4 +166,54 @@ test.describe('看板业务表达浏览器验收', () => {
     await page.screenshot({ path: testInfo.outputPath('teaching-review-business.png'), fullPage: true });
     expect(errors).toEqual([]);
   });
+
+  test('AI 指标看板三个视图都只显示课后回访业务名称', async ({ page }, testInfo) => {
+    await loginAsNewUser(page, username('aimetrics'));
+    await page.route('**/api/ai-metrics/**', async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      let body: unknown;
+      if (path.endsWith('/summary')) {
+        body = { summary: [
+          { group: 'followup_stream', calls: 8, success_count: 8, error_count: 0, retry_count: 1, avg_latency_ms: 1200, min_latency_ms: 900, max_latency_ms: 1500, total_tokens: 8000, prompt_tokens: 5000, completion_tokens: 3000, avg_word_count: 420, last_call: '2026-11-22T10:00:00', successRate: 100, errorRate: 0, retryRate: 12.5 },
+          { group: 'followup_once', calls: 4, success_count: 3, error_count: 1, retry_count: 0, avg_latency_ms: 1800, min_latency_ms: 1300, max_latency_ms: 2300, total_tokens: 4000, prompt_tokens: 2500, completion_tokens: 1500, avg_word_count: 460, last_call: '2026-11-22T11:00:00', successRate: 75, errorRate: 25, retryRate: 0 },
+        ] };
+      } else if (path.endsWith('/timeseries')) {
+        body = { data: [] };
+      } else if (path.endsWith('/endpoints')) {
+        body = { endpoints: [
+          { endpoint: 'followup_stream', calls: 8, successRate: 100, errorRate: 0, avgLatencyMs: 1200, totalTokens: 8000, promptTokens: 5000, completionTokens: 3000, avgWordCount: 420, lastCall: '2026-11-22T10:00:00' },
+          { endpoint: 'followup_once', calls: 4, successRate: 75, errorRate: 25, avgLatencyMs: 1800, totalTokens: 4000, promptTokens: 2500, completionTokens: 1500, avgWordCount: 460, lastCall: '2026-11-22T11:00:00' },
+        ] };
+      } else if (path.endsWith('/errors')) {
+        body = { errors: [
+          { provider: 'fixture', model: 'model-a', endpoint: 'followup_stream', error_message: 'fixture stream error', retry_count: 1, latency_ms: 1200, created_at: '2026-11-22T10:00:00' },
+          { provider: 'fixture', model: 'model-b', endpoint: 'followup_once', error_message: 'fixture once error', retry_count: 0, latency_ms: 1800, created_at: '2026-11-22T11:00:00' },
+        ] };
+      } else {
+        await route.fulfill({ status: 404, json: { error: 'unexpected browser mock: ' + path } });
+        return;
+      }
+      await route.fulfill({ json: body });
+    });
+    const errors: string[] = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto('/ai-metrics');
+
+    await expect(page.getByText('课后回访（逐段生成）', { exact: true })).toBeVisible();
+    await expect(page.getByText('课后回访（整篇生成）', { exact: true })).toBeVisible();
+    await expect(page.locator('main').getByText(/followup_(stream|once)/)).toHaveCount(0);
+
+    await page.getByRole('button', { name: '业务对比', exact: true }).click();
+    await expect(page.getByText('边生成边展示回访内容', { exact: true })).toBeVisible();
+    await expect(page.getByText('生成完成后一次返回完整回访', { exact: true })).toBeVisible();
+    await expect(page.locator('main').getByText(/followup_(stream|once)/)).toHaveCount(0);
+
+    await page.getByRole('button', { name: '错误记录', exact: true }).click();
+    await expect(page.getByText('fixture stream error', { exact: true })).toBeVisible();
+    await expect(page.getByText('课后回访（逐段生成）', { exact: true })).toBeVisible();
+    await expect(page.getByText('课后回访（整篇生成）', { exact: true })).toBeVisible();
+    await expect(page.locator('main').getByText(/followup_(stream|once)/)).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('ai-metrics-business.png'), fullPage: true });
+    expect(errors).toEqual([]);
+  });
 });

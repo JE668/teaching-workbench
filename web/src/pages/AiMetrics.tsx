@@ -19,6 +19,7 @@ import { Select } from '../components/ui/Field';
 import { ListSkeleton } from '../components/ui/Skeleton';
 import { useToast } from '../components/ui/Toast';
 import { cn } from '../lib/utils';
+import { endpointPresentation } from '../lib/aiEndpoints';
 
 interface AiMetricsSummary {
   group: string;
@@ -72,7 +73,7 @@ interface AiError {
 }
 
 const GROUP_BY_OPTIONS = [
-  { value: 'endpoint', label: '按端点（如回访/总结/规划）' },
+  { value: 'endpoint', label: '按业务类型（回访/总结/规划）' },
   { value: 'provider', label: '按服务商' },
   { value: 'model', label: '按模型' },
 ];
@@ -191,11 +192,13 @@ function EndpointRow({ endpoint, stats, onClick }: {
   const callPct = stats.maxCalls ? Math.round((endpoint.calls / stats.maxCalls) * 100) : 0;
   const tokenPct = stats.maxTokens ? Math.round((endpoint.totalTokens / stats.maxTokens) * 100) : 0;
   const latencyPct = stats.maxLatency ? Math.round((endpoint.avgLatencyMs / stats.maxLatency) * 100) : 0;
+  const presentation = endpointPresentation(endpoint.endpoint);
 
   return (
     <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 cursor-pointer" onClick={onClick}>
       <td className="px-3 py-2.5">
-        <div className="font-medium text-slate-700 truncate max-w-[200px]">{endpoint.endpoint}</div>
+        <div className="font-medium text-slate-700 truncate max-w-[240px]">{presentation.label}</div>
+        <div className="text-xs text-slate-400">{presentation.description}</div>
         <div className="text-xs text-slate-400">最近：{endpoint.lastCall ? endpoint.lastCall.slice(0, 16) : '—'}</div>
       </td>
       <td className="px-3 py-2.5 text-right text-slate-600 whitespace-nowrap">
@@ -291,7 +294,7 @@ export default function AiMetrics() {
       if (seq !== reloadSeq.current) return;
       setEndpoints(res.endpoints || []);
     } catch (e: any) {
-      toast.error(e.message || '加载端点统计失败');
+      toast.error(e.message || '加载业务统计失败');
     }
   }, [days]);
 
@@ -405,7 +408,7 @@ export default function AiMetrics() {
       <div className="flex flex-wrap gap-1 bg-slate-50 rounded-xl p-1">
         {[
           { key: 'overview', label: '概览', icon: <BarChart3 size={14} /> },
-          { key: 'endpoints', label: '端点对比', icon: <Zap size={14} /> },
+          { key: 'endpoints', label: '业务对比', icon: <Zap size={14} /> },
           { key: 'timeseries', label: '趋势图', icon: <TrendingUp size={14} /> },
           { key: 'errors', label: '错误记录', icon: <AlertTriangle size={14} /> },
         ].map(t => (
@@ -473,7 +476,7 @@ export default function AiMetrics() {
               <tbody>
                 {summary.map((r, i) => (
                   <tr key={r.group} className={cn('border-b border-slate-50 last:border-0', i % 2 === 0 ? 'bg-slate-50/30' : '')}>
-                    <td className="px-3 py-2 font-medium text-slate-700 truncate max-w-[180px]">{r.group}</td>
+                    <td className="px-3 py-2 font-medium text-slate-700 truncate max-w-[240px]">{groupBy === 'endpoint' ? endpointPresentation(r.group).label : r.group}</td>
                     <td className="px-3 py-2 text-right text-slate-600">{fmtNum(r.calls)}</td>
                     <td className="px-3 py-2 text-right">
                       <Badge tone={r.successRate >= 95 ? 'success' : r.successRate >= 80 ? 'warning' : 'danger'}>
@@ -494,7 +497,7 @@ export default function AiMetrics() {
         </Card>
       ) : activeTab === 'endpoints' && endpoints.length ? (
         <Card>
-          <CardHeader title="端点对比" description="哪个端点最贵、最慢、错误最多" action={
+          <CardHeader title="业务对比" description="哪类 AI 教学服务调用最多、最慢或错误最多" action={
             <Button variant="outline" size="sm" onClick={() => setActiveTab('timeseries')}>
               <TrendingUp size={12} /> 看趋势
             </Button>
@@ -503,7 +506,7 @@ export default function AiMetrics() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                  <th className="px-3 py-2 font-medium">端点</th>
+                  <th className="px-3 py-2 font-medium">业务类型</th>
                   <th className="px-3 py-2 font-medium text-right">调用次数</th>
                   <th className="px-3 py-2 font-medium text-right">成功率 / 错误率</th>
                   <th className="px-3 py-2 font-medium text-right">平均延迟</th>
@@ -555,7 +558,7 @@ export default function AiMetrics() {
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
                   <th className="px-3 py-2 font-medium">时间</th>
-                  <th className="px-3 py-2 font-medium">端点</th>
+                  <th className="px-3 py-2 font-medium">业务类型</th>
                   <th className="px-3 py-2 font-medium">模型</th>
                   <th className="px-3 py-2 font-medium">错误信息</th>
                   <th className="px-3 py-2 font-medium text-right">重试</th>
@@ -566,7 +569,7 @@ export default function AiMetrics() {
                 {errors.map((e, i) => (
                   <tr key={e.created_at + i} className="border-b border-slate-50 last:border-0">
                     <td className="px-3 py-2 text-xs text-slate-400">{e.created_at.slice(0, 19).replace('T', ' ')}</td>
-                    <td className="px-3 py-2 font-medium text-slate-700">{e.endpoint}</td>
+                    <td className="px-3 py-2 font-medium text-slate-700">{endpointPresentation(e.endpoint).label}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">{e.provider}/{e.model}</td>
                     <td className="px-3 py-2 text-slate-600 max-w-xs truncate" title={e.error_message}>{e.error_message || '未知错误'}</td>
                     <td className="px-3 py-2 text-right text-slate-500">{e.retry_count}</td>
