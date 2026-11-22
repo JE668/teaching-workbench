@@ -186,8 +186,13 @@ function readCell(ws: ExcelJS.Worksheet, row: number, col: number): string | num
     if ('richText' in val) {
       return (val as { richText: { text: string }[] }).richText.map(r => r.text).join('');
     }
-    if ('result' in val) {
-      const r = (val as { result: unknown }).result;
+    // ExcelJS 4.4.0 的 FormulaValue.value 用真值判断复制 result，导致数值 0
+    // 和空字符串从公开 value 中消失；底层 model 仍保留 Excel 的原始缓存。
+    // 优先读公开 value，缺失时回退 model，避免把有效的 0 当成无数据。
+    if ('result' in val || cell.model.result !== undefined) {
+      const r = 'result' in val
+        ? (val as { result: unknown }).result
+        : cell.model.result;
       if (r === null || r === undefined) return null;
       if (r instanceof Date) return formatDate(r);
       return typeof r === 'number' ? r : String(r);
@@ -495,7 +500,9 @@ export function parseManagerPerf(workbook: ExcelJS.Workbook): ManagerPerfRow[] {
 
   for (let r = 5; r <= ws.rowCount; r++) {
     const name = readCell(ws, r, PERF_COLS.manager_name);
-    if (typeof name !== 'string' || name === '' || name === '合计' || name === '学习中心') continue;
+    if (typeof name !== 'string' || name === '') continue;
+    // 主表在汇总行结束；其后是同 Sheet 的年级、均单等附属统计块。
+    if (name === '合计' || name === '学习中心') break;
     const g = (field: string) => toNum(readCell(ws, r, PERF_COLS[field]!));
 
     rows.push({

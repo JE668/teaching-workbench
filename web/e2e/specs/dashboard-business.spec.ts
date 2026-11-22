@@ -23,17 +23,25 @@ async function mockRenewal(page: Page): Promise<void> {
       { name: '赵小华', status: 'prepaid', slot: 3 },
     ],
   };
+  const stageTeacher = {
+    ...teacher,
+    tab: 'stage', baseCount: 306, prepaidCount: 226, prepaidRate: 73.9,
+    renewedCount: null, renewRate: null, incentiveGap: null,
+    extra: { ...teacher.extra, enroll_nongrad: 221, prepaid_nongrad: 160, enroll_g9: 64, prepaid_g9: 55, enroll_g12: 21, prepaid_g12: 11 },
+  };
   await page.route('**/api/renewal/**', async (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const requestUrl = new URL(route.request().url());
+    const path = requestUrl.pathname;
     let body: unknown;
     if (path === '/api/renewal/reports') {
       body = { reports: [{
         reportId: 1, fileName: '2026年秋寒续费统计.xlsx', fileSize: 2403891,
         statMonth: '2026-10', centerName: '小榄龙山学习中心', rowCount: 547,
-        errorCount: 0, status: 'ok', uploadedAt: '2026-11-18 20:00:00',
+        errorCount: 0, status: 'committed', uploadedAt: '2026-11-18 20:00:00',
       }] };
     } else if (path.includes('/teacher-stats')) {
-      body = { tab: 'incentive', reportId: 1, rows: [teacher] };
+      const tab = requestUrl.searchParams.get('tab') || 'incentive';
+      body = { tab, reportId: 1, rows: [tab === 'stage' ? stageTeacher : { ...teacher, tab }] };
     } else if (path.includes('/mentor-matrix')) {
       body = { matrix: {
         teachers: ['张明'], managers: ['郑淼林'], totalStudents: 20, totalPrepaid: 8, totalRenewed: 14,
@@ -129,8 +137,13 @@ test.describe('看板业务表达浏览器验收', () => {
 
     await expect(page.getByRole('heading', { name: '续费看板', exact: true })).toBeVisible();
     await expect(page.getByText('20', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('306', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('226', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(/非毕业班 160/).first()).toBeVisible();
     await page.getByRole('tab', { name: '学段', exact: true }).click();
-    await expect(page.getByRole('img', { name: '非毕业班：在读 12 人，预存 5 人' })).toBeVisible();
+    await expect(page.getByRole('img', { name: '非毕业班：在读 221 人，预存 160 人' })).toBeVisible();
+    await expect(page.getByText('暂无续科数据', { exact: true })).toBeVisible();
+    await expect(page.getByText('当前表未提供80%目标差额数据', { exact: true })).toBeVisible();
     const stageHeader = page.getByRole('columnheader', { name: '非毕业班在读', exact: true });
     await expect(stageHeader).toBeVisible();
     await expect(stageHeader).toHaveCSS('white-space', 'nowrap');

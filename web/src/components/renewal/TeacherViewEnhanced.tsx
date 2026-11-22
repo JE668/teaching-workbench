@@ -247,10 +247,12 @@ export default function TeacherViewEnhanced({
 
   const cols = useMemo(() => tabColumns(tab), [tab]);
   const maxRenewed = rows.reduce((m, r) => Math.max(m, r.renewedCount || 0), 0);
+  const hasGapData = rows.some(r => typeof r.incentiveGap === 'number');
+  const gapLabel = tab === 'incentive' ? '激励差额' : '80%目标差额';
   const gapPositive = rows.filter(r => (r.incentiveGap || 0) > 0).sort((a, b) => (b.incentiveGap || 0) - (a.incentiveGap || 0));
   const maxGap = gapPositive.reduce((m, r) => Math.max(m, r.incentiveGap || 0), 0);
 
-  const renewalRanking: BarListRow[] = [...rows]
+  const renewalRanking: BarListRow[] = rows.filter(r => typeof r.renewedCount === 'number')
     .sort((a, b) => (b.renewedCount || 0) - (a.renewedCount || 0))
     .slice(0, 10)
     .map((r, i) => ({
@@ -742,13 +744,16 @@ export default function TeacherViewEnhanced({
             <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
               <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
                 <AlertCircle className="h-4 w-4 text-amber-500" />
-                激励差额 TOP 10
+                {gapLabel} TOP 10
               </h4>
               {gapRanking.length > 0 ? (
                 <BarList rows={gapRanking} compact />
               ) : (
-                <div className="rounded-xl bg-emerald-50/60 px-4 py-6 text-center text-sm text-emerald-700 ring-1 ring-emerald-100">
-                  所有老师都已达标，没有激励缺口
+                <div className={hasGapData
+                  ? 'rounded-xl bg-emerald-50/60 px-4 py-6 text-center text-sm text-emerald-700 ring-1 ring-emerald-100'
+                  : 'rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-400 ring-1 ring-slate-100'
+                }>
+                  {hasGapData ? `所有老师都已达标，没有${gapLabel}缺口` : `当前表未提供${gapLabel}数据`}
                 </div>
               )}
             </div>

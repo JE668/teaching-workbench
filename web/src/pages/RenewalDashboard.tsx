@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   TrendingUp,
@@ -58,6 +58,8 @@ export default function RenewalDashboard() {
   const [tab, setTab] = useState<string>('incentive');
   const [loading, setLoading] = useState(true);
   const [teacherRows, setTeacherRows] = useState<TeacherStatRow[]>([]);
+  // 总览固定使用学段表，避免切换到公式缓存为空的激励表时显示成全中心 0 人。
+  const [summaryRows, setSummaryRows] = useState<TeacherStatRow[]>([]);
   const [groupRows, setGroupRows] = useState<GroupSummaryRow[]>([]);
   const [managerRows, setManagerRows] = useState<ManagerPerfRow[]>([]);
   const [funnelRows, setFunnelRows] = useState<FunnelRow[]>([]);
@@ -69,13 +71,20 @@ export default function RenewalDashboard() {
   const [rateOverview, setRateOverview] = useState<RateOverview | null>(null);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const restRequestRef = useRef(0);
 
   async function loadReports() {
     try {
       const res = await api.get('/renewal/reports') as { reports: ReportSummary[] };
-      setReports(res.reports || []);
-      // 默认展示最新一份；切换由头部下拉框完成
-      setReportId(res.reports && res.reports[0] ? res.reports[0].reportId : null);
+      // 与后端 latestReportId 口径一致：处理中/失败批次不能成为默认看板数据。
+      const committed = (res.reports || []).filter(r => r.status === 'committed');
+      setReports(committed);
+      // 保留仍有效的当前选择；首次进入才默认最新已提交批次。
+      setReportId(current => (
+        current && committed.some(r => r.reportId === current)
+          ? current
+          : committed[0]?.reportId ?? null
+      ));
     } catch {
       toast.error('加载报表列表失败');
     }
@@ -99,6 +108,12 @@ export default function RenewalDashboard() {
         if (!cancelled) toast.error(err instanceof Error ? err.message : '加载教师统计失败');
       } finally {
         if (!cancelled) setLoading(false);
+      }
+      try {
+        const res = await api.get('/renewal/dashboard/teacher-stats?tab=stage&reportId=' + reportId);
+        if (!cancelled) setSummaryRows(((res as any).rows as TeacherStatRow[]) || []);
+      } catch {
+        if (!cancelled) setSummaryRows([]);
       }
       try {
         const res = await api.get('/renewal/analytics/group-compare?tab=' + tab + '&reportId=' + reportId);
@@ -145,13 +160,19 @@ export default function RenewalDashboard() {
   }, [reportId, tab]);
 
   const loadRest = useCallback(async () => {
-    if (!reportId) return;
+    const requestId = ++restRequestRef.current;
+    if (!reportId) {
+      setManagerRows([]); setFunnelRows([]); setRiskRows([]); setStatusRows([]);
+      return;
+    }
     const [mgr, funnel, risk, status] = await Promise.all([
       api.get('/renewal/analytics/manager-perf?reportId=' + reportId).catch(() => null),
       api.get('/renewal/analytics/funnel?reportId=' + reportId).catch(() => null),
       api.get('/renewal/analytics/risk-list?limit=500&reportId=' + reportId).catch(() => null),
       api.get('/renewal/analytics/student-status?reportId=' + reportId).catch(() => null),
     ]);
+    // 报表切换后丢弃旧请求，避免旧学管/漏斗数据覆盖新批次。
+    if (requestId !== restRequestRef.current) return;
     setManagerRows(((mgr as any)?.rows as ManagerPerfRow[]) || []);
     setFunnelRows(((funnel as any)?.rows as FunnelRow[]) || []);
     setRiskRows(((risk as any)?.rows as RiskStudentRow[]) || []);
@@ -186,7 +207,10 @@ export default function RenewalDashboard() {
     return overview;
   }, []);
 
-  useEffect(() => { loadRest(); }, [loadRest]);
+  useEffect(() => {
+    void loadRest();
+    return () => { restRequestRef.current += 1; };
+  }, [loadRest]);
 
   /** 仅汇总教师明细；保留“无此列”和真实 0 的区别。 */
   const totals = useMemo(() => {
@@ -205,6 +229,18 @@ export default function RenewalDashboard() {
       hasData: hasBase || hasRenewed || hasGap || hasPrepaid,
     };
   }, [teacherRows]);
+
+  const summaryTotals = useMemo(() => {
+    let base = 0, prepaid = 0, nonGradPrepaid = 0;
+    let hasBase = false, hasPrepaid = false, hasNonGradPrepaid = false;
+    for (const row of summaryRows) {
+      if (typeof row.baseCount === 'number') { base += row.baseCount; hasBase = true; }
+      if (typeof row.prepaidCount === 'number') { prepaid += row.prepaidCount; hasPrepaid = true; }
+      const nonGrad = row.extra?.prepaid_nongrad;
+      if (typeof nonGrad === 'number') { nonGradPrepaid += nonGrad; hasNonGradPrepaid = true; }
+    }
+    return { base, prepaid, nonGradPrepaid, hasBase, hasPrepaid, hasNonGradPrepaid };
+  }, [summaryRows]);
 
   const funnelStages = useMemo(() => {
     if (funnelRows.length === 0) return [];
@@ -298,42 +334,44 @@ export default function RenewalDashboard() {
         </div>
       </div>
 
-      {teacherRows.length > 0 && managerRows.length > 0 && (
+      {summaryRows.length > 0 && managerRows.length > 0 && (
         <ExecutiveSummary
-          teacherRows={teacherRows}
+          teacherRows={summaryRows}
           managerRows={managerRows}
           reportId={reportId}
           reports={reports}
-          currentTab={tab}
+          currentTab="stage"
         />
       )}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
           label="学生基数"
-          value={totals.hasBase ? count(totals.base) : NOT_AVAILABLE_YET}
+          value={summaryTotals.hasBase ? count(summaryTotals.base) : NOT_AVAILABLE_YET}
           tone="brand"
           icon={<Users className="h-4 w-4" />}
-          hint={totals.hasBase ? teacherRows.length + ' 位教师明细合计' : '当前表未提供该列'}
+          hint={summaryTotals.hasBase ? `学段表 · ${summaryRows.length} 位教师明细合计` : '学段表未提供该列'}
         />
         <KpiCard
           label="已续科"
           value={totals.hasRenewed ? count(totals.renewed) : '—'}
           tone="emerald"
           icon={<TrendingUp className="h-4 w-4" />}
-          progress={totals.hasRenewed && totals.base > 0 ? clampRatio(totals.renewed, totals.base) : undefined}
-          hint={totals.hasRenewed ? pct(totals.rate) + ' 整体续科率' : '当前表未提供该列'}
+          progress={totals.hasRenewed && summaryTotals.base > 0 ? clampRatio(totals.renewed, summaryTotals.base) : undefined}
+          hint={totals.hasRenewed && summaryTotals.base > 0 ? pct(totals.renewed / summaryTotals.base * 100) + ' 整体续科率' : '当前表未提供该列'}
         />
         <KpiCard
           label="已预存（总）"
-          value={totals.hasPrepaid ? count(totals.prepaid) : '—'}
+          value={summaryTotals.hasPrepaid ? count(summaryTotals.prepaid) : NOT_AVAILABLE_YET}
           tone="violet"
           icon={<Target className="h-4 w-4" />}
-          progress={totals.hasPrepaid && totals.base > 0 ? clampRatio(totals.prepaid, totals.base) : undefined}
-          hint={totals.hasPrepaid ? '含全部学段，不是单项预存' : '当前表未提供该列'}
+          progress={summaryTotals.hasPrepaid && summaryTotals.base > 0 ? clampRatio(summaryTotals.prepaid, summaryTotals.base) : undefined}
+          hint={summaryTotals.hasPrepaid
+            ? `含全部学段${summaryTotals.hasBase && summaryTotals.base > 0 ? ` · 预存率 ${pct(summaryTotals.prepaid / summaryTotals.base * 100)}` : ''}${summaryTotals.hasNonGradPrepaid ? ` · 非毕业班 ${count(summaryTotals.nonGradPrepaid)}` : ''}`
+            : '学段表未提供该列'}
         />
         <KpiCard
-          label="距80%目标差额"
+          label={tab === 'incentive' ? '激励差额' : '距80%目标差额'}
           value={totals.hasGap ? count(totals.gap) : '—'}
           tone="amber"
           icon={<AlertTriangle className="h-4 w-4" />}

@@ -1,7 +1,7 @@
 import React from 'react';
 import { TrendingUp, Target, Users, AlertTriangle, Calendar, ArrowRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { count, pct, money, clampRatio, NOT_AVAILABLE_YET, type TeacherStatRow, type ManagerPerfRow } from '../../lib/renewal';
+import { count, pct, money, clampRatio, type TeacherStatRow, type ManagerPerfRow } from '../../lib/renewal';
 import KpiCard from './KpiCard';
 
 interface ExecutiveSummaryProps {
@@ -29,18 +29,19 @@ export default function ExecutiveSummary({
   const totals = hasTeacherData
     ? teacherRows.reduce(
         (acc, r) => {
-          acc.base += r.baseCount || 0;
-          acc.renewed += r.renewedCount || 0;
-          acc.prepaid += r.prepaidCount || 0;
-          acc.gap += r.incentiveGap || 0;
+          if (typeof r.baseCount === 'number') { acc.base += r.baseCount; acc.hasBase = true; }
+          if (typeof r.renewedCount === 'number') { acc.renewed += r.renewedCount; acc.hasRenewed = true; }
+          if (typeof r.prepaidCount === 'number') { acc.prepaid += r.prepaidCount; acc.hasPrepaid = true; }
+          if (typeof r.incentiveGap === 'number') { acc.gap += r.incentiveGap; acc.hasGap = true; }
           return acc;
         },
-        { base: 0, renewed: 0, prepaid: 0, gap: 0 }
+        { base: 0, renewed: 0, prepaid: 0, gap: 0, hasBase: false, hasRenewed: false, hasPrepaid: false, hasGap: false }
       )
     : null;
 
-  const renewRate = totals && totals.base > 0 ? (totals.renewed / totals.base) * 100 : 0;
-  const prepaidRate = totals && totals.base > 0 ? (totals.prepaid / totals.base) * 100 : 0;
+  const renewRate = totals?.hasRenewed && totals.base > 0 ? (totals.renewed / totals.base) * 100 : 0;
+  const prepaidRate = totals?.hasPrepaid && totals.base > 0 ? (totals.prepaid / totals.base) * 100 : 0;
+  const gapLabel = currentTab === 'incentive' ? '激励' : '80%目标';
 
   // 学管业绩汇总
   const managerTotals = hasManagerData
@@ -72,20 +73,20 @@ export default function ExecutiveSummary({
     }
 
     if (hasTeacherData) {
-      // 续科率洞察
-      if (renewRate >= 90) {
+      // 续科率洞察：源表没有该列时不生成 0% 洞察。
+      if (totals?.hasRenewed && renewRate >= 90) {
         items.push({
           icon: <TrendingUp className="h-4 w-4" />,
           text: `整体续科率 ${pct(renewRate)}，表现优秀，已接近满额`,
           tone: 'emerald',
         });
-      } else if (renewRate >= 70) {
+      } else if (totals?.hasRenewed && renewRate >= 70) {
         items.push({
           icon: <TrendingUp className="h-4 w-4" />,
           text: `整体续科率 ${pct(renewRate)}，有提升空间，建议关注差额前三的老师`,
           tone: 'brand',
         });
-      } else if (renewRate > 0) {
+      } else if (totals?.hasRenewed && renewRate > 0) {
         items.push({
           icon: <AlertTriangle className="h-4 w-4" />,
           text: `整体续科率仅 ${pct(renewRate)}，低于预警线，需立即干预`,
@@ -94,23 +95,23 @@ export default function ExecutiveSummary({
       }
 
       // 激励差额洞察
-      if (totals && totals.gap > 0) {
+      if (totals?.hasGap && totals.gap > 0) {
         const gapTeachers = teacherRows.filter(r => (r.incentiveGap || 0) > 0).length;
         items.push({
           icon: <Target className="h-4 w-4" />,
-          text: `激励差额合计 ${count(totals.gap)} 人，涉及 ${gapTeachers} 位老师，建议逐人落实跟进`,
+          text: `${gapLabel}差额合计 ${count(totals.gap)} 人，涉及 ${gapTeachers} 位老师，建议逐人落实跟进`,
           tone: 'amber',
         });
-      } else if (totals && totals.gap <= 0) {
+      } else if (totals?.hasGap && totals.gap <= 0) {
         items.push({
           icon: <Target className="h-4 w-4" />,
-          text: '全员已达成激励目标，差额为 0 或负值（超额完成）',
+          text: `全员已达成${gapLabel}，差额为 0 或负值（超额完成）`,
           tone: 'emerald',
         });
       }
 
       // 预存洞察
-      if (prepaidRate > 0) {
+      if (totals?.hasPrepaid && totals.hasBase && prepaidRate > 0) {
         items.push({
           icon: <Users className="h-4 w-4" />,
           text: `预存率 ${pct(prepaidRate)} (${count(totals?.prepaid || 0)}/${count(totals?.base || 0)})，${prepaidRate >= 80 ? '预存基础扎实' : '预存有待加强'}`,
@@ -136,7 +137,7 @@ export default function ExecutiveSummary({
     }
 
     return items.slice(0, 4); // 最多显示 4 条洞察
-  }, [hasTeacherData, hasManagerData, renewRate, prepaidRate, totals, managerTotals, completionRate, teacherRows]);
+  }, [hasTeacherData, hasManagerData, renewRate, prepaidRate, totals, managerTotals, completionRate, teacherRows, gapLabel]);
 
   const currentReport = reports.find(r => r.reportId === reportId);
 
@@ -175,33 +176,33 @@ export default function ExecutiveSummary({
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
           label="学生基数"
-          value={hasTeacherData ? count(totals!.base) : NOT_AVAILABLE_YET}
-          hint={hasTeacherData ? `当前 ${currentTab === 'incentive' ? '激励' : currentTab === 'stage' ? '学段' : currentTab === 'mentor' ? '学管' : '课时'} 表合计` : '数据下月开启'}
+          value={totals?.hasBase ? count(totals.base) : '—'}
+          hint={totals?.hasBase ? `当前 ${currentTab === 'incentive' ? '激励' : currentTab === 'stage' ? '学段' : currentTab === 'mentor' ? '学管' : '课时'} 表合计` : '源表未提供此列'}
           icon={<Users className="h-4 w-4" />}
           tone="brand"
         />
         <KpiCard
           label="已续科"
-          value={hasTeacherData ? count(totals!.renewed) : NOT_AVAILABLE_YET}
-          hint={hasTeacherData ? `续科率 ${pct(renewRate)}` : '数据下月开启'}
+          value={totals?.hasRenewed ? count(totals.renewed) : '—'}
+          hint={totals?.hasRenewed ? `续科率 ${pct(renewRate)}` : '源表未提供此列'}
           icon={<TrendingUp className="h-4 w-4" />}
-          progress={hasTeacherData ? clampRatio(totals!.renewed, totals!.base) : undefined}
+          progress={totals?.hasRenewed ? clampRatio(totals.renewed, totals.base) : undefined}
           tone="emerald"
         />
         <KpiCard
           label="已预存"
-          value={hasTeacherData ? count(totals!.prepaid) : NOT_AVAILABLE_YET}
-          hint={hasTeacherData ? `预存率 ${pct(prepaidRate)}` : '数据下月开启'}
+          value={totals?.hasPrepaid ? count(totals.prepaid) : '—'}
+          hint={totals?.hasPrepaid ? `总预存（含毕业班） · 预存率 ${pct(prepaidRate)}` : '源表未提供此列'}
           icon={<Target className="h-4 w-4" />}
-          progress={hasTeacherData ? clampRatio(totals!.prepaid, totals!.base) : undefined}
+          progress={totals?.hasPrepaid ? clampRatio(totals.prepaid, totals.base) : undefined}
           tone="violet"
         />
         <KpiCard
-          label="激励差额"
-          value={hasTeacherData ? count(totals!.gap) : NOT_AVAILABLE_YET}
-          hint={hasTeacherData ? (totals!.gap > 0 ? `尚差 ${count(totals!.gap)} 人达标` : '全员达标 ✓') : '数据下月开启'}
+          label={`${gapLabel}差额`}
+          value={totals?.hasGap ? count(totals.gap) : '—'}
+          hint={totals?.hasGap ? (totals.gap > 0 ? `尚差 ${count(totals.gap)} 人达标` : '全员达标 ✓') : '源表未提供此列'}
           icon={<AlertTriangle className="h-4 w-4" />}
-          tone={hasTeacherData && totals && totals.gap > 0 ? 'amber' : 'emerald'}
+          tone={totals?.hasGap && totals.gap > 0 ? 'amber' : 'emerald'}
         />
       </div>
 

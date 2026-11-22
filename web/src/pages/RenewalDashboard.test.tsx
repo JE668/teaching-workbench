@@ -80,6 +80,7 @@ function makeManager(overrides: Record<string, unknown> = {}) {
 
 function mockApi(options: {
   teacher?: unknown[];
+  summary?: unknown[];
   group?: unknown[];
   manager?: unknown[];
   funnel?: unknown[];
@@ -97,12 +98,13 @@ function mockApi(options: {
             centerName: '小榄龙山学习中心',
             rowCount: 547,
             errorCount: 0,
-            status: 'ok',
+            status: 'committed',
             uploadedAt: '2026-11-18 20:00:00',
           },
         ],
       });
     }
+    if (path.includes('/teacher-stats') && path.includes('tab=stage')) return Promise.resolve({ tab: 'stage', reportId: 1, rows: options.summary ?? options.teacher ?? [] });
     if (path.includes('/teacher-stats')) return Promise.resolve({ tab: 'incentive', reportId: 1, rows: options.teacher || [] });
     if (path.includes('/group-compare')) return Promise.resolve({ tab: 'incentive', reportId: 1, rows: options.group || [] });
     if (path.includes('/manager-perf')) return Promise.resolve({ reportId: 1, rows: options.manager || [] });
@@ -174,6 +176,76 @@ describe('续费看板', () => {
     expect(screen.getAllByText('已续费').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('已预存').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('结课').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('总览固定读取学段表并区分总预存与非毕业班预存', async () => {
+    mockApi({
+      teacher: [makeTeacher({ baseCount: 0, prepaidCount: 0, renewedCount: 0 })],
+      summary: [makeTeacher({
+        tab: 'stage', baseCount: 306, prepaidCount: 226, renewedCount: null,
+        extra: { prepaid_nongrad: 160, prepaid_g9: 55, prepaid_g12: 11 },
+      })],
+    });
+    renderWithProviders(<RenewalDashboard />);
+
+    expect(await screen.findByText('306')).toBeInTheDocument();
+    expect(screen.getByText('226')).toBeInTheDocument();
+    expect(screen.getByText(/非毕业班 160/)).toBeInTheDocument();
+    expect(screen.getByText('学段表 · 1 位教师明细合计')).toBeInTheDocument();
+  });
+
+  it('默认选择最新已提交批次而不是处理中或失败批次', async () => {
+    mockApi({ teacher: [makeTeacher()] });
+    const defaultImplementation = getMock.getMockImplementation();
+    getMock.mockImplementation((path: string) => {
+      if (path === '/renewal/reports') {
+        return Promise.resolve({ reports: [
+          { reportId: 9, fileName: 'failed.xlsx', status: 'failed' },
+          { reportId: 2, fileName: 'committed.xlsx', status: 'committed', statMonth: '2026-10' },
+          { reportId: 8, fileName: 'processing.xlsx', status: 'processing' },
+        ] });
+      }
+      return defaultImplementation?.(path);
+    });
+    renderWithProviders(<RenewalDashboard />);
+
+    await screen.findByRole('table');
+    expect(screen.getByLabelText('选择报表批次')).toHaveValue('2');
+    expect(getMock).toHaveBeenCalledWith(expect.stringContaining('tab=stage&reportId=2'));
+    expect(screen.queryByRole('option', { name: /failed/ })).not.toBeInTheDocument();
+  });
+
+  it('快速切换报表时忽略旧批次的迟到学管响应', async () => {
+    let resolveOld!: (value: unknown) => void;
+    const oldResponse = new Promise(resolve => { resolveOld = resolve; });
+    mockApi({ teacher: [makeTeacher()], manager: [makeManager({ managerName: '当前批次学管' })] });
+    const defaultImplementation = getMock.getMockImplementation();
+    getMock.mockImplementation((path: string) => {
+      if (path === '/renewal/reports') {
+        return Promise.resolve({ reports: [
+          { reportId: 1, fileName: 'current.xlsx', status: 'committed', statMonth: '2026-10' },
+          { reportId: 2, fileName: 'old.xlsx', status: 'committed', statMonth: '2026-09' },
+        ] });
+      }
+      if (path.includes('/manager-perf') && path.includes('reportId=2')) return oldResponse;
+      return defaultImplementation?.(path);
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<RenewalDashboard />);
+    await screen.findByRole('table');
+
+    const reportSelect = screen.getByLabelText('选择报表批次');
+    await user.selectOptions(reportSelect, '2');
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith(expect.stringContaining('/manager-perf?reportId=2')));
+    await user.selectOptions(reportSelect, '1');
+    await user.click(screen.getByRole('tab', { name: '学管业绩' }));
+    expect(await screen.findByRole('cell', { name: '当前批次学管' })).toBeInTheDocument();
+
+    resolveOld({ rows: [makeManager({ managerName: '旧批次学管' })] });
+    await user.click(screen.getByRole('tab', { name: '教师统计' }));
+    await user.click(screen.getByRole('tab', { name: '学管业绩' }));
+    expect(screen.getByRole('cell', { name: '当前批次学管' })).toBeInTheDocument();
+    expect(screen.queryByText('旧批次学管')).not.toBeInTheDocument();
   });
 
   it('教师统计默认展开激励 tab，切换 tab 会重新取数', async () => {
