@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils';
 import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, GRID_STATUS_META, type TeacherStatRow, type MentorMatrix, type TeacherGradeMatrix, type GroupGradeMatrix, type RateOverview, type MentorMatrixCell, type TeacherGradeMatrixCell, type GroupGradeMatrixCell, type GridStatus } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
 import StudentGrid from './StudentGrid';
+import DimensionChart from './DimensionChart';
 import Modal from '../../components/ui/Modal';
 
 interface Props {
@@ -42,39 +43,27 @@ interface Col {
 function tabColumns(tab: string): Col[] {
   if (tab === 'stage') {
     return [
-      { key: 'juniorBase', label: '在读-非毕业班', isRate: false, get: r => r.extra['juniorBase'] ?? r.baseCount },
-      { key: 'junior3Base', label: '在读-初三', isRate: false, get: r => r.extra['junior3Base'] ?? null },
-      { key: 'junior3Prepaid', label: '预存-初三', isRate: false, get: r => r.extra['junior3Prepaid'] ?? null },
-      { key: 'junior3PrepaidRate', label: '预存率-初三', isRate: true, get: r => r.extra['junior3PrepaidRate'] ?? null },
-      { key: 'senior1Base', label: '在读-高一', isRate: false, get: r => r.extra['senior1Base'] ?? null },
-      { key: 'senior1Prepaid', label: '预存-高一', isRate: false, get: r => r.extra['senior1Prepaid'] ?? null },
-      { key: 'senior1PrepaidRate', label: '预存率-高一', isRate: true, get: r => r.extra['senior1PrepaidRate'] ?? null },
-      { key: 'senior2Base', label: '在读-高二', isRate: false, get: r => r.extra['senior2Base'] ?? null },
-      { key: 'senior2Prepaid', label: '预存-高二', isRate: false, get: r => r.extra['senior2Prepaid'] ?? null },
-      { key: 'senior2PrepaidRate', label: '预存率-高二', isRate: true, get: r => r.extra['senior2PrepaidRate'] ?? null },
-      { key: 'senior3Base', label: '在读-高三', isRate: false, get: r => r.extra['senior3Base'] ?? null },
-      { key: 'senior3Prepaid', label: '预存-高三', isRate: false, get: r => r.extra['senior3Prepaid'] ?? null },
-      { key: 'senior3PrepaidRate', label: '预存率-高三', isRate: true, get: r => r.extra['senior3PrepaidRate'] ?? null },
+      { key: 'enroll_nongrad', label: '非毕业班在读', isRate: false, get: r => r.extra.enroll_nongrad ?? null },
+      { key: 'prepaid_nongrad', label: '非毕业班预存', isRate: false, get: r => r.extra.prepaid_nongrad ?? null },
+      { key: 'enroll_g9', label: '初三在读', isRate: false, get: r => r.extra.enroll_g9 ?? null },
+      { key: 'prepaid_g9', label: '初三预存', isRate: false, get: r => r.extra.prepaid_g9 ?? null },
+      { key: 'enroll_g12', label: '高三在读', isRate: false, get: r => r.extra.enroll_g12 ?? null },
+      { key: 'prepaid_g12', label: '高三预存', isRate: false, get: r => r.extra.prepaid_g12 ?? null },
+      { key: 'prepaidCount', label: '总预存', isRate: false, get: r => r.prepaidCount },
+      { key: 'prepaidRate', label: '总预存率', isRate: true, get: r => r.prepaidRate },
     ];
   }
-  if (tab === 'mentor') {
+  if (tab === 'hours') {
     return [
-      { key: 'baseCount', label: '基数', isRate: false, get: r => r.baseCount },
-      { key: 'prepaidCount', label: '预存', isRate: false, get: r => r.prepaidCount },
-      { key: 'prepaidRate', label: '预存率', isRate: true, get: r => r.prepaidRate },
-    ];
-  }
-  if (tab === 'incentive') {
-    return [
-      { key: 'baseCount', label: '基数', isRate: false, get: r => r.baseCount },
-      { key: 'prepaidCount', label: '预存', isRate: false, get: r => r.prepaidCount },
-      { key: 'prepaidRate', label: '预存率', isRate: true, get: r => r.prepaidRate },
-      { key: 'renewedCount', label: '续科', isRate: false, get: r => r.renewedCount },
-      { key: 'renewRate', label: '续科率', isRate: true, get: r => r.renewRate },
+      { key: 'enroll_0_80', label: '0–80课时在读', isRate: false, get: r => r.extra.enroll_0_80 ?? null },
+      { key: 'prepaid_0_80', label: '0–80课时预存', isRate: false, get: r => r.extra.prepaid_0_80 ?? null },
+      { key: 'enroll_80p', label: '80+课时在读', isRate: false, get: r => r.extra.enroll_80p ?? null },
+      { key: 'prepaid_80p', label: '80+课时预存', isRate: false, get: r => r.extra.prepaid_80p ?? null },
+      { key: 'prepaidCount', label: '总预存', isRate: false, get: r => r.prepaidCount },
+      { key: 'prepaidRate', label: '总预存率', isRate: true, get: r => r.prepaidRate },
     ];
   }
   return [
-    { key: 'baseCount', label: '基数', isRate: false, get: r => r.baseCount },
     { key: 'prepaidCount', label: '预存', isRate: false, get: r => r.prepaidCount },
     { key: 'prepaidRate', label: '预存率', isRate: true, get: r => r.prepaidRate },
   ];
@@ -105,7 +94,7 @@ function TeacherRow({
 }) {
   return (
     <>
-      <tr className="hover:bg-slate-50/60 transition-colors cursor-pointer" onClick={onToggle}>
+      <tr className="hover:bg-slate-50/60 transition-colors cursor-pointer whitespace-nowrap" onClick={onToggle}>
         <td className="px-4 py-3 font-medium text-slate-700">
           <div className="flex items-center gap-2">
             <ChevronDown
@@ -261,7 +250,7 @@ export default function TeacherViewEnhanced({
   const gapPositive = rows.filter(r => (r.incentiveGap || 0) > 0).sort((a, b) => (b.incentiveGap || 0) - (a.incentiveGap || 0));
   const maxGap = gapPositive.reduce((m, r) => Math.max(m, r.incentiveGap || 0), 0);
 
-  const renewalRanking: BarListRow[] = rows
+  const renewalRanking: BarListRow[] = [...rows]
     .sort((a, b) => (b.renewedCount || 0) - (a.renewedCount || 0))
     .slice(0, 10)
     .map((r, i) => ({
@@ -284,18 +273,6 @@ export default function TeacherViewEnhanced({
       className: rankStyle(i),
       color: 'bg-amber-500',
     }));
-
-  const totals = useMemo(() => {
-    if (rows.length === 0) return { base: 0, renewed: 0, prepaid: 0, gap: 0, rate: 0, hasData: false };
-    let base = 0, renewed = 0, gap = 0, prepaid = 0;
-    for (const r of rows) {
-      base += r.baseCount || 0;
-      renewed += r.renewedCount || 0;
-      prepaid += r.prepaidCount || 0;
-      gap += r.incentiveGap || 0;
-    }
-    return { base, renewed, prepaid, gap, rate: base > 0 ? (renewed / base) * 100 : 0, hasData: true };
-  }, [rows]);
 
   if (rows.length === 0) {
     return (
@@ -321,80 +298,59 @@ export default function TeacherViewEnhanced({
           title="教师明细"
           icon={<Users className="h-5 w-5" />}
           action={
-            <>
-              <div className="flex items-center gap-4">
-                <div role="tablist" aria-label="统计表 tab" className="flex gap-1">
-                  {TAB_ORDER.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      role="tab"
-                      aria-selected={tab === t}
-                      onClick={() => setTab(t)}
-                      className={cn(
-                        'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
-                        tab === t ? 'bg-brand-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
-                      )}
-                    >
-                      {TAB_LABELS[t] || t}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">矩阵视图：</span>
-                  <div className="flex rounded-lg bg-slate-100 p-1" role="radiogroup" aria-label="矩阵维度切换">
-                    {(['mentor', 'grade', 'group'] as const).map(view => (
-                      <button
-                        key={view}
-                        type="button"
-                        role="radio"
-                        aria-checked={matrixView === view}
-                        onClick={() => setMatrixView(view)}
-                        className={cn(
-                          'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                          matrixView === view
-                            ? 'bg-white text-brand-600 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-800',
-                        )}
-                      >
-                        {view === 'mentor' ? '教师×学管' : view === 'grade' ? '教师×年级' : '科组×年级'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+            <div className="flex flex-col items-end gap-3">
+              <div role="tablist" aria-label="统计表 tab" className="flex flex-wrap gap-1">
+                {TAB_ORDER.map(t => (
+                  <button
+                    key={t}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t}
+                    onClick={() => setTab(t)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                      tab === t ? 'bg-brand-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                    )}
+                  >
+                    {TAB_LABELS[t] || t}
+                  </button>
+                ))}
               </div>
-              <MatrixLegend />
-            </>
+              {tab === 'mentor' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">矩阵视图：</span>
+                    <div className="flex rounded-lg bg-slate-100 p-1" role="radiogroup" aria-label="矩阵维度切换">
+                      {(['mentor', 'grade', 'group'] as const).map(view => (
+                        <button
+                          key={view}
+                          type="button"
+                          role="radio"
+                          aria-checked={matrixView === view}
+                          onClick={() => setMatrixView(view)}
+                          className={cn(
+                            'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                            matrixView === view
+                              ? 'bg-white text-brand-600 shadow-sm'
+                              : 'text-slate-600 hover:text-slate-800',
+                          )}
+                        >
+                          {view === 'mentor' ? '教师×学管' : view === 'grade' ? '教师×年级' : '科组×年级'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <MatrixLegend />
+                </>
+              )}
+            </div>
           }
         />
         <CardBody className="space-y-6 p-4">
-          {/* 汇总卡 */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
-              <p className="text-xs text-slate-500 uppercase tracking-wide">学生基数</p>
-              <p className="mt-1 text-2xl font-bold text-slate-800 tabular-nums">{count(totals.base)}</p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
-              <p className="text-xs text-slate-500 uppercase tracking-wide">已预存</p>
-              <p className="mt-1 text-2xl font-bold text-violet-600 tabular-nums">{count(totals.prepaid)}</p>
-              <p className="mt-1 text-xs text-slate-400">预存率 {pct(totals.prepaid / totals.base * 100)}</p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
-              <p className="text-xs text-slate-500 uppercase tracking-wide">已续科</p>
-              <p className="mt-1 text-2xl font-bold text-emerald-600 tabular-nums">{count(totals.renewed)}</p>
-              <p className="mt-1 text-xs text-slate-400">续科率 {pct(totals.rate)}</p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
-              <p className="text-xs text-slate-500 uppercase tracking-wide">激励差额</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-{totals.gap > 0 ? 'amber-600' : 'emerald-600'}">
-                {count(totals.gap)}
-              </p>
-              <p className="mt-1 text-xs text-slate-400">{totals.gap > 0 ? '尚差' : '全员达标'}</p>
-            </div>
-          </div>
+          <DimensionChart rows={rows} tab={tab} />
 
           {/* Rate Panel */}
-          {rateOverview && (
+          {tab === 'mentor' && rateOverview && (
             <div className="rounded-xl bg-white border border-slate-200 p-4">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
                 <Target className="h-4 w-4 text-brand-600" />
@@ -483,8 +439,15 @@ export default function TeacherViewEnhanced({
             </div>
           )}
 
-          {/* Matrix View */}
+          {/* 学管维度提供教师×学管/年级匹配矩阵 */}
+          {tab === 'mentor' && (
           <div className="rounded-xl bg-white border border-slate-200 p-4">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-slate-800">
+                {matrixView === 'mentor' ? '教师 × 学管匹配矩阵' : matrixView === 'grade' ? '教师 × 年级分布' : '科组 × 年级分布'}
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">每格为学生数；预 = 预存，续 = 已续费。点击单元格可查看学生明细。</p>
+            </div>
             {matrixLoading ? (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-2 border-brand-500 border-t-transparent" />
@@ -755,12 +718,13 @@ export default function TeacherViewEnhanced({
                     </table>
                   </div>
                 )}
-                {(matrixView === 'grade' && !teacherGradeMatrix && !matrixLoading) || (matrixView === 'group' && !groupGradeMatrix && !matrixLoading) ? (
+                {(matrixView === 'mentor' && !mentorMatrix && !matrixLoading) || (matrixView === 'grade' && !teacherGradeMatrix && !matrixLoading) || (matrixView === 'group' && !groupGradeMatrix && !matrixLoading) ? (
                   <div className="py-8 text-center text-slate-400">暂无矩阵数据</div>
                 ) : null}
               </>
             )}
           </div>
+          )}
 
           {/* 快速榜单 */}
           <div className="grid gap-4 lg:grid-cols-2">
@@ -792,10 +756,13 @@ export default function TeacherViewEnhanced({
 
           {/* 明细表格 */}
           <div className="rounded-xl border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+            {tab === 'stage' || tab === 'hours' ? (
+              <p className="border-b border-slate-100 bg-slate-50/70 px-4 py-2 text-right text-xs text-slate-500">左右滑动查看完整明细列</p>
+            ) : null}
+            <div className="overflow-x-auto" role="region" aria-label="教师明细，可横向滚动" tabIndex={0}>
+              <table className="w-full min-w-max text-left text-sm">
                 <thead className="bg-slate-50 text-xs text-slate-500">
-                  <tr className="border-b border-slate-200">
+                  <tr className="border-b border-slate-200 whitespace-nowrap">
                     <th className="px-4 py-3 font-medium">教师</th>
                     <th className="px-4 py-3 font-medium">科组</th>
                     <th className="px-4 py-3 font-medium">基数</th>

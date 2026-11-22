@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Plus,
   Sparkles,
-  TrendingUp,
   Clock,
   BellRing,
   CheckCircle2,
@@ -89,6 +88,8 @@ export default function Dashboard() {
       icon: Users,
       gradient: 'from-brand-500 to-violet-600',
       suffix: '人',
+      scope: '当前',
+      description: '现有学生档案',
     },
     {
       label: '回访次数',
@@ -96,6 +97,8 @@ export default function Dashboard() {
       icon: MessageSquareText,
       gradient: 'from-emerald-500 to-teal-600',
       suffix: '次',
+      scope: '累计',
+      description: '全部回访记录',
     },
     {
       label: '覆盖学科',
@@ -103,6 +106,8 @@ export default function Dashboard() {
       icon: BookOpen,
       gradient: 'from-amber-500 to-orange-600',
       suffix: '科',
+      scope: '当前',
+      description: '按学生学科去重',
     },
     {
       label: '归档图片',
@@ -110,6 +115,8 @@ export default function Dashboard() {
       icon: ImageIcon,
       gradient: 'from-sky-500 to-cyan-600',
       suffix: '张',
+      scope: '累计',
+      description: '全部归档图片',
     },
   ];
 
@@ -142,13 +149,16 @@ export default function Dashboard() {
               <div className={'flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br shadow-soft ' + s.gradient}>
                 <s.icon className="h-5 w-5 text-white" />
               </div>
-              <TrendingUp className="h-4 w-4 text-slate-300" />
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+                {s.scope}
+              </span>
             </div>
             <p className="mt-4 text-3xl font-bold tracking-tight text-slate-800">
               {s.value}
               <span className="ml-1 text-sm font-medium text-slate-400">{s.suffix}</span>
             </p>
-            <p className="mt-0.5 text-sm text-slate-400">{s.label}</p>
+            <p className="mt-0.5 text-sm font-medium text-slate-500">{s.label}</p>
+            <p className="mt-1 text-xs text-slate-400">{s.description} · 不代表环比涨跌</p>
           </Card>
         ))}
       </div>

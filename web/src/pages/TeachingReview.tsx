@@ -172,6 +172,45 @@ const CATEGORY_LABELS: Record<string, string> = {
   habit: '学习习惯',
 };
 
+/** 后端 endpoint 是统计主键；页面只展示教师能理解的业务名称。 */
+const ENDPOINT_PRESENTATIONS: Record<string, { label: string; description: string }> = {
+  followup_stream: { label: '课后回访（逐段生成）', description: '边生成边展示回访内容' },
+  followup_once: { label: '课后回访（整篇生成）', description: '生成完成后一次返回完整回访' },
+  report_summary_stream: { label: '月报总结（逐段生成）', description: '边生成边展示月度总结' },
+  report_summary_once: { label: '月报总结（整篇生成）', description: '生成完成后一次返回月度总结' },
+  report_plan_stream: { label: '月报教学计划（逐段生成）', description: '边生成边展示后续教学计划' },
+  report_plan_once: { label: '月报教学计划（整篇生成）', description: '生成完成后一次返回后续教学计划' },
+  report_summary: { label: '月报总结', description: '生成学生月度学习总结' },
+  report_plan: { label: '月报教学计划', description: '生成学生后续教学计划' },
+  multimodal_observations: { label: '听评课多模态分析', description: '结合课堂资料生成听评课观察分析' },
+  lesson_planner_generate: { label: '教案生成', description: '生成阶段教学教案' },
+  exam_analysis: { label: '试卷分析', description: '分析试卷与学生答题情况' },
+  knowledge_extraction: { label: '知识点提取', description: '从教学内容中提取知识点' },
+  parent_view: { label: '家长反馈生成', description: '生成面向家长的反馈内容' },
+  student_profile: { label: '学生学情画像', description: '整理学生学情与成长画像' },
+  weekly_digest: { label: '每周教学摘要', description: '汇总每周教学内容' },
+};
+
+function endpointPresentation(endpoint: string) {
+  return ENDPOINT_PRESENTATIONS[endpoint] || {
+    label: '其他 AI 教学服务',
+    description: '该调用类型暂未配置业务名称',
+  };
+}
+
+type SuccessTone = 'success' | 'warning' | 'danger' | 'neutral';
+
+function successStatus(rate: number | null): { label: string; tone: SuccessTone } {
+  if (rate == null) return { label: '暂无数据', tone: 'neutral' };
+  if (rate >= 95) return { label: '运行稳定', tone: 'success' };
+  if (rate >= 80) return { label: '需要关注', tone: 'warning' };
+  return { label: '优先排查', tone: 'danger' };
+}
+
+function formatLatency(value: number | null): string {
+  return value == null ? '—' : value + ' 毫秒';
+}
+
 function currentMonth(): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit',
@@ -188,10 +227,10 @@ function monthTitle(month: string): string {
 }
 
 /** 横向占比条：只读展示，不需要图表库 */
-function ShareBar({ percent, tone }: { percent: number; tone: string }) {
+function ShareBar({ percent, tone, label }: { percent: number; tone: string; label?: string }) {
   const width = Math.max(0, Math.min(100, percent));
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100" role={label ? 'img' : undefined} aria-label={label}>
       <div className="h-full rounded-full transition-all" style={{ width: width + '%', background: tone }} />
     </div>
   );
@@ -199,6 +238,51 @@ function ShareBar({ percent, tone }: { percent: number; tone: string }) {
 
 function formatPercent(value: number | null | undefined): string {
   return value == null ? '—' : value + '%';
+}
+
+/** 成功率按 0–100% 绘制；无记录的月份显示空缺，绝不当作 0%。 */
+function SuccessRateTrend({ points }: { points: TrendPoint[] }) {
+  const latest = points[points.length - 1];
+  const previous = points[points.length - 2];
+  let comparison = '暂无上月数据，未计算环比';
+  if (latest?.aiSuccessRate == null) {
+    comparison = '本月暂无成功率数据';
+  } else if (previous?.aiSuccessRate == null) {
+    comparison = '上月暂无成功率数据，未计算环比';
+  } else {
+    const delta = Math.round((latest.aiSuccessRate - previous.aiSuccessRate) * 100) / 100;
+    comparison = '较上月 ' + (delta > 0 ? '+' : '') + delta + ' 个百分点';
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium text-slate-600">近 6 个月 AI 调用成功率趋势</p>
+        <p className="text-[11px] text-slate-500">{comparison}</p>
+      </div>
+      <p className="mt-1 text-[10px] text-slate-400">柱高统一按 0–100%；“—”表示该月没有可计算的成功率。</p>
+      {points.length === 0 ? (
+        <p className="py-4 text-center text-xs text-slate-400">暂无月度 AI 调用趋势</p>
+      ) : (
+        <div className="mt-3 grid grid-cols-6 gap-2" role="img" aria-label="近 6 个月 AI 调用成功率趋势图">
+          {points.map((point) => (
+            <div key={point.month} className="min-w-0 text-center" title={point.month + '：' + formatPercent(point.aiSuccessRate)}>
+              <p className="h-4 text-[10px] text-slate-500">{formatPercent(point.aiSuccessRate)}</p>
+              <div className="mx-auto flex h-16 w-full max-w-8 items-end rounded bg-white">
+                {point.aiSuccessRate == null ? null : (
+                  <div
+                    className="w-full rounded bg-brand-400"
+                    style={{ height: Math.max(0, Math.min(100, point.aiSuccessRate)) + '%' }}
+                  />
+                )}
+              </div>
+              <p className="mt-1 truncate text-[10px] text-slate-400">{point.month.slice(5)} 月</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** 调用级延迟 × 字数散点：只画数据库里实际存在的成功调用。 */
@@ -218,17 +302,17 @@ function LatencyScatter({ points }: { points: Quality['latencyWordCount'] }) {
   const maxWords = Math.max(1, ...points.map((point) => Number(point.wordCount) || 0));
   return (
     <div>
-      <svg viewBox={'0 0 ' + width + ' ' + height} className="h-auto w-full" role="img" aria-label="AI 调用延迟与字数散点图">
+      <svg viewBox={'0 0 ' + width + ' ' + height} className="h-auto w-full" role="img" aria-label="AI 调用响应耗时与字数散点图">
         <line x1={left} y1={top + chartHeight} x2={left + chartWidth} y2={top + chartHeight} stroke="#cbd5e1" />
         <line x1={left} y1={top} x2={left} y2={top + chartHeight} stroke="#cbd5e1" />
-        <text x={left} y={height - 8} fontSize="11" fill="#64748b">延迟（ms）→</text>
+        <text x={left} y={height - 8} fontSize="11" fill="#64748b">响应耗时（毫秒）→</text>
         <text x="8" y={top + 8} fontSize="11" fill="#64748b">字数</text>
         <text x={left + chartWidth - 35} y={top + chartHeight + 18} fontSize="10" fill="#94a3b8">{maxLatency}</text>
         <text x="12" y={top + 12} fontSize="10" fill="#94a3b8">{maxWords}</text>
         {points.map((point, index) => {
           const x = left + ((Number(point.latencyMs) || 0) / maxLatency) * chartWidth;
           const y = top + chartHeight - ((Number(point.wordCount) || 0) / maxWords) * chartHeight;
-          const title = point.endpoint + '：' + point.latencyMs + 'ms，' + point.wordCount + ' 字';
+          const title = endpointPresentation(point.endpoint).label + '：' + point.latencyMs + ' 毫秒，' + point.wordCount + ' 字';
           return (
             <circle key={point.endpoint + '-' + index} cx={x} cy={y} r="4" fill="#6366f1" fillOpacity="0.72">
               <title>{title}</title>
@@ -344,14 +428,7 @@ export default function TeachingReview() {
     [trend]
   );
 
-  const aiTone: 'success' | 'warning' | 'danger' | 'neutral' =
-    !summary || summary.quality.aiSuccessRate == null
-      ? 'neutral'
-      : summary.quality.aiSuccessRate >= 95
-        ? 'success'
-        : summary.quality.aiSuccessRate >= 80
-          ? 'warning'
-          : 'danger';
+  const aiStatus = successStatus(summary?.quality.aiSuccessRate ?? null);
   const maxDailyActivity = Math.max(1, ...(summary?.dailyActivity || []).map((item) => item.n));
   const maxFunnel = Math.max(1, ...(summary?.quality.funnel || []).map((item) => item.value));
 
@@ -384,15 +461,15 @@ export default function TeachingReview() {
 
       {isSupervisor ? (
         <Card>
-          <CardHeader title="全组教学健康度" description="白名单主管可见；只列原始工作量与 AI 调用成功率，不合成主观健康分" icon={<Users className="h-5 w-5" />} />
+          <CardHeader title="全组教学与 AI 调用概况" description="白名单主管可见；只列原始工作量与 AI 调用成功率，不合成主观健康分" icon={<Users className="h-5 w-5" />} />
           <CardBody>
             {teamError ? <p role="alert" className="text-sm text-red-600">{teamError}</p> : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-2">教师</th><th>学生</th><th>回访</th><th>月报</th><th>听评课</th><th>备课</th><th>AI 成功率</th><th>下钻</th></tr></thead>
+                  <thead><tr className="border-b border-slate-100 text-xs text-slate-400"><th className="py-2">教师</th><th>学生（人）</th><th>回访（篇）</th><th>月报（份）</th><th>听评课（节）</th><th>备课（份）</th><th>AI 调用成功率</th><th>操作</th></tr></thead>
                   <tbody>{team.map((teacher) => (
                     <tr key={teacher.teacherId} className="border-b border-slate-50 last:border-0">
-                      <td className="py-2 font-medium text-slate-700">{teacher.username}</td><td>{teacher.students}</td><td>{teacher.followups}</td><td>{teacher.reports}</td><td>{teacher.observations}</td><td>{teacher.lessonPlans}</td><td>{formatPercent(teacher.aiSuccessRate)}</td>
+                      <td className="py-2 font-medium text-slate-700">{teacher.username}</td><td>{teacher.students}</td><td>{teacher.followups}</td><td>{teacher.reports}</td><td>{teacher.observations}</td><td>{teacher.lessonPlans}</td><td><div className="flex items-center gap-2"><span>{formatPercent(teacher.aiSuccessRate)}</span><Badge tone={successStatus(teacher.aiSuccessRate).tone}>{successStatus(teacher.aiSuccessRate).label}</Badge></div></td>
                       <td><Button size="sm" variant="ghost" onClick={() => setSelectedTeacherId(teacher.teacherId)}>查看 {teacher.username}</Button></td>
                     </tr>
                   ))}</tbody>
@@ -453,31 +530,37 @@ export default function TeachingReview() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader
-                title="产出趋势"
-                description="近 6 个月的回访 / 月报 / 听评课数量"
+                title="教学产出趋势"
+                description="近 6 个月数量对比；三类数据条使用同一数量刻度"
                 icon={<TrendingUp className="h-4 w-4" />}
               />
               <CardBody>
-                <div className="space-y-3">
-                  {trend.map((p) => (
-                    <div key={p.month} className="flex items-center gap-3">
-                      <span className="w-16 shrink-0 text-xs text-slate-500">{p.month}</span>
-                      <div className="flex flex-1 items-center gap-1.5">
-                        <span className="h-2.5 rounded-full bg-brand-500" style={{ width: (p.followups / maxTrend) * 100 + '%' }} title={'回访 ' + p.followups} />
-                        <span className="h-2.5 rounded-full bg-violet-400" style={{ width: (p.reports / maxTrend) * 100 + '%' }} title={'月报 ' + p.reports} />
-                        <span className="h-2.5 rounded-full bg-emerald-400" style={{ width: (p.observations / maxTrend) * 100 + '%' }} title={'听评课 ' + p.observations} />
-                      </div>
-                      <span className="w-24 shrink-0 text-right text-[11px] text-slate-400">
-                        {p.followups}/{p.reports}/{p.observations}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 flex gap-4 text-[11px] text-slate-400">
-                  <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-brand-500" />回访</span>
-                  <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-violet-400" />月报</span>
-                  <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400" />听评课</span>
-                </div>
+                {trend.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-400">暂无月度教学产出数据</p>
+                ) : (
+                  <div className="space-y-4" role="img" aria-label="近 6 个月教学产出趋势图">
+                    {trend.map((p) => (
+                      <section key={p.month} aria-label={p.month + ' 教学产出'}>
+                        <p className="mb-2 text-xs font-medium text-slate-500">{p.month}</p>
+                        <div className="grid grid-cols-3 gap-3">
+                          {([
+                            { label: '课后回访', value: p.followups, unit: '篇', color: '#6366f1' },
+                            { label: '月报', value: p.reports, unit: '份', color: '#a78bfa' },
+                            { label: '听评课', value: p.observations, unit: '节', color: '#34d399' },
+                          ]).map((item) => (
+                            <div key={item.label}>
+                              <div className="flex items-baseline justify-between gap-1 text-[11px]">
+                                <span className="text-slate-400">{item.label}</span>
+                                <span className="shrink-0 font-medium text-slate-600">{item.value} {item.unit}</span>
+                              </div>
+                              <div className="mt-1.5"><ShareBar percent={(item.value / maxTrend) * 100} tone={item.color} /></div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                )}
               </CardBody>
             </Card>
 
@@ -512,43 +595,67 @@ export default function TeachingReview() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader
-                title="AI 质量"
-                description={monthTitle(month) + ' 的生成调用成功率与延迟'}
+                title="AI 生成服务概览"
+                description={monthTitle(month) + ' 的真实调用结果、响应耗时与业务分布'}
                 icon={<BarChart3 className="h-4 w-4" />}
-                action={<Badge tone={aiTone}>{formatPercent(summary.quality.aiSuccessRate)}</Badge>}
+                action={<Badge tone={aiStatus.tone}>整体{aiStatus.label} · {formatPercent(summary.quality.aiSuccessRate)}</Badge>}
               />
               <CardBody>
                 <div className="grid grid-cols-3 gap-3 text-center">
-                  <div className="rounded-lg bg-slate-50 py-3">
-                    <p className="text-lg font-bold text-slate-800">{summary.quality.aiCalls}</p>
-                    <p className="text-[11px] text-slate-400">调用</p>
+                  <div className="rounded-lg bg-slate-50 px-2 py-3">
+                    <p className="text-lg font-bold text-slate-800">{summary.quality.aiCalls}<span className="ml-1 text-xs font-normal text-slate-400">次</span></p>
+                    <p className="text-[11px] text-slate-400">AI 调用总量</p>
                   </div>
-                  <div className="rounded-lg bg-slate-50 py-3">
-                    <p className="text-lg font-bold text-slate-800">{summary.quality.aiErrorCount}</p>
-                    <p className="text-[11px] text-slate-400">失败</p>
+                  <div className="rounded-lg bg-slate-50 px-2 py-3">
+                    <p className="text-lg font-bold text-slate-800">{summary.quality.aiErrorCount}<span className="ml-1 text-xs font-normal text-slate-400">次</span></p>
+                    <p className="text-[11px] text-slate-400">失败调用</p>
                   </div>
-                  <div className="rounded-lg bg-slate-50 py-3">
-                    <p className="text-lg font-bold text-slate-800">{summary.quality.avgLatencyMs ?? '—'}</p>
-                    <p className="text-[11px] text-slate-400">平均 ms</p>
+                  <div className="rounded-lg bg-slate-50 px-2 py-3">
+                    <p className="text-lg font-bold text-slate-800">{summary.quality.avgLatencyMs ?? '—'}{summary.quality.avgLatencyMs == null ? null : <span className="ml-1 text-xs font-normal text-slate-400">毫秒</span>}</p>
+                    <p className="text-[11px] text-slate-400">平均响应耗时</p>
                   </div>
                 </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-400">整体成功率 = 成功状态的调用 ÷ 全部调用；平均耗时只统计有耗时值的调用。状态提示沿用页面既有阈值：≥95% 运行稳定，80% 至不足 95% 需要关注，低于 80% 优先排查。</p>
+                <div className="mt-3"><SuccessRateTrend points={trend} /></div>
                 {summary.quality.aiSuccessRate != null && summary.quality.aiSuccessRate < 80 && (
                   <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
                     <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <span>成功率偏低。这里只展示调用结果，具体原因请结合「AI 指标」和模型服务日志排查，不据此猜测限流或密钥状态。</span>
+                    <span>整体成功率低于 80%，建议优先查看失败记录与模型服务日志；状态标签只反映调用结果，不代表教学质量。</span>
                   </div>
                 )}
-                <div className="mt-4 space-y-2">
-                  {summary.quality.byEndpoint.slice(0, 6).map((e) => (
-                    <div key={e.endpoint} className="flex items-center justify-between text-xs">
-                      <span className="truncate font-mono text-slate-500">{e.endpoint}</span>
-                      <span className="shrink-0 text-slate-400">
-                        {e.calls} 次 · 成功 {e.successRate}% · 含重试 {e.retryCount} 次 · {e.avgLatencyMs == null ? '—' : e.avgLatencyMs + 'ms'}
-                      </span>
-                    </div>
-                  ))}
+                <div className="mt-4 border-t border-slate-100 pt-4">
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold text-slate-600">按教学业务查看</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">逐段与整篇生成分别统计，单位均为调用次数与毫秒</p>
+                  </div>
+                  <div className="space-y-3">
+                    {summary.quality.byEndpoint.slice(0, 6).map((e) => {
+                      const presentation = endpointPresentation(e.endpoint);
+                      const status = successStatus(e.successRate);
+                      return (
+                        <section key={e.endpoint} className="rounded-xl border border-slate-100 p-3" aria-label={presentation.label}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-xs font-semibold text-slate-700">{presentation.label}</p>
+                              <p className="mt-0.5 text-[11px] text-slate-400">{presentation.description}</p>
+                            </div>
+                            <Badge tone={status.tone}>{status.label}</Badge>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+                            <div className="rounded-lg bg-slate-50 p-2"><p className="text-xs font-semibold text-slate-700">{e.calls} 次</p><p className="mt-0.5 text-[10px] text-slate-400">调用总量</p></div>
+                            <div className="rounded-lg bg-slate-50 p-2"><p className="text-xs font-semibold text-slate-700">{formatPercent(e.successRate)}</p><p className="mt-0.5 text-[10px] text-slate-400">生成成功率</p></div>
+                            <div className="rounded-lg bg-slate-50 p-2"><p className="text-xs font-semibold text-slate-700">{e.retryCount} 次</p><p className="mt-0.5 text-[10px] text-slate-400">含重试 · {formatPercent(e.retryRate)}</p></div>
+                            <div className="rounded-lg bg-slate-50 p-2"><p className="text-xs font-semibold text-slate-700">{formatLatency(e.avgLatencyMs)}</p><p className="mt-0.5 text-[10px] text-slate-400">平均响应耗时</p></div>
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
                   {summary.quality.byEndpoint.length === 0 && (
                     <p className="py-4 text-center text-sm text-slate-400">本月暂无 AI 调用记录</p>
+                  )}
+                  {summary.quality.byEndpoint.length > 6 && (
+                    <p className="mt-2 text-center text-[11px] text-slate-400">按调用量仅展示前 6 类业务</p>
                   )}
                 </div>
               </CardBody>
@@ -556,8 +663,8 @@ export default function TeachingReview() {
 
             <Card>
               <CardHeader
-                title="学生成长"
-                description="知识点掌握度分布与出勤（跨月累计）"
+                title="学生成长与出勤"
+                description="掌握度为当前知识点快照；学生内先平均，再跨学生等权汇总，不代表本月提升幅度"
                 icon={<Users className="h-4 w-4" />}
               />
               <CardBody className="space-y-4">
@@ -583,14 +690,13 @@ export default function TeachingReview() {
                     {summary.growth.map((g) => (
                       <div key={g.category}>
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-medium text-slate-600">{CATEGORY_LABELS[g.category] || g.category}</span>
-                          <span className="text-slate-400">
-                          {g.total} 个 · 稳固 {g.solid} · 薄弱 {g.weak}
-                          </span>
+                          <span className="font-medium text-slate-600">{CATEGORY_LABELS[g.category] || '其他知识类别'}</span>
+                          <span className="text-slate-500">平均掌握 {Math.round(g.avgMastery * 100)}%</span>
                         </div>
                         <div className="mt-1.5">
-                          <ShareBar percent={Math.round(g.avgMastery * 100)} tone="#6366f1" />
+                          <ShareBar percent={Math.round(g.avgMastery * 100)} tone="#6366f1" label={(CATEGORY_LABELS[g.category] || '其他知识类别') + '平均掌握度 ' + Math.round(g.avgMastery * 100) + '%'} />
                         </div>
+                        <p className="mt-1 text-[10px] text-slate-400">记录 {g.total} 个知识点 · 稳固 {g.solid} 个 · 薄弱 {g.weak} 个</p>
                       </div>
                     ))}
                   </div>
@@ -625,12 +731,12 @@ export default function TeachingReview() {
               <CardHeader title="回访内容质量" description="结构化、图片和引用是当前记录的可核验属性" icon={<ClipboardList className="h-4 w-4" />} />
               <CardBody>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{summary.followupQuality.total}</p><p className="text-[11px] text-slate-400">回访总数</p></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{summary.followupQuality.avgWordCount ?? '—'}</p><p className="text-[11px] text-slate-400">平均字数</p></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.structuredRate)}</p><p className="text-[11px] text-slate-400">五板块完整</p></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.imageRecordRate)}</p><p className="text-[11px] text-slate-400">含图片路径</p></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.historicalReferenceRate)}</p><p className="text-[11px] text-slate-400">有内容引用</p></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.parentReadRate)}</p><p className="text-[11px] text-slate-400">家长链接已读</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{summary.followupQuality.total}<span className="ml-1 text-xs font-normal text-slate-400">篇</span></p><p className="text-[11px] text-slate-400">回访总数</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{summary.followupQuality.avgWordCount ?? '—'}{summary.followupQuality.avgWordCount == null ? null : <span className="ml-1 text-xs font-normal text-slate-400">字</span>}</p><p className="text-[11px] text-slate-400">平均字数</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.structuredRate)}</p><p className="text-[11px] text-slate-400">五板块完整</p><p className="mt-1 text-[10px] text-slate-400">{summary.followupQuality.structured}/{summary.followupQuality.total} 篇</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.imageRecordRate)}</p><p className="text-[11px] text-slate-400">含图片路径</p><p className="mt-1 text-[10px] text-slate-400">{summary.followupQuality.withImages}/{summary.followupQuality.total} 篇</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.historicalReferenceRate)}</p><p className="text-[11px] text-slate-400">有内容引用</p><p className="mt-1 text-[10px] text-slate-400">{summary.followupQuality.referenced}/{summary.followupQuality.total} 篇</p></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-bold text-slate-800">{formatPercent(summary.followupQuality.parentReadRate)}</p><p className="text-[11px] text-slate-400">家长链接已读</p><p className="mt-1 text-[10px] text-slate-400">已读 {summary.followupQuality.parentRead} · 已分享 {summary.followupQuality.parentShared}</p></div>
                 </div>
                 <p className="mt-3 text-[11px] leading-relaxed text-slate-400">图片率不代表图片仍可访问或识别成功；家长阅读率按当前分享链接的 read_at 计算。</p>
               </CardBody>
@@ -644,23 +750,23 @@ export default function TeachingReview() {
                 <div className="space-y-3">
                   {summary.quality.funnel.map((item) => (
                     <div key={item.key}>
-                      <div className="flex items-center justify-between text-xs"><span className="text-slate-600">{item.label}</span><span className="text-slate-500">{item.value}</span></div>
+                      <div className="flex items-center justify-between text-xs"><span className="text-slate-600">{item.label}</span><span className="text-slate-500">{item.value} 次</span></div>
                       <div className="mt-1"><ShareBar percent={(item.value / maxFunnel) * 100} tone="#0ea5e9" /></div>
                     </div>
                   ))}
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
                   <div className="rounded-lg bg-slate-50 p-2"><p className="font-semibold text-slate-700">{formatPercent(summary.quality.aiRetryRate)}</p><p className="text-slate-400">含重试调用占比</p></div>
-                  <div className="rounded-lg bg-slate-50 p-2"><p className="font-semibold text-slate-700">{summary.quality.retryAttempts}</p><p className="text-slate-400">累计重试次数</p></div>
-                  <div className="rounded-lg bg-slate-50 p-2"><p className="font-semibold text-slate-700">{summary.quality.totalTokens}</p><p className="text-slate-400">总 tokens</p></div>
+                  <div className="rounded-lg bg-slate-50 p-2"><p className="font-semibold text-slate-700">{summary.quality.retryAttempts} 次</p><p className="text-slate-400">累计重试次数</p></div>
+                  <div className="rounded-lg bg-slate-50 p-2"><p className="font-semibold text-slate-700">{summary.quality.totalTokens.toLocaleString('zh-CN')}<span className="ml-1 text-[10px] font-normal text-slate-400">tokens</span></p><p className="text-slate-400">模型 Token 总量</p></div>
                 </div>
-                <p className="mt-3 text-[11px] leading-relaxed text-slate-400">含重试调用 = status 为 retry 或 retry_count &gt; 0 的调用；不是教师主动重新生成率。累计重试次数为 retry_count 求和。</p>
-                <p className="mt-3 text-xs text-slate-500">字数达标：{summary.quality.wordTarget.inRange}/{summary.quality.wordTarget.measured}（{formatPercent(summary.quality.wordTarget.rate)}）</p>
+                <p className="mt-3 text-[11px] leading-relaxed text-slate-400">含重试调用 = 调用状态标记为重试，或记录的重试次数大于 0；不是教师主动重新生成率。累计重试次数为各调用已记录重试次数之和；Token 总量为已记录模型用量之和。</p>
+                <p className="mt-3 text-xs text-slate-500">字数达标：{summary.quality.wordTarget.inRange}/{summary.quality.wordTarget.measured} 次（{formatPercent(summary.quality.wordTarget.rate)}），分母仅包含有字数目标的成功调用。</p>
               </CardBody>
             </Card>
 
             <Card>
-              <CardHeader title="延迟与字数" description="成功调用的原始记录，最多最近 200 条" icon={<TrendingUp className="h-4 w-4" />} />
+              <CardHeader title="响应耗时与生成字数" description="成功调用的原始记录，最多最近 200 条" icon={<TrendingUp className="h-4 w-4" />} />
               <CardBody><LatencyScatter points={summary.quality.latencyWordCount} /></CardBody>
             </Card>
           </div>
@@ -692,7 +798,7 @@ export default function TeachingReview() {
             </Card>
 
             <Card>
-              <CardHeader title="本人小组对标" description="掌握度与 delta 分别只在有记录的学生内等权平均；不包含其他教师数据" icon={<Users className="h-4 w-4" />} />
+              <CardHeader title="本人小组对比" description="掌握度与月报知识变化分别只在有记录的学生内等权平均；不包含其他教师数据" icon={<Users className="h-4 w-4" />} />
               <CardBody>
                 {summary.groupComparisons.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">还没有本人创建的小组</p> : (
                   <div className="space-y-3">
@@ -701,7 +807,7 @@ export default function TeachingReview() {
                         <div className="flex items-center justify-between"><span className="text-sm font-medium text-slate-700">{group.groupName}</span><span className="text-xs text-slate-400">{group.studentCount} 名学生</span></div>
                         <div className="mt-2 grid grid-cols-3 gap-2 text-center text-xs">
                           <div><p className="font-semibold text-slate-700">{group.avgMastery == null ? '—' : Math.round(group.avgMastery * 100) + '%'}</p><p className="text-slate-400">当前掌握 · {group.masteryStudentCount}/{group.studentCount} 人</p></div>
-                          <div><p className="font-semibold text-slate-700">{group.avgMasteryDelta == null ? '—' : (group.avgMasteryDelta >= 0 ? '+' : '') + group.avgMasteryDelta}</p><p className="text-slate-400">月报 delta · {group.deltaStudentCount}/{group.studentCount} 人</p></div>
+                          <div><p className="font-semibold text-slate-700">{group.avgMasteryDelta == null ? '—' : (group.avgMasteryDelta >= 0 ? '+' : '') + group.avgMasteryDelta}</p><p className="text-slate-400">月报知识变化 · {group.deltaStudentCount}/{group.studentCount} 人</p></div>
                           <div><p className="font-semibold text-slate-700">{formatPercent(group.followupCoverageRate)}</p><p className="text-slate-400">回访覆盖</p></div>
                         </div>
                       </div>
@@ -713,11 +819,11 @@ export default function TeachingReview() {
           </div>
 
           <Card>
-            <CardHeader title="本月知识变化（原始 delta）" description="来自月报与知识点关联，不等同于历史掌握度曲线" icon={<TrendingUp className="h-4 w-4" />} />
+            <CardHeader title="本月知识变化（月报记录值）" description="按类别汇总月报关联知识点的原始变化值；不是百分比，也不是历史掌握度曲线" icon={<TrendingUp className="h-4 w-4" />} />
             <CardBody>
-              {summary.monthlyKnowledgeDelta.length === 0 ? <p className="py-4 text-center text-sm text-slate-400">本月没有月报知识点 delta 记录</p> : (
+              {summary.monthlyKnowledgeDelta.length === 0 ? <p className="py-4 text-center text-sm text-slate-400">本月没有月报知识点变化记录</p> : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {summary.monthlyKnowledgeDelta.map((item) => <div key={item.category} className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">{CATEGORY_LABELS[item.category] || item.category}</p><p className={'mt-1 text-xl font-bold ' + (item.delta >= 0 ? 'text-emerald-600' : 'text-rose-600')}>{item.delta >= 0 ? '+' : ''}{item.delta}</p><p className="text-[11px] text-slate-400">{item.evidenceCount} 条证据</p></div>)}
+                  {summary.monthlyKnowledgeDelta.map((item) => <div key={item.category} className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">{CATEGORY_LABELS[item.category] || '其他知识类别'}</p><p className={'mt-1 text-xl font-bold ' + (item.delta >= 0 ? 'text-emerald-600' : 'text-rose-600')}>{item.delta >= 0 ? '+' : ''}{item.delta}</p><p className="text-[11px] text-slate-400">原始变化值 · {item.evidenceCount} 条月报证据</p></div>)}
                 </div>
               )}
             </CardBody>

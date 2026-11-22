@@ -353,82 +353,102 @@ export function getRiskStudents(reportId: number, limit = 200): RiskStudentDto[]
   }));
 }
 
-/**
- * 教师 × 学管 矩阵（仅 mentor tab 可用）。
- * 通过学生名关联 teacher_stats.grid_students 与 student_funnel.manager_name。
- */
-export function getMentorMatrix(reportId: number): MentorMatrix {
-  // 1. 取该报表 mentor tab 下所有老师的学生（带状态）
-  const teacherStudents = renewalDb.prepare(`
-    SELECT gs.teacher_name, gs.student_name, gs.status
-    FROM grid_students gs
-    JOIN teacher_stats ts ON ts.report_id = gs.report_id AND ts.tab = gs.tab AND ts.teacher_name = gs.teacher_name
-    WHERE gs.report_id = ? AND gs.tab = 'mentor'
-  `).all(reportId) as { teacher_name: string; student_name: string; status: string }[];
+interface MentorStudent {
+  teacherName: string;
+  studentName: string;
+  managerName: string;
+  subjectGroup: string;
+  status: string;
+}
 
-  // 2. 取该报表所有学生的学管（student_funnel）
-  const studentManagers = renewalDb.prepare(`
+/** 读取学管学生网格；先按教师+学生去重，避免重复教师统计/网格行放大计数。 */
+function loadMentorStudents(reportId: number): MentorStudent[] {
+  const gridRows = renewalDb.prepare(`
+    SELECT gs.teacher_name, gs.student_name, gs.status, ts.subject_group
+    FROM grid_students gs
+    LEFT JOIN teacher_stats ts
+      ON ts.report_id = gs.report_id AND ts.tab = gs.tab AND ts.teacher_name = gs.teacher_name
+    WHERE gs.report_id = ? AND gs.tab = 'mentor'
+    ORDER BY gs.teacher_name, gs.student_name, gs.slot_index, gs.id
+  `).all(reportId) as {
+    teacher_name: string | null; student_name: string | null;
+    status: string | null; subject_group: string | null;
+  }[];
+  const managerRows = renewalDb.prepare(`
     SELECT student_name, manager_name FROM student_funnel
-    WHERE report_id = ? AND manager_name IS NOT NULL AND student_name NOT IN ('小计', '合计')
-  `).all(reportId) as { student_name: string; manager_name: string }[];
+    WHERE report_id = ? AND student_name NOT IN ('小计', '合计')
+    ORDER BY id
+  `).all(reportId) as { student_name: string | null; manager_name: string | null }[];
 
   const managerByStudent = new Map<string, string>();
-  for (const sm of studentManagers) {
-    managerByStudent.set(sm.student_name, sm.manager_name);
+  for (const row of managerRows) {
+    const studentName = row.student_name?.trim();
+    const managerName = row.manager_name?.trim();
+    // 同一学生重复明细取首个非空学管，空值统一进入“未分配学管”。
+    if (studentName && managerName && !managerByStudent.has(studentName)) {
+      managerByStudent.set(studentName, managerName);
+    }
   }
 
-  // 3. 聚合成矩阵
-  const cellMap = new Map<string, MentorMatrixCell>(); // key: teacher|manager
+  const students = new Map<string, MentorStudent>();
+  for (const row of gridRows) {
+    const studentName = row.student_name?.trim();
+    if (!studentName) continue;
+    const teacherName = row.teacher_name?.trim() || '未填写教师';
+    const key = JSON.stringify([teacherName, studentName]);
+    if (students.has(key)) continue;
+    students.set(key, {
+      teacherName,
+      studentName,
+      managerName: managerByStudent.get(studentName) || '未分配学管',
+      subjectGroup: row.subject_group?.trim() || '未知科组',
+      status: row.status || 'normal',
+    });
+  }
+  return Array.from(students.values());
+}
+
+/** 教师 × 学管矩阵：学生状态仅来自 mentor 网格，学管来自续生率明细。 */
+export function getMentorMatrix(reportId: number): MentorMatrix {
+  const cellMap = new Map<string, MentorMatrixCell>();
   const teachers = new Set<string>();
   const managers = new Set<string>();
 
-  for (const ts of teacherStudents) {
-    const teacher = ts.teacher_name;
-    const manager = managerByStudent.get(ts.student_name) || '未分配学管';
-    teachers.add(teacher);
-    managers.add(manager);
-
-    const key = teacher + '|' + manager;
+  for (const student of loadMentorStudents(reportId)) {
+    const { teacherName, managerName } = student;
+    teachers.add(teacherName);
+    managers.add(managerName);
+    // JSON 复合键不会像 "|" 拼接那样在名称本身含分隔符时碰撞。
+    const key = JSON.stringify([teacherName, managerName]);
     let cell = cellMap.get(key);
     if (!cell) {
       cell = {
-        teacherName: teacher,
-        managerName: manager,
-        studentCount: 0,
-        prepaidCount: 0,
-        renewedCount: 0,
-        prepaidRate: null,
-        renewRate: null,
-        students: [],
+        teacherName, managerName,
+        studentCount: 0, prepaidCount: 0, renewedCount: 0,
+        prepaidRate: null, renewRate: null, students: [],
       };
       cellMap.set(key, cell);
     }
     cell.studentCount++;
-    if (ts.status === 'prepaid') cell.prepaidCount++;
-    if (ts.status === 'renewed') cell.renewedCount++;
-    cell.students.push({ name: ts.student_name, status: ts.status });
+    if (student.status === 'prepaid') cell.prepaidCount++;
+    if (student.status === 'renewed') cell.renewedCount++;
+    cell.students.push({ name: student.studentName, status: student.status });
   }
-
-  // 计算率
-  for (const cell of cellMap.values()) {
-    cell.prepaidRate = cell.studentCount > 0 ? (cell.prepaidCount / cell.studentCount) * 100 : null;
-    cell.renewRate = cell.studentCount > 0 ? (cell.renewedCount / cell.studentCount) * 100 : null;
-  }
-
-  const sortedTeachers = Array.from(teachers).sort();
-  const sortedManagers = Array.from(managers).sort();
 
   let totalPrepaid = 0, totalRenewed = 0, totalStudents = 0;
   for (const cell of cellMap.values()) {
+    cell.prepaidRate = cell.studentCount > 0 ? (cell.prepaidCount / cell.studentCount) * 100 : null;
+    cell.renewRate = cell.studentCount > 0 ? (cell.renewedCount / cell.studentCount) * 100 : null;
     totalPrepaid += cell.prepaidCount;
     totalRenewed += cell.renewedCount;
     totalStudents += cell.studentCount;
   }
 
   return {
-    teachers: sortedTeachers,
-    managers: sortedManagers,
-    cells: Array.from(cellMap.values()),
+    teachers: Array.from(teachers).sort(),
+    managers: Array.from(managers).sort(),
+    cells: Array.from(cellMap.values()).sort((a, b) =>
+      a.teacherName.localeCompare(b.teacherName) || a.managerName.localeCompare(b.managerName)),
     totalPrepaid,
     totalRenewed,
     totalStudents,
@@ -602,124 +622,59 @@ export function getGroupGradeMatrix(reportId: number): GroupGradeMatrix {
  * 整体续费概览（预交/到期/续费/流失率环形图数据）。
  */
 export function getRateOverview(reportId: number): RateOverview {
-  // 1. 取该报表 mentor tab 下的所有学生状态
-  const students = renewalDb.prepare(`
-    SELECT gs.student_name, gs.status
-    FROM grid_students gs
-    JOIN teacher_stats ts ON ts.report_id = gs.report_id AND ts.tab = gs.tab AND ts.teacher_name = gs.teacher_name
-    WHERE gs.report_id = ? AND gs.tab = 'mentor'
-  `).all(reportId) as { student_name: string; status: string }[];
-
-  // 2. 取该报表 student_funnel 表中的状态（更完整的状态信息）
-  const funnelStudents = renewalDb.prepare(`
-    SELECT student_name, status FROM student_funnel
-    WHERE report_id = ? AND student_name NOT IN ('小计', '合计')
-  `).all(reportId) as { student_name: string; status: string }[];
-
-  // 合并去重：以 grid_students 为准，补充 funnel 状态
-  const statusByStudent = new Map<string, string>();
-  for (const s of funnelStudents) {
-    statusByStudent.set(s.student_name, s.status);
+  // 状态只来自 mentor 网格；student_funnel 没有 status 列，仅提供学管映射。
+  const studentByName = new Map<string, MentorStudent>();
+  for (const student of loadMentorStudents(reportId)) {
+    if (!studentByName.has(student.studentName)) studentByName.set(student.studentName, student);
   }
-  for (const s of students) {
-    if (!statusByStudent.has(s.student_name)) {
-      statusByStudent.set(s.student_name, s.status);
-    }
-  }
-
-  // 3. 统计各状态人数
+  const students = Array.from(studentByName.values());
   const counts = { prepaid: 0, expired: 0, renewed: 0, lost: 0 };
-  for (const [, status] of statusByStudent) {
-    const s = status.toLowerCase();
-    if (s === 'prepaid' || s === '预交') counts.prepaid++;
-    else if (s === 'expired' || s === '到期未续') counts.expired++;
-    else if (s === 'renewed' || s === '已续费') counts.renewed++;
-    else if (s === 'lost' || s === '流失') counts.lost++;
+  for (const student of students) {
+    const status = student.status.toLowerCase();
+    if (status === 'prepaid' || status === '预交') counts.prepaid++;
+    else if (status === 'expired' || status === '到期未续') counts.expired++;
+    else if (status === 'renewed' || status === '已续费') counts.renewed++;
+    else if (status === 'lost' || status === '流失') counts.lost++;
     else counts.expired++;
   }
+  const total = students.length;
 
-  const total = counts.prepaid + counts.expired + counts.renewed + counts.lost;
-  
-  // 按学管统计（通过 student_funnel 关联 manager_name）
-  const teacherStudents = renewalDb.prepare(`
-    SELECT gs.teacher_name, gs.student_name, gs.status, sf.manager_name
-    FROM grid_students gs
-    JOIN student_funnel sf ON sf.report_id = gs.report_id AND sf.student_name = gs.student_name
-    WHERE gs.report_id = ? AND gs.tab = 'mentor' AND sf.manager_name IS NOT NULL
-  `).all(reportId) as { teacher_name: string; student_name: string; status: string; manager_name: string | null }[];
-
-  const managerStats = new Map<string, { baseCount: number; prepaidCount: number; renewedCount: number }>();
-  for (const ts of teacherStudents) {
-    const manager = ts.manager_name || '未分配学管';
-    if (!managerStats.has(manager)) {
-      managerStats.set(manager, { baseCount: 0, prepaidCount: 0, renewedCount: 0 });
+  type Aggregate = { baseCount: number; prepaidCount: number; renewedCount: number };
+  const aggregateBy = (keyOf: (student: MentorStudent) => string) => {
+    const stats = new Map<string, Aggregate>();
+    for (const student of students) {
+      const key = keyOf(student);
+      if (!stats.has(key)) stats.set(key, { baseCount: 0, prepaidCount: 0, renewedCount: 0 });
+      const stat = stats.get(key)!;
+      stat.baseCount++;
+      const status = student.status.toLowerCase();
+      if (status === 'prepaid' || status === '预交') stat.prepaidCount++;
+      else if (status === 'renewed' || status === '已续费') stat.renewedCount++;
     }
-    const stat = managerStats.get(manager)!;
-    stat.baseCount++;
-    const s = ts.status.toLowerCase();
-    if (s === 'prepaid' || s === '预交') stat.prepaidCount++;
-    else if (s === 'renewed' || s === '已续费') stat.renewedCount++;
-  }
-
-  const byManager = Array.from(managerStats.entries()).map(([managerName, stat]) => ({
-    managerName,
+    return stats;
+  };
+  const managerStats = aggregateBy(student => student.managerName);
+  const groupStats = aggregateBy(student => student.subjectGroup);
+  const withRates = (stat: Aggregate) => ({
     baseCount: stat.baseCount,
     prepaidCount: stat.prepaidCount,
     renewedCount: stat.renewedCount,
     prepaidRate: stat.baseCount > 0 ? (stat.prepaidCount / stat.baseCount) * 100 : 0,
     renewRate: stat.baseCount > 0 ? (stat.renewedCount / stat.baseCount) * 100 : 0,
-  }));
-
-  // 按科组统计（teacher_stats 有 subject_group）
-  const teacherStudents2 = renewalDb.prepare(`
-    SELECT gs.teacher_name, gs.student_name, gs.status, ts.subject_group
-    FROM grid_students gs
-    JOIN teacher_stats ts ON ts.report_id = gs.report_id AND ts.tab = gs.tab AND ts.teacher_name = gs.teacher_name
-    WHERE gs.report_id = ? AND gs.tab = 'mentor'
-  `).all(reportId) as { teacher_name: string; student_name: string; status: string; subject_group: string | null }[];
-
-  const groupStats = new Map<string, { baseCount: number; prepaidCount: number; renewedCount: number }>();
-  for (const ts of teacherStudents2) {
-    const group = ts.subject_group || '未知科组';
-    if (!groupStats.has(group)) {
-      groupStats.set(group, { baseCount: 0, prepaidCount: 0, renewedCount: 0 });
-    }
-    const stat = groupStats.get(group)!;
-    stat.baseCount++;
-    const s = ts.status.toLowerCase();
-    if (s === 'prepaid' || s === '预交') stat.prepaidCount++;
-    else if (s === 'renewed' || s === '已续费') stat.renewedCount++;
-  }
-
-  const byGroup = Array.from(groupStats.entries()).map(([subjectGroup, stat]) => ({
-    subjectGroup,
-    baseCount: stat.baseCount,
-    prepaidCount: stat.prepaidCount,
-    renewedCount: stat.renewedCount,
-    prepaidRate: stat.baseCount > 0 ? (stat.prepaidCount / stat.baseCount) * 100 : 0,
-    renewRate: stat.baseCount > 0 ? (stat.renewedCount / stat.baseCount) * 100 : 0,
-  }));
+  });
+  const byManager = Array.from(managerStats.entries())
+    .map(([managerName, stat]) => ({ managerName, ...withRates(stat) }))
+    .sort((a, b) => a.managerName.localeCompare(b.managerName));
+  const byGroup = Array.from(groupStats.entries())
+    .map(([subjectGroup, stat]) => ({ subjectGroup, ...withRates(stat) }))
+    .sort((a, b) => a.subjectGroup.localeCompare(b.subjectGroup));
 
   if (total === 0) {
     return {
-      total: 0,
-      prepaidCount: 0,
-      expiredCount: 0,
-      renewedCount: 0,
-      lostCount: 0,
-      prepaidRate: 0,
-      expiredRate: 0,
-      renewedRate: 0,
-      lostRate: 0,
-      overall: {
-        baseCount: 0,
-        prepaidCount: 0,
-        renewedCount: 0,
-        prepaidRate: 0,
-        renewRate: 0,
-      },
-      byManager: [],
-      byGroup: [],
+      total: 0, prepaidCount: 0, expiredCount: 0, renewedCount: 0, lostCount: 0,
+      prepaidRate: 0, expiredRate: 0, renewedRate: 0, lostRate: 0,
+      overall: { baseCount: 0, prepaidCount: 0, renewedCount: 0, prepaidRate: 0, renewRate: 0 },
+      byManager: [], byGroup: [],
     };
   }
 

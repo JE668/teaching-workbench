@@ -28,7 +28,13 @@ function makeTeacher(overrides: Record<string, unknown> = {}) {
     renewedCount: 14,
     renewRate: 70,
     incentiveGap: 3,
-    extra: { juniorBase: 12, junior3Base: 4, junior3Prepaid: 2, under80: 11, over80: 9, renew80: 5 },
+    extra: {
+      enroll_nongrad: 12, prepaid_nongrad: 5,
+      enroll_g9: 4, prepaid_g9: 2,
+      enroll_g12: 4, prepaid_g12: 1,
+      enroll_0_80: 11, prepaid_0_80: 6,
+      enroll_80p: 9, prepaid_80p: 2,
+    },
     studentCount: 3,
     students: [
       { name: '李小四', status: 'renewed', slot: 1 },
@@ -102,6 +108,27 @@ function mockApi(options: {
     if (path.includes('/manager-perf')) return Promise.resolve({ reportId: 1, rows: options.manager || [] });
     if (path.includes('/funnel')) return Promise.resolve({ reportId: 1, rows: options.funnel || [] });
     if (path.includes('/risk-list')) return Promise.resolve({ reportId: 1, rows: options.risk || [] });
+    if (path.includes('/mentor-matrix')) {
+      return Promise.resolve({ matrix: {
+        teachers: ['张明'], managers: ['郑淼林'], totalStudents: 20, totalPrepaid: 8, totalRenewed: 14,
+        cells: [{ teacherName: '张明', managerName: '郑淼林', studentCount: 20, prepaidCount: 8, renewedCount: 14, prepaidRate: 40, renewRate: 70, students: [] }],
+      } });
+    }
+    if (path.includes('/teacher-grade-matrix')) {
+      return Promise.resolve({ matrix: {
+        teachers: ['张明'], grades: ['初三'], totalStudents: 4, totalPrepaid: 2, totalRenewed: 3,
+        cells: [{ teacherName: '张明', grade: '初三', studentCount: 4, prepaidCount: 2, renewedCount: 3, prepaidRate: 50, renewRate: 75, students: [] }],
+      } });
+    }
+    if (path.includes('/group-grade-matrix')) {
+      return Promise.resolve({ matrix: { subjectGroups: ['理科'], grades: ['初三'], cells: [], totalStudents: 0, totalPrepaid: 0, totalRenewed: 0 } });
+    }
+    if (path.includes('/rate-overview')) {
+      return Promise.resolve({ overview: {
+        byManager: [{ managerName: '郑淼林', prepaidRate: 40, renewRate: 70 }],
+        byGroup: [{ subjectGroup: '理科', prepaidRate: 40, renewRate: 70 }],
+      } });
+    }
     if (path.includes('/student-status')) {
       return Promise.resolve({
         reportId: 1,
@@ -137,11 +164,9 @@ describe('续费看板', () => {
     mockApi({ teacher: [makeTeacher(), makeTeacher({ teacherName: '李华', teacherNo: 'T002', baseCount: 10, renewedCount: 5, prepaidCount: 4, incentiveGap: 1 })] });
     renderWithProviders(<RenewalDashboard />);
 
-    // 30 = 20 + 10 学生基数；19 = 14 + 5 已续科
-    // 基数 30 出现在两处：顶部 KpiCard 与 TeacherViewEnhanced 汇总卡
-    await screen.findAllByText('30');
-    expect(screen.getAllByText('30').length).toBeGreaterThanOrEqual(2);
-    // 19 和 12 可能在 KpiCard 和 TeacherViewEnhanced 汇总卡各出现一次，用 findAllByText 避免多元素报错
+    // 30 = 20 + 10 学生基数；19 = 14 + 5 已续科。顶部只保留一份汇总，避免重复卡片。
+    expect(await screen.findByText('30')).toBeInTheDocument();
+    // 19 和 12 来自教师明细汇总
     expect((await screen.findAllByText('19')).length).toBeGreaterThanOrEqual(1);
     expect((await screen.findAllByText('12')).length).toBeGreaterThanOrEqual(1);
     // 图例颜色说明来自 Excel 条件格式
@@ -168,6 +193,41 @@ describe('续费看板', () => {
       const call = getMock.mock.calls.find(([p]) => String(p).includes('tab=hours'));
       expect(call).toBeDefined();
     });
+  });
+
+  it('学段和课时使用 Excel 真实拆分字段并展示分布图', async () => {
+    mockApi({ teacher: [makeTeacher()] });
+    const user = userEvent.setup();
+    renderWithProviders(<RenewalDashboard />);
+    await screen.findByRole('table');
+
+    await user.click(screen.getByRole('tab', { name: '学段' }));
+    expect(await screen.findByRole('img', { name: '非毕业班：在读 12 人，预存 5 人' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '非毕业班在读' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '总预存' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /高一/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: '矩阵维度切换' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: '课时' }));
+    expect(await screen.findByRole('img', { name: '0–80 课时：在读 11 人，预存 6 人' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '80+ 课时：在读 9 人，预存 2 人' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '80+课时预存' })).toBeInTheDocument();
+  });
+
+  it('学管维度解包并展示教师学管和教师年级矩阵', async () => {
+    mockApi({ teacher: [makeTeacher()] });
+    const user = userEvent.setup();
+    renderWithProviders(<RenewalDashboard />);
+    await screen.findByRole('table');
+
+    await user.click(screen.getByRole('tab', { name: '学管' }));
+    expect(await screen.findByText('教师 × 学管匹配矩阵')).toBeInTheDocument();
+    expect(await screen.findByRole('columnheader', { name: '郑淼林' })).toBeInTheDocument();
+    expect(screen.getByText('每格为学生数；预 = 预存，续 = 已续费。点击单元格可查看学生明细。')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: '教师×年级' }));
+    expect(await screen.findByRole('columnheader', { name: '初三' })).toBeInTheDocument();
+    expect(screen.getByText('教师 × 年级分布')).toBeInTheDocument();
   });
 
   it('教师行默认显示学生色块，点击展开显示完整学生网格', async () => {

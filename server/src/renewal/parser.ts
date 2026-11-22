@@ -64,9 +64,9 @@ export const TAB_CONFIGS: TabConfig[] = [
       base_count: ['学生总数'],
       prepaid_count: ['预存人数'],
       prepaid_rate: ['预存率'],
-      renewed_count: ['续科人数'],
-      renew_rate: ['整体续科率'],
-      incentive_gap: ['激励差额'],
+      renewed_count: ['续生数'],
+      renew_rate: ['续生率'],
+      incentive_gap: ['80%人数差值'],
     },
     extra: {
       'enroll_nongrad': ['在读人数', '非毕业班'],
@@ -90,9 +90,9 @@ export const TAB_CONFIGS: TabConfig[] = [
       base_count: ['学生总数'],
       prepaid_count: ['预存人数'],
       prepaid_rate: ['预存率'],
-      renewed_count: ['续科人数'],
-      renew_rate: ['整体续科率'],
-      incentive_gap: ['激励差额'],
+      renewed_count: ['续生数'],
+      renew_rate: ['续生率'],
+      incentive_gap: ['80%人数差值'],
     },
     extra: {},
   },
@@ -110,8 +110,8 @@ export const TAB_CONFIGS: TabConfig[] = [
       prepaid_count: ['预存数'],
       prepaid_rate: ['预存率'],
       renewed_count: ['续生数'],
-      renew_rate: [],
-      incentive_gap: [],
+      renew_rate: ['续生率'],
+      incentive_gap: ['80%人数差值'],
     },
     extra: {
       'enroll_0_80': ['在读人数', '0-80'],
@@ -220,22 +220,53 @@ function toNum(v: string | number | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 归一化表头 → 列索引映射（多关键词匹配） */
+/** Excel 比率可能存为 0–1 数值、0–100 数值或带百分号字符串；接口统一输出 0–100。 */
+function toRate(v: string | number | null): number | null {
+  if (v === null || v === undefined) return null;
+  const hasPercent = typeof v === 'string' && v.includes('%');
+  const n = toNum(v);
+  if (n === null || hasPercent || n === 0) return n;
+  return n > 0 && n <= 1 ? n * 100 : n;
+}
+
+/** 读取合并单元格的表头文本；从属单元格统一取 master，避免空表头或重复覆盖。 */
+function readHeader(ws: ExcelJS.Worksheet, row: number, col: number): string {
+  const cell = ws.getRow(row).getCell(col);
+  if (!cell.isMerged || cell.master === cell) return normHeader(readCell(ws, row, col));
+  const master = cell.master;
+  return normHeader(readCell(ws, Number(master.row), Number(master.col)));
+}
+
+/** 合并两行表头，例如「在读人数」+「非毕业班」→「在读人数非毕业班」。 */
 function buildHeaderMap(ws: ExcelJS.Worksheet, headerRow: number): Map<string, number> {
   const map = new Map<string, number>();
   for (let col = 1; col <= ws.columnCount; col++) {
-    const text = normHeader(readCell(ws, headerRow, col));
-    if (text) map.set(text, col);
+    const top = readHeader(ws, headerRow, col);
+    const sub = readHeader(ws, headerRow + 1, col);
+    const text = top === sub ? top : [top, sub].filter(Boolean).join('');
+    // 相同文本保留最左列；精确/包含匹配在 findCol 中再排序。
+    if (text && !map.has(text)) map.set(text, col);
   }
   return map;
 }
 
-/** 在表头映射里找一个关键词组合（全部包含即命中）的列号 */
+/** 精确匹配优先，其次是总计列，最后取剩余候选中表头最短者，避免误中首个拆分列。 */
 function findCol(headerMap: Map<string, number>, keywords: string[]): number | null {
-  for (const [text, col] of headerMap) {
-    if (keywords.every(k => text.includes(k))) return col;
-  }
-  return null;
+  const words = keywords.map(normHeader).filter(Boolean);
+  if (words.length === 0) return null;
+  const joined = words.join('');
+  const candidates = Array.from(headerMap.entries())
+    .filter(([text]) => words.every(word => text.includes(word)))
+    .sort(([aText, aCol], [bText, bCol]) => {
+      const aExact = aText === joined ? 0 : 1;
+      const bExact = bText === joined ? 0 : 1;
+      if (aExact !== bExact) return aExact - bExact;
+      const aTotal = words.length === 1 && /^(总|合计)/.test(aText) ? 0 : 1;
+      const bTotal = words.length === 1 && /^(总|合计)/.test(bText) ? 0 : 1;
+      if (aTotal !== bTotal) return aTotal - bTotal;
+      return aText.length - bText.length || aCol - bCol;
+    });
+  return candidates[0]?.[1] ?? null;
 }
 
 /** 老师姓名 → 年级（用于高三标记） */
@@ -366,7 +397,7 @@ export function parseTeacherStats(
   const rows: TeacherStatsRow[] = [];
 
   for (const cfg of TAB_CONFIGS) {
-    const ws = workbook.getWorksheet(cfg.sheet.trim());
+    const ws = workbook.getWorksheet(cfg.sheet) || workbook.getWorksheet(cfg.sheet.trim());
     if (!ws) continue;
 
     const headerMap = buildHeaderMap(ws, cfg.headerRow);
@@ -382,7 +413,7 @@ export function parseTeacherStats(
     let slot = 0;
     for (let r = cfg.dataStartRow; r <= ws.rowCount; r++) {
       const teacherName = colOf.teacher_name ? readCell(ws, r, colOf.teacher_name!) : null;
-      if (typeof teacherName !== 'string' || teacherName === '') break;
+      if (typeof teacherName !== 'string' || teacherName === '') continue;
       // 跳过汇总行：数学组/文科组/理综组/学习中心 等
       if (['数学组', '文科组', '理综组', '学习中心'].includes(teacherName)) break;
 
@@ -391,7 +422,7 @@ export function parseTeacherStats(
 
       const extra: Record<string, number | null> = {};
       for (const [field, col] of Object.entries(extraColOf)) {
-        if (col) extra[field] = toNum(readCell(ws, r, col));
+        extra[field] = col ? toNum(readCell(ws, r, col)) : null;
       }
 
       // 学生网格：从 gridStartCol 往右读，连续空则停
@@ -424,9 +455,9 @@ export function parseTeacherStats(
         subjectGroup: pick('subject_group') as string | null,
         baseCount: toNum(pick('base_count')),
         prepaidCount: toNum(pick('prepaid_count')),
-        prepaidRate: toNum(pick('prepaid_rate')),
+        prepaidRate: toRate(pick('prepaid_rate')),
         renewedCount: toNum(pick('renewed_count')),
-        renewRate: toNum(pick('renew_rate')),
+        renewRate: toRate(pick('renew_rate')),
         incentiveGap: toNum(pick('incentive_gap')),
         extra,
         students,
@@ -479,10 +510,10 @@ export function parseManagerPerf(workbook: ExcelJS.Workbook): ManagerPerfRow[] {
       },
       renewedCount: g('renewed_count'),
       tutoredCount: g('tutored_count'),
-      renewRate: g('renew_rate'),
+      renewRate: toRate(g('renew_rate')),
       taskAmount: g('task_amount'),
       cashflowTotal: g('cashflow_total'),
-      completionRate: g('completion_rate'),
+      completionRate: toRate(g('completion_rate')),
       actualStudents: g('actual_students'),
       perStudent: g('per_student'),
       avgOrder: g('avg_order'),
@@ -549,6 +580,35 @@ export function parseFunnel(workbook: ExcelJS.Workbook): FunnelRow[] {
       classLast1: yesNo(readCell(ws, r, FUNNEL_COLS.class_last1)),
       classLast2: yesNo(readCell(ws, r, FUNNEL_COLS.class_last2)),
       renewed: yesNo(readCell(ws, r, FUNNEL_COLS.renewed)),
+      sourceRow: r,
+    });
+  }
+
+  if (rows.length > 0) return rows;
+
+  // 部分工作簿的「续生率」只有表头，学管关系保存在「学管学生」A:L。
+  // 仅在主来源没有任何学生行时回退，避免两个来源混合后重复或口径漂移。
+  const wsManager = workbook.getWorksheet('学管学生');
+  if (!wsManager) return rows;
+  for (let r = 2; r <= wsManager.rowCount; r++) {
+    const studentName = readCell(wsManager, r, 1);
+    if (typeof studentName !== 'string' || studentName === '' || studentName === '学生姓名') continue;
+    const mgr = readCell(wsManager, r, 3);
+    const grade = readCell(wsManager, r, 2);
+    const product = readCell(wsManager, r, 4);
+    rows.push({
+      managerName: typeof mgr === 'string' && mgr !== '' ? mgr : null,
+      studentId: null,
+      studentName,
+      grade: typeof grade === 'string' ? grade : null,
+      firstEnrollDate: null,
+      enrollDays: null,
+      coef: toNum(readCell(wsManager, r, 7)),
+      type: null,
+      courseProduct: typeof product === 'string' ? product : null,
+      classLast1: null,
+      classLast2: null,
+      renewed: yesNo(readCell(wsManager, r, 9)),
       sourceRow: r,
     });
   }

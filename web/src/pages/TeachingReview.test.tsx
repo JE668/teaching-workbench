@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import TeachingReview from './TeachingReview';
 import { api } from '../api/client';
 import { renderWithProviders } from '../test/test-utils';
@@ -27,7 +27,10 @@ const summary = {
       { key: 'inRange', label: '字数达标', value: 1 },
     ],
     latencyWordCount: [{ endpoint: 'followup_stream', latencyMs: 100, wordCount: 120 }],
-    byEndpoint: [{ endpoint: 'followup_stream', calls: 4, successRate: 50, retryCount: 2, retryRate: 50, avgLatencyMs: 200 }],
+    byEndpoint: [
+      { endpoint: 'followup_stream', calls: 2, successRate: 50, retryCount: 2, retryRate: 100, avgLatencyMs: 200 },
+      { endpoint: 'followup_once', calls: 2, successRate: 50, retryCount: 0, retryRate: 0, avgLatencyMs: null },
+    ],
   },
   masteryDistribution: [{ key: 'good', label: '良好', count: 2, percent: 100 }],
   dailyActivity: [{ day: '2026-05-03', n: 2 }],
@@ -55,7 +58,10 @@ function installMock() {
   request.mockImplementation(async (path: string) => {
     if (path === '/teaching-review/access') return { canViewTeam: false };
     if (path.startsWith('/teaching-review/summary')) return summary;
-    if (path.startsWith('/teaching-review/trend')) return { months: 6, points: [{ month: '2026-05', followups: 2, reports: 1, observations: 1, aiCalls: 4, aiSuccessRate: 50 }] };
+    if (path.startsWith('/teaching-review/trend')) return { months: 6, points: [
+      { month: '2026-04', followups: 1, reports: 0, observations: 0, aiCalls: 2, aiSuccessRate: 80 },
+      { month: '2026-05', followups: 2, reports: 1, observations: 1, aiCalls: 4, aiSuccessRate: 50 },
+    ] };
     if (path.startsWith('/teaching-review/students')) return coverage;
     throw new Error('unexpected request: ' + path);
   });
@@ -82,11 +88,35 @@ describe('TeachingReview', () => {
     expect(screen.getByText('未回访学生')).toBeInTheDocument();
     expect(screen.getByText('五年级小组')).toBeInTheDocument();
     expect(screen.getByText(/当前掌握 · 2\/2 人/)).toBeInTheDocument();
-    expect(screen.getByText(/月报 delta · 2\/2 人/)).toBeInTheDocument();
+    expect(screen.getByText(/月报知识变化 · 2\/2 人/)).toBeInTheDocument();
     expect(screen.getByText('+0.3')).toBeInTheDocument();
     expect(screen.getByText('数据边界与未采集指标')).toBeInTheDocument();
     expect(screen.getByText(/成长雷达是当前知识快照/)).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'AI 调用延迟与字数散点图' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'AI 调用响应耗时与字数散点图' })).toBeInTheDocument();
+  });
+
+  it('uses business names, units, statuses and real month-over-month AI trends', async () => {
+    renderWithProviders(<TeachingReview />);
+    const stream = await screen.findByRole('region', { name: '课后回访（逐段生成）' });
+    const once = screen.getByRole('region', { name: '课后回访（整篇生成）' });
+
+    expect(within(stream).getByText('边生成边展示回访内容')).toBeInTheDocument();
+    expect(within(stream).getByText('200 毫秒')).toBeInTheDocument();
+    expect(within(stream).getByText('含重试 · 100%')).toBeInTheDocument();
+    expect(within(stream).getByText('优先排查')).toBeInTheDocument();
+    expect(within(once).getByText('生成完成后一次返回完整回访')).toBeInTheDocument();
+    expect(within(once).getByText('—')).toBeInTheDocument();
+    expect(within(once).getByText('0 次')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('followup_stream');
+    expect(document.body.textContent).not.toContain('followup_once');
+
+    expect(screen.getByText('整体优先排查 · 50%')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '近 6 个月 AI 调用成功率趋势图' })).toBeInTheDocument();
+    expect(screen.getByText('较上月 -30 个百分点')).toBeInTheDocument();
+    expect(screen.getByText('模型 Token 总量')).toBeInTheDocument();
+    const outputTrend = screen.getByRole('img', { name: '近 6 个月教学产出趋势图' });
+    expect(within(outputTrend).getByText('2026-04')).toBeInTheDocument();
+    expect(within(outputTrend).getByText('1 篇')).toBeInTheDocument();
   });
 
   it('does not turn empty attendance into a fabricated zero percent', async () => {
@@ -94,6 +124,30 @@ describe('TeachingReview', () => {
     expect(await screen.findByText('回访内容质量')).toBeInTheDocument();
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
     expect(screen.queryByText('0%')).toBeNull();
+  });
+
+  it('keeps missing AI success rates empty instead of fabricating zero or a trend', async () => {
+    const emptyAiSummary = {
+      ...summary,
+      quality: { ...summary.quality, aiSuccessRate: null, byEndpoint: [] },
+    };
+    request.mockImplementation(async (path: string) => {
+      if (path === '/teaching-review/access') return { canViewTeam: false };
+      if (path.startsWith('/teaching-review/summary')) return emptyAiSummary;
+      if (path.startsWith('/teaching-review/trend')) return { months: 6, points: [
+        { month: '2026-04', followups: 0, reports: 0, observations: 0, aiCalls: 0, aiSuccessRate: null },
+        { month: '2026-05', followups: 0, reports: 0, observations: 0, aiCalls: 0, aiSuccessRate: null },
+      ] };
+      if (path.startsWith('/teaching-review/students')) return coverage;
+      throw new Error('unexpected request: ' + path);
+    });
+    renderWithProviders(<TeachingReview />);
+
+    expect(await screen.findByText('整体暂无数据 · —')).toBeInTheDocument();
+    expect(screen.getByText('本月暂无成功率数据')).toBeInTheDocument();
+    const chart = screen.getByRole('img', { name: '近 6 个月 AI 调用成功率趋势图' });
+    expect(within(chart).queryByText('0%')).toBeNull();
+    expect(screen.queryByText(/较上月 .* 个百分点/)).toBeNull();
   });
 
   it('shows a retryable load failure instead of stale data or a permanent skeleton', async () => {
@@ -127,7 +181,7 @@ describe('TeachingReview', () => {
       throw new Error('unexpected request: ' + path);
     });
     renderWithProviders(<TeachingReview />);
-    expect(await screen.findByText('全组教学健康度')).toBeInTheDocument();
+    expect(await screen.findByText('全组教学与 AI 调用概况')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '查看 教师乙' })).toBeInTheDocument();
     expect(screen.getByText('75%')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看 教师乙' }));

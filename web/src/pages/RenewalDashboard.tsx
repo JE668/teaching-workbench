@@ -67,7 +67,7 @@ export default function RenewalDashboard() {
   const [teacherGradeMatrix, setTeacherGradeMatrix] = useState<TeacherGradeMatrix | null>(null);
   const [groupGradeMatrix, setGroupGradeMatrix] = useState<GroupGradeMatrix | null>(null);
   const [rateOverview, setRateOverview] = useState<RateOverview | null>(null);
-  const [, setMatrixLoading] = useState(false);
+  const [matrixLoading, setMatrixLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function loadReports() {
@@ -107,6 +107,10 @@ export default function RenewalDashboard() {
       // 学管矩阵 + 年级矩阵 + 科组年级矩阵 + Rate Overview（仅 mentor tab）
       if (tab === 'mentor') {
         setMatrixLoading(true);
+        setMentorMatrix(null);
+        setTeacherGradeMatrix(null);
+        setGroupGradeMatrix(null);
+        setRateOverview(null);
         const fetchWithError = async (url: string, label: string) => {
           try {
             return await api.get(url);
@@ -124,11 +128,12 @@ export default function RenewalDashboard() {
         if (!cancelled) {
           setMatrixLoading(false);
           if (mentorRes) setMentorMatrix((mentorRes as any).matrix as MentorMatrix);
-          if (gradeRes) setTeacherGradeMatrix((gradeRes as any) as TeacherGradeMatrix);
-          if (groupRes) setGroupGradeMatrix((groupRes as any) as GroupGradeMatrix);
+          if (gradeRes) setTeacherGradeMatrix((gradeRes as any).matrix as TeacherGradeMatrix);
+          if (groupRes) setGroupGradeMatrix((groupRes as any).matrix as GroupGradeMatrix);
           if (rateRes) setRateOverview((rateRes as any).overview as RateOverview);
         }
       } else if (!cancelled) {
+        setMatrixLoading(false);
         setMentorMatrix(null);
         setTeacherGradeMatrix(null);
         setGroupGradeMatrix(null);
@@ -183,19 +188,22 @@ export default function RenewalDashboard() {
 
   useEffect(() => { loadRest(); }, [loadRest]);
 
-  /** 汇总卡：当前 tab 下全体教师的基数/续科/续科率/激励差额 */
+  /** 仅汇总教师明细；保留“无此列”和真实 0 的区别。 */
   const totals = useMemo(() => {
-    if (teacherRows.length === 0) {
-      return { base: 0, renewed: 0, prepaid: 0, gap: 0, rate: 0, hasData: false };
-    }
     let base = 0, renewed = 0, gap = 0, prepaid = 0;
+    let hasBase = false, hasRenewed = false, hasGap = false, hasPrepaid = false;
     for (const r of teacherRows) {
-      base += r.baseCount || 0;
-      renewed += r.renewedCount || 0;
-      prepaid += r.prepaidCount || 0;
-      gap += r.incentiveGap || 0;
+      if (typeof r.baseCount === 'number') { base += r.baseCount; hasBase = true; }
+      if (typeof r.renewedCount === 'number') { renewed += r.renewedCount; hasRenewed = true; }
+      if (typeof r.prepaidCount === 'number') { prepaid += r.prepaidCount; hasPrepaid = true; }
+      if (typeof r.incentiveGap === 'number') { gap += r.incentiveGap; hasGap = true; }
     }
-    return { base, renewed, prepaid, gap, rate: base > 0 ? (renewed / base) * 100 : 0, hasData: true };
+    return {
+      base, renewed, prepaid, gap,
+      rate: base > 0 ? (renewed / base) * 100 : 0,
+      hasBase, hasRenewed, hasGap, hasPrepaid,
+      hasData: hasBase || hasRenewed || hasGap || hasPrepaid,
+    };
   }, [teacherRows]);
 
   const funnelStages = useMemo(() => {
@@ -271,6 +279,7 @@ export default function RenewalDashboard() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-800">续费看板</h1>
+          <p className="mt-1 text-sm text-slate-500">续费进度、学管匹配与学生状态，统一按 Excel 教师明细口径呈现</p>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -302,33 +311,33 @@ export default function RenewalDashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KpiCard
           label="学生基数"
-          value={totals.hasData ? count(totals.base) : NOT_AVAILABLE_YET}
+          value={totals.hasBase ? count(totals.base) : NOT_AVAILABLE_YET}
           tone="brand"
           icon={<Users className="h-4 w-4" />}
-          hint={totals.hasData ? '当前 tab 合计' : '数据下月开启'}
+          hint={totals.hasBase ? teacherRows.length + ' 位教师明细合计' : '当前表未提供该列'}
         />
         <KpiCard
           label="已续科"
-          value={totals.hasData ? count(totals.renewed) : NOT_AVAILABLE_YET}
+          value={totals.hasRenewed ? count(totals.renewed) : '—'}
           tone="emerald"
           icon={<TrendingUp className="h-4 w-4" />}
-          progress={totals.hasData ? clampRatio(totals.renewed, totals.base) : undefined}
-          hint={totals.hasData ? pct(totals.rate) + ' 续科率' : '数据下月开启'}
+          progress={totals.hasRenewed && totals.base > 0 ? clampRatio(totals.renewed, totals.base) : undefined}
+          hint={totals.hasRenewed ? pct(totals.rate) + ' 整体续科率' : '当前表未提供该列'}
         />
         <KpiCard
-          label="已预存"
-          value={totals.hasData ? count(totals.prepaid) : NOT_AVAILABLE_YET}
+          label="已预存（总）"
+          value={totals.hasPrepaid ? count(totals.prepaid) : '—'}
           tone="violet"
           icon={<Target className="h-4 w-4" />}
-          progress={totals.hasData ? clampRatio(totals.prepaid, totals.base) : undefined}
-          hint={totals.hasData ? pct(totals.base > 0 ? (totals.prepaid / totals.base) * 100 : 0) + ' 预存率' : '数据下月开启'}
+          progress={totals.hasPrepaid && totals.base > 0 ? clampRatio(totals.prepaid, totals.base) : undefined}
+          hint={totals.hasPrepaid ? '含全部学段，不是单项预存' : '当前表未提供该列'}
         />
         <KpiCard
-          label="激励差额合计"
-          value={totals.hasData ? count(totals.gap) : NOT_AVAILABLE_YET}
+          label="距80%目标差额"
+          value={totals.hasGap ? count(totals.gap) : '—'}
           tone="amber"
           icon={<AlertTriangle className="h-4 w-4" />}
-          hint={totals.hasData ? '正值 = 还差' : '数据下月开启'}
+          hint={totals.hasGap ? '正值 = 距目标还差人数' : '当前表未提供该列'}
         />
       </div>
 
@@ -353,6 +362,7 @@ export default function RenewalDashboard() {
         {gridLegend().map(g => (
           <span key={g.status} className="flex items-center gap-1.5 group" title={g.label}>
             <span className="w-2.5 h-2.5 rounded-sm ring-1 ring-slate-200 transition-transform group-hover:scale-110" style={{ backgroundColor: g.hex }} aria-hidden="true" />
+            <span>{g.label}</span>
           </span>
         ))}
       </div>
@@ -374,6 +384,7 @@ export default function RenewalDashboard() {
           fetchTeacherGradeMatrix={fetchTeacherGradeMatrix}
           fetchGroupGradeMatrix={fetchGroupGradeMatrix}
           fetchRateOverview={fetchRateOverview}
+          matrixLoading={matrixLoading}
         />
         : view === 'group' ? <GroupViewEnhanced rows={groupRows} tab={tab} setTab={setTab} />
         : view === 'manager' ? <ManagerViewEnhanced rows={managerRows} />

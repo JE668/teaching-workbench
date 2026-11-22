@@ -64,6 +64,11 @@ describe('工作台 · 统计', () => {
     // 回访次数 / 归档图片取自 stats，而非列表长度
     expect(statValue('回访次数')).toBe('137次');
     expect(statValue('归档图片')).toBe('42张');
+
+    // 明示统计范围，避免装饰性上涨图标让人误以为存在环比数据。
+    expect(screen.getAllByText('当前')).toHaveLength(2);
+    expect(screen.getAllByText('累计')).toHaveLength(2);
+    expect(screen.getByText('全部回访记录 · 不代表环比涨跌')).toBeInTheDocument();
   });
 
   it('覆盖学科按学生学科去重统计', async () => {
