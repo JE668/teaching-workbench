@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import { renewalDb, SQL_NOW } from './db.js';
 import fs from 'fs';
+import { createHash } from 'crypto';
 import { log } from '../utils/logger.js';
 import {
   buildColorContext,
@@ -8,7 +9,9 @@ import {
   parseManagerPerf,
   parseFunnel,
   extractReportMeta,
+  inspectRenewalWorkbookQuality,
   type GridStatus,
+  type RenewalQualityIssue,
 } from './parser.js';
 
 /**
@@ -28,6 +31,8 @@ export interface ReportSummary {
   errorCount: number;
   status: string;
   uploadedAt: string;
+  /** 同内容重复上传时为 true；新增字段不影响旧调用方。 */
+  deduplicated?: boolean;
 }
 
 /** 把一行教师统计 + 学生网格入库 */
@@ -46,15 +51,16 @@ function insertTeacherStats(reportId: number, rows: ReturnType<typeof parseTeach
   `);
   const insStudent = renewalDb.prepare(`
     INSERT INTO grid_students
-      (report_id, tab, teacher_name, subject_group, student_name, status, slot_index, source_row)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (report_id, tab, teacher_name, subject_group, teacher_stat_id, student_id,
+       student_name, status, slot_index, source_row)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let teacherRows = 0;
   let studentRows = 0;
 
   rows.forEach((row, idx) => {
-    insTeacher.run(
+    const teacherResult = insTeacher.run(
       reportId,
       row.tab,
       row.teacherName || null,
@@ -71,12 +77,13 @@ function insertTeacherStats(reportId: number, rows: ReturnType<typeof parseTeach
       idx,
       row.sourceRow
     );
+    const teacherStatId = Number(teacherResult.lastInsertRowid);
     teacherRows++;
 
     for (const s of row.students) {
       insStudent.run(
         reportId, row.tab, row.teacherName || null, row.subjectGroup ?? null,
-        s.name, s.status as GridStatus, s.slot, row.sourceRow
+        teacherStatId, s.studentId ?? null, s.name, s.status as GridStatus, s.slot, row.sourceRow
       );
       studentRows++;
     }
@@ -142,40 +149,96 @@ function insertFunnel(reportId: number, rows: ReturnType<typeof parseFunnel>): n
  *   2) 再在同步事务里批量插入。better-sqlite3 的事务回调必须是同步函数——
  *      若把 async 回调塞进去，事务会在解析完成前就 commit，插进去的明细是空壳。
  */
-export async function importRenewalFile(
-  filePath: string,
+function toReportSummary(row: any, deduplicated = false): ReportSummary {
+  return {
+    reportId: row.id,
+    fileName: row.file_name,
+    fileSize: row.file_size,
+    statMonth: row.stat_month,
+    centerName: row.center_name,
+    rowCount: row.row_count ?? 0,
+    errorCount: row.error_count ?? 0,
+    status: row.status,
+    uploadedAt: row.uploaded_at,
+    deduplicated,
+  };
+}
+
+function findReportByHash(fileHash: string, userId: number): ReportSummary | null {
+  const row = renewalDb.prepare(`
+    SELECT * FROM renewal_report
+    WHERE file_hash = ? AND uploaded_by = ?
+      AND status IN ('committed', 'committed_with_warnings', 'rejected', 'failed')
+    ORDER BY id DESC LIMIT 1
+  `).get(fileHash, userId);
+  return row ? toReportSummary(row, true) : null;
+}
+
+function isFileHashConflict(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('renewal_report.file_hash');
+}
+
+// 同一 Node 进程内的并发上传共享首个解析 Promise；数据库唯一索引再兜底多实例竞争。
+const activeImports = new Map<string, Promise<ReportSummary>>();
+
+async function runRenewalImport(
+  buffer: Buffer,
   fileName: string,
   fileSize: number,
-  uploadedBy: number | null
+  uploadedBy: number,
+  fileHash: string,
 ): Promise<ReportSummary> {
   const insReport = renewalDb.prepare(`
-    INSERT INTO renewal_report (file_name, file_size, uploaded_by, uploaded_at, status)
-    VALUES (?, ?, ?, ${SQL_NOW}, 'processing')
+    INSERT INTO renewal_report (file_name, file_size, file_hash, uploaded_by, uploaded_at, status)
+    VALUES (?, ?, ?, ?, ${SQL_NOW}, 'processing')
   `);
   const insError = renewalDb.prepare(`
-    INSERT INTO renewal_import_error (report_id, sheet_name, row_number, error_message)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO renewal_import_error
+      (report_id, sheet_name, row_number, column_number, field_name,
+       error_type, severity, error_message, details_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  const insertIssue = (reportId: number, issue: RenewalQualityIssue): void => {
+    insError.run(
+      reportId, issue.sheetName, issue.rowNumber, issue.columnNumber, issue.fieldName,
+      issue.errorType, issue.severity, issue.errorMessage,
+      issue.details ? JSON.stringify(issue.details) : null,
+    );
+  };
 
   let reportId = 0;
-
-  // ---- 事务外：异步解析 ----
   const workbook = new ExcelJS.Workbook();
   try {
-    // exceljs 4.4.0 在自己的 index.d.ts:1 声明了 `interface Buffer extends ArrayBuffer`，
-    // 遮蔽了 node 全局 Buffer，因此不能直接 as Buffer。这里照抄 catalogImport.ts 的写法，
-    // 用 Parameters<> 取 exceljs 自己声明的那个类型，避开两套 Buffer 的定义冲突。
+    // exceljs 与 Node 的 Buffer 类型声明不同，运行时使用同一份 Buffer 字节。
     await workbook.xlsx.load(
-      fs.readFileSync(filePath) as unknown as Parameters<ExcelJS.Xlsx['load']>[0]
+      buffer as unknown as Parameters<ExcelJS.Xlsx['load']>[0]
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const info = insReport.run(fileName, fileSize, uploadedBy);
-    reportId = Number(info.lastInsertRowid);
-    insError.run(reportId, null, null, 'xlsx 解析失败：' + msg.slice(0, 400));
-    renewalDb.prepare("UPDATE renewal_report SET status = 'failed', note = ? WHERE id = ?")
-      .run(msg.slice(0, 500), reportId);
-    throw new Error('xlsx 解析失败：' + msg);
+    log.error({ err: msg }, '续费 xlsx 工作簿解析失败');
+    const publicMessage = 'xlsx 解析失败：文件不是有效的工作簿或内容已损坏';
+    try {
+      const recordFailure = renewalDb.transaction(() => {
+        const info = insReport.run(fileName, fileSize, fileHash, uploadedBy);
+        reportId = Number(info.lastInsertRowid);
+        insertIssue(reportId, {
+          errorType: 'xlsx_parse_error', severity: 'error', sheetName: null,
+          rowNumber: null, columnNumber: null, fieldName: null,
+          errorMessage: publicMessage,
+        });
+        renewalDb.prepare(`
+          UPDATE renewal_report SET status = 'failed', error_count = 1, note = ? WHERE id = ?
+        `).run(publicMessage, reportId);
+      });
+      recordFailure();
+    } catch (recordErr) {
+      if (isFileHashConflict(recordErr)) {
+        const duplicate = findReportByHash(fileHash, uploadedBy);
+        if (duplicate) return duplicate;
+      }
+      throw recordErr;
+    }
+    throw new Error(publicMessage);
   }
 
   const meta = extractReportMeta(workbook);
@@ -183,54 +246,94 @@ export async function importRenewalFile(
   const parsedTeachers = parseTeacherStats(workbook, colorCtx);
   const parsedPerf = parseManagerPerf(workbook);
   const parsedFunnel = parseFunnel(workbook);
+  const issues = inspectRenewalWorkbookQuality(
+    workbook, parsedTeachers, parsedPerf, parsedFunnel,
+  );
+  const hasErrors = issues.some((issue) => issue.severity === 'error');
+  const status = hasErrors
+    ? 'rejected'
+    : issues.length > 0 ? 'committed_with_warnings' : 'committed';
 
-  // ---- 事务内：同步批量插入 ----
   const run = renewalDb.transaction(() => {
-    const info = insReport.run(fileName, fileSize, uploadedBy);
+    const info = insReport.run(fileName, fileSize, fileHash, uploadedBy);
     reportId = Number(info.lastInsertRowid);
     renewalDb.prepare('UPDATE renewal_report SET stat_month = ?, center_name = ? WHERE id = ?')
       .run(meta.statMonth, meta.centerName, reportId);
-    const teacherRows = insertTeacherStats(reportId, parsedTeachers);
-    const perfRows = insertManagerPerf(reportId, parsedPerf);
-    const funnelRows = insertFunnel(reportId, parsedFunnel);
-    const rowCount = teacherRows.teacherRows + teacherRows.studentRows + perfRows + funnelRows;
-    renewalDb.prepare(`
-      UPDATE renewal_report SET row_count = ?, error_count = ?, status = 'committed' WHERE id = ?
-    `).run(rowCount, 0, reportId);
-    log.info({ reportId, rowCount, teacherRows: teacherRows.teacherRows, perfRows, funnelRows, meta }, '续费统计表已导入');
-  });
-  run();
 
-  const row = renewalDb.prepare('SELECT * FROM renewal_report WHERE id = ?').get(reportId) as any;
-  return {
-    reportId: row.id,
-    fileName: row.file_name,
-    fileSize: row.file_size,
-    statMonth: row.stat_month,
-    centerName: row.center_name,
-    rowCount: row.row_count,
-    errorCount: row.error_count,
-    status: row.status,
-    uploadedAt: row.uploaded_at,
-  };
+    let rowCount = 0;
+    if (!hasErrors) {
+      const teacherRows = insertTeacherStats(reportId, parsedTeachers);
+      const perfRows = insertManagerPerf(reportId, parsedPerf);
+      const funnelRows = insertFunnel(reportId, parsedFunnel);
+      rowCount = teacherRows.teacherRows + teacherRows.studentRows + perfRows + funnelRows;
+      log.info({
+        reportId, rowCount, teacherRows: teacherRows.teacherRows, perfRows, funnelRows, meta, status,
+      }, '续费统计表已导入');
+    }
+    for (const issue of issues) insertIssue(reportId, issue);
+    renewalDb.prepare(`
+      UPDATE renewal_report SET row_count = ?, error_count = ?, status = ? WHERE id = ?
+    `).run(rowCount, issues.length, status, reportId);
+  });
+  try {
+    run();
+  } catch (err) {
+    if (isFileHashConflict(err)) {
+      const duplicate = findReportByHash(fileHash, uploadedBy);
+      if (duplicate) return duplicate;
+    }
+    throw err;
+  }
+
+  const row = renewalDb.prepare('SELECT * FROM renewal_report WHERE id = ?').get(reportId);
+  return toReportSummary(row);
 }
-/** 取最新一份已提交的报表 id；没有则 null */
-export function latestReportId(): number | null {
+
+export async function importRenewalFile(
+  filePath: string,
+  fileName: string,
+  fileSize: number,
+  uploadedBy: number
+): Promise<ReportSummary> {
+  const buffer = fs.readFileSync(filePath);
+  const fileHash = createHash('sha256').update(buffer).digest('hex');
+
+  const importKey = `${uploadedBy}:${fileHash}`;
+  const active = activeImports.get(importKey);
+  if (active) return { ...await active, deduplicated: true };
+  const existing = findReportByHash(fileHash, uploadedBy);
+  if (existing) return existing;
+
+  const task = runRenewalImport(buffer, fileName, fileSize, uploadedBy, fileHash);
+  activeImports.set(importKey, task);
+  try {
+    return await task;
+  } finally {
+    if (activeImports.get(importKey) === task) activeImports.delete(importKey);
+  }
+}
+/** 所有续费读取都先经过所有者校验；历史未绑定所有者的数据默认隐藏。 */
+export function ownsReport(reportId: number, userId: number): boolean {
+  return renewalDb.prepare('SELECT 1 FROM renewal_report WHERE id = ? AND uploaded_by = ?').get(reportId, userId) !== undefined;
+}
+
+/** 取当前用户最新一份已提交的报表 id；没有则 null */
+export function latestReportId(userId: number): number | null {
   const row = renewalDb.prepare(`
     SELECT id FROM renewal_report
-    WHERE status = 'committed'
+    WHERE uploaded_by = ? AND status IN ('committed', 'committed_with_warnings')
     ORDER BY uploaded_at DESC, id DESC LIMIT 1
-  `).get() as { id: number } | undefined;
+  `).get(userId) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
-/** 列出全部报表批次（最新在前） */
-export function listReports(): ReportSummary[] {
+/** 列出当前用户的报表批次（最新在前） */
+export function listReports(userId: number): ReportSummary[] {
   const rows = renewalDb.prepare(`
     SELECT id, file_name, file_size, stat_month, center_name, row_count,
            error_count, status, uploaded_at
-    FROM renewal_report ORDER BY uploaded_at DESC, id DESC
-  `).all() as any[];
+    FROM renewal_report WHERE uploaded_by = ? ORDER BY uploaded_at DESC, id DESC
+  `).all(userId) as any[];
   return rows.map(r => ({
     reportId: r.id,
     fileName: r.file_name,
@@ -245,7 +348,7 @@ export function listReports(): ReportSummary[] {
 }
 
 /** 整批删除（明细随 FK CASCADE 一起删） */
-export function deleteReport(reportId: number): boolean {
-  const info = renewalDb.prepare('DELETE FROM renewal_report WHERE id = ?').run(reportId);
+export function deleteReport(reportId: number, userId: number): boolean {
+  const info = renewalDb.prepare('DELETE FROM renewal_report WHERE id = ? AND uploaded_by = ?').run(reportId, userId);
   return info.changes > 0;
 }

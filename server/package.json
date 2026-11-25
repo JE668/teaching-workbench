@@ -12,9 +12,9 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
-    "test": "node --import tsx --test src/tests/*.test.ts",
-    "test:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=88 --test-coverage-branches=75 --test-coverage-functions=88 src/tests/*.test.ts",
-    "test:watch": "node --import tsx --test --watch src/tests/*.test.ts",
+    "test": "node --import tsx --import ./src/tests/setup.ts --test src/tests/*.test.ts",
+    "test:coverage": "node --import tsx --import ./src/tests/setup.ts --test --experimental-test-coverage --test-coverage-lines=88 --test-coverage-branches=75 --test-coverage-functions=88 src/tests/*.test.ts",
+    "test:watch": "node --import tsx --import ./src/tests/setup.ts --test --watch src/tests/*.test.ts",
     "typecheck:strict": "bash scripts/check-dead-code.sh",
     "smoke:dist": "bash scripts/smoke-dist.sh",
     "profiles:build": "tsx src/jobs/buildProfiles.ts"

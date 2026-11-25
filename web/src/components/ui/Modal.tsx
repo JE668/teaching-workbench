@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -20,6 +20,32 @@ const sizes = {
   xl: 'max-w-4xl',
 };
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'area[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  'iframe',
+  'object',
+  'embed',
+  'audio[controls]',
+  'video[controls]',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+function getFocusableElements(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      element.getAttribute('aria-disabled') !== 'true' &&
+      !element.closest('[hidden], [aria-hidden="true"], [inert]')
+  );
+}
+
 export default function Modal({
   open,
   onClose,
@@ -30,6 +56,14 @@ export default function Modal({
   size = 'md',
 }: ModalProps) {
   const boxRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   /** 拖拽位置：组件级 ref，每个弹窗实例独立，互不干扰 */
   const dragState = useRef<{ pos: { x: number; y: number } | null }>({ pos: null });
   const [offset, setOffset] = useState<{ x: number; y: number } | null>(dragState.current.pos);
@@ -82,19 +116,56 @@ export default function Modal({
     };
   }, [dragging]);
 
-  // ESC 关闭 + 锁定滚动
+  // 初始焦点 + 焦点循环 + ESC 关闭 + 锁定滚动
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
+
+    const dialog = boxRef.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    const focusableElements = dialog ? getFocusableElements(dialog) : [];
+
     document.body.style.overflow = 'hidden';
+    (focusableElements[0] ?? dialog)?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialog) return;
+
+      const currentFocusableElements = getFocusableElements(dialog);
+      if (currentFocusableElements.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = currentFocusableElements[0];
+      const last = currentFocusableElements[currentFocusableElements.length - 1];
+      const activeIndex = currentFocusableElements.indexOf(document.activeElement as HTMLElement);
+
+      if (activeIndex === -1) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && activeIndex === 0) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && activeIndex === currentFocusableElements.length - 1) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -112,6 +183,11 @@ export default function Modal({
       />
       <div
         ref={boxRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
         className={cn(
           'relative flex w-full flex-col overflow-hidden rounded-2xl bg-white shadow-2xl',
           sizes[size],
@@ -130,11 +206,21 @@ export default function Modal({
             onPointerDown={onPointerDown}
           >
             <div>
-              {title && <h2 className="text-lg font-semibold text-slate-800">{title}</h2>}
-              {description && <p className="mt-0.5 text-sm text-slate-400">{description}</p>}
+              {title && (
+                <h2 id={titleId} className="text-lg font-semibold text-slate-800">
+                  {title}
+                </h2>
+              )}
+              {description && (
+                <p id={descriptionId} className="mt-0.5 text-sm text-slate-400">
+                  {description}
+                </p>
+              )}
             </div>
             <button
+              type="button"
               data-modal-close
+              aria-label="关闭"
               onClick={onClose}
               className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
               style={{ pointerEvents: 'auto' }}

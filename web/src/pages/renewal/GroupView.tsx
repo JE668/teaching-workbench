@@ -11,9 +11,12 @@ import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, type G
  * 这里出两组排名条：续科人数 + 激励差额。
  */
 export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow[]; tab: string; setTab: (t: string) => void }) {
-  const maxRenewed = rows.reduce((m, r) => Math.max(m, r.renewedCount || 0), 0);
-  const gapPositive = rows.filter(r => (r.incentiveGap || 0) > 0).sort((a, b) => (b.incentiveGap || 0) - (a.incentiveGap || 0));
-  const maxGap = gapPositive.reduce((m, r) => Math.max(m, r.incentiveGap || 0), 0);
+  const renewedRows = rows.filter((r): r is GroupSummaryRow & { renewedCount: number } => typeof r.renewedCount === 'number');
+  const maxRenewed = renewedRows.reduce((m, r) => Math.max(m, r.renewedCount), 0);
+  const hasGapData = rows.some(r => typeof r.incentiveGap === 'number');
+  const gapPositive = rows.filter((r): r is GroupSummaryRow & { incentiveGap: number } => typeof r.incentiveGap === 'number' && r.incentiveGap > 0)
+    .sort((a, b) => b.incentiveGap - a.incentiveGap);
+  const maxGap = gapPositive.reduce((m, r) => Math.max(m, r.incentiveGap), 0);
 
   return (
     <Card>
@@ -53,10 +56,10 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
             <div>
               <h3 className="mb-3 text-sm font-semibold text-slate-700">续科人数排名（{TAB_LABELS[tab] || tab}表）</h3>
               <BarList
-                rows={rows.map((r, i) => ({
+                rows={renewedRows.map((r, i) => ({
                   label: r.subjectGroup,
                   value: count(r.renewedCount),
-                  rawValue: r.renewedCount || 0,
+                  rawValue: r.renewedCount,
                   ratio: maxRenewed > 0 ? (r.renewedCount / maxRenewed) * 100 : 0,
                   hint: r.teacherCount + ' 位老师 · 基数 ' + count(r.baseCount) + ' · 续科率 ' + pct(r.renewRate),
                   className: rankStyle(i),
@@ -65,7 +68,9 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
             </div>
             <div>
               <h3 className="mb-3 text-sm font-semibold text-slate-700">激励差额（正值 = 还差）</h3>
-              {gapPositive.length === 0 ? (
+              {!hasGapData ? (
+                <div className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">当前表未提供80%目标差额数据</div>
+              ) : gapPositive.length === 0 ? (
                 <div className="rounded-xl bg-emerald-50/60 px-4 py-6 text-center text-sm text-emerald-700 ring-1 ring-emerald-100">
                   所有科组都已达标，没有缺口
                 </div>
@@ -75,7 +80,7 @@ export default function GroupView({ rows, tab, setTab }: { rows: GroupSummaryRow
                   rows={gapPositive.map((r, i) => ({
                     label: r.subjectGroup,
                     value: count(r.incentiveGap),
-                    rawValue: r.incentiveGap || 0,
+                    rawValue: r.incentiveGap,
                     ratio: maxGap > 0 ? (r.incentiveGap / maxGap) * 100 : 0,
                     hint: '基数 ' + count(r.baseCount) + ' · 续科 ' + count(r.renewedCount),
                     className: rankStyle(i),

@@ -117,6 +117,7 @@ describe('TeachingReview', () => {
     const outputTrend = screen.getByRole('img', { name: '近 6 个月教学产出趋势图' });
     expect(within(outputTrend).getByText('2026-04')).toBeInTheDocument();
     expect(within(outputTrend).getByText('1 篇')).toBeInTheDocument();
+    expect(within(outputTrend).getByText('1 节')).toBeInTheDocument();
   });
 
   it('does not turn empty attendance into a fabricated zero percent', async () => {

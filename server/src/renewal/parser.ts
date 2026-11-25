@@ -156,7 +156,7 @@ const PERF_COLS: Record<string, number> = {
 };
 
 /** 续科率 sheet 列位置（第 1 行表头） */
-const XUKE_COLS = { teacher: 6, student: 8, renewed: 22, prepaid: 27 };   // F/H/V/AA
+const XUKE_COLS = { teacher: 6, student: 8, studentId: 9, renewed: 22, prepaid: 27 }; // F/H/I/V/AA
 
 /** 老师学生 sheet 列位置（第 1 行表头） */
 const TEACHER_STUDENT_COLS = {
@@ -164,10 +164,11 @@ const TEACHER_STUDENT_COLS = {
   student: 3,       // C 学生姓名
   status: 12,       // L 学生状态
   prepaid: 15,      // O 预存状态
+  studentId: 24,    // X ID（部分模板的主续费表编号为空，可在此补充）
 };
 
 /** 在读学生明细 sheet 列位置（第 1 行表头） */
-const STUDENT_DETAIL_COLS = { student: 10, grade: 12 };   // J/L
+const STUDENT_DETAIL_COLS = { student: 10, studentId: 11, grade: 12 }; // J/K/L
 
 /** 归一化表头文本：去换行/空格，便于关键词匹配 */
 function normHeader(v: unknown): string {
@@ -195,6 +196,8 @@ function readCell(ws: ExcelJS.Worksheet, row: number, col: number): string | num
         : cell.model.result;
       if (r === null || r === undefined) return null;
       if (r instanceof Date) return formatDate(r);
+      if (typeof r === 'object' && 'error' in r) return null;
+      if (typeof r === 'string' && r.trim().startsWith('#')) return null;
       return typeof r === 'number' ? r : String(r);
     }
     if ('text' in val && 'hyperlink' in val) return String((val as { text: string }).text);
@@ -208,6 +211,12 @@ function readCell(ws: ExcelJS.Worksheet, row: number, col: number): string | num
   if (typeof val === 'number') return val;
   if (typeof val === 'boolean') return val ? 1 : 0;
   return String(val);
+}
+
+function toIdentifier(value: string | number | null): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text === '' ? null : text;
 }
 
 function formatDate(d: Date): string {
@@ -284,6 +293,8 @@ type PrepaidPairMap = Map<string, boolean>;
 type RenewedMap = Map<string, boolean>;
 /** 学生姓名 → 是否预存（老师学生 O 列） */
 type PrepaidNameMap = Map<string, boolean>;
+/** 学生姓名 → 唯一学生编号；多来源冲突时删除映射，保留身份不明确。 */
+type StudentIdMap = Map<string, string>;
 
 /**
  * 复刻 Excel 条件格式的学生网格颜色判定链。
@@ -325,8 +336,21 @@ export function buildColorContext(workbook: ExcelJS.Workbook): {
   prepaidPairMap: PrepaidPairMap;
   prepaidNameMap: PrepaidNameMap;
   gradeMap: GradeMap;
+  studentIdMap: StudentIdMap;
 } {
   const statusMap: StatusMap = new Map();
+  const studentIdMap: StudentIdMap = new Map();
+  const ambiguousStudentNames = new Set<string>();
+  const collectStudentId = (student: unknown, studentId: string | null) => {
+    if (typeof student !== 'string' || student === '' || !studentId || ambiguousStudentNames.has(student)) return;
+    const existing = studentIdMap.get(student);
+    if (existing && existing !== studentId) {
+      studentIdMap.delete(student);
+      ambiguousStudentNames.add(student);
+      return;
+    }
+    studentIdMap.set(student, studentId);
+  };
   const prepaidNameMap: PrepaidNameMap = new Map();
   const wsTS = workbook.getWorksheet('老师学生');
   if (wsTS) {
@@ -335,7 +359,9 @@ export function buildColorContext(workbook: ExcelJS.Workbook): {
       const student = readCell(wsTS, r, TEACHER_STUDENT_COLS.student);
       const status = readCell(wsTS, r, TEACHER_STUDENT_COLS.status);
       const prepaid = readCell(wsTS, r, TEACHER_STUDENT_COLS.prepaid);
+      const studentId = toIdentifier(readCell(wsTS, r, TEACHER_STUDENT_COLS.studentId));
       if (typeof teacher !== 'string' || typeof student !== 'string') continue;
+      collectStudentId(student, studentId);
       if (typeof status === 'string' && (status === '结课' || status === '停课')) {
         statusMap.set(teacher + student, status);
       }
@@ -350,9 +376,11 @@ export function buildColorContext(workbook: ExcelJS.Workbook): {
     for (let r = 2; r <= wsXK.rowCount; r++) {
       const teacher = readCell(wsXK, r, XUKE_COLS.teacher);
       const student = readCell(wsXK, r, XUKE_COLS.student);
+      const studentId = toIdentifier(readCell(wsXK, r, XUKE_COLS.studentId));
       const renewed = readCell(wsXK, r, XUKE_COLS.renewed);
       const prepaid = readCell(wsXK, r, XUKE_COLS.prepaid);
       if (typeof student !== 'string' || student === '') continue;
+      collectStudentId(student, studentId);
       if (renewed === '是') renewedMap.set(student, true);
       if (prepaid === '是' && typeof teacher === 'string' && teacher !== '') {
         prepaidPairMap.set(teacher + student, true);
@@ -365,14 +393,26 @@ export function buildColorContext(workbook: ExcelJS.Workbook): {
   if (wsSD) {
     for (let r = 2; r <= wsSD.rowCount; r++) {
       const student = readCell(wsSD, r, STUDENT_DETAIL_COLS.student);
+      const studentId = toIdentifier(readCell(wsSD, r, STUDENT_DETAIL_COLS.studentId));
       const grade = readCell(wsSD, r, STUDENT_DETAIL_COLS.grade);
+      collectStudentId(student, studentId);
       if (typeof student === 'string' && typeof grade === 'string' && grade !== '') {
         gradeMap.set(student, grade);
       }
     }
   }
 
-  return { statusMap, renewedMap, prepaidPairMap, prepaidNameMap, gradeMap };
+  // 续生率是学管漏斗的主来源；同一学生在两个来源都有编号时以主来源为准。
+  const wsFunnel = workbook.getWorksheet('续生率');
+  if (wsFunnel) {
+    for (let r = 2; r <= wsFunnel.rowCount; r++) {
+      const student = readCell(wsFunnel, r, FUNNEL_COLS.student_name);
+      const studentId = toIdentifier(readCell(wsFunnel, r, FUNNEL_COLS.student_id));
+      collectStudentId(student, studentId);
+    }
+  }
+
+  return { statusMap, renewedMap, prepaidPairMap, prepaidNameMap, gradeMap, studentIdMap };
 }
 
 /** 单行教师统计 + 学生网格结果 */
@@ -388,7 +428,7 @@ export interface TeacherStatsRow {
   renewRate: number | null;
   incentiveGap: number | null;
   extra: Record<string, number | null>;
-  students: { name: string; status: GridStatus; slot: number }[];
+  students: { name: string; status: GridStatus; slot: number; studentId: string | null }[];
   sourceRow: number;
 }
 
@@ -415,7 +455,6 @@ export function parseTeacherStats(
       extraColOf[field] = findCol(headerMap, keywords);
     }
 
-    let slot = 0;
     for (let r = cfg.dataStartRow; r <= ws.rowCount; r++) {
       const teacherName = colOf.teacher_name ? readCell(ws, r, colOf.teacher_name!) : null;
       if (typeof teacherName !== 'string' || teacherName === '') continue;
@@ -430,33 +469,25 @@ export function parseTeacherStats(
         extra[field] = col ? toNum(readCell(ws, r, col)) : null;
       }
 
-      // 学生网格：从 gridStartCol 往右读，连续空则停
-      // 注意：gridStartCol (如 15/O列) 可能是数组公式（spill），readCell 返回 null
-      // 实际学生名在后续列的溢出值中；模板里可能有 0 占位，视为空
-      const students: { name: string; status: GridStatus; slot: number }[] = [];
-      let emptyStreak = 0;
+      // 学生网格按状态分成多个区块，区块之间常有十几列空白；不能在连续 3 空列后停止。
+      // 扫描完整 80 列配置范围，保留原列位置作为 slot，避免漏掉后续状态区块的学生。
+      // 模板里的数组公式、0 占位、空串和非字符串均按空单元格处理。
+      const students: { name: string; status: GridStatus; slot: number; studentId: string | null }[] = [];
       for (let col = cfg.gridStartCol; col < cfg.gridStartCol + 80; col++) {
         const name = readCell(ws, r, col);
-        // 只接受非空字符串类型的学生名；数字/0/null/公式/空串都视为空
-        if (typeof name !== 'string' || name === '') {
-          emptyStreak++;
-          if (emptyStreak >= 3) break;  // 连续 3 个空列则认为网格结束
-          slot++;
-          continue;
-        }
-        emptyStreak = 0;
-        slot++;
+        if (typeof name !== 'string' || name === '') continue;
         students.push({
           name,
           status: resolveStudentStatus(teacherName, name, colorCtx),
-          slot,
+          slot: col - cfg.gridStartCol + 1,
+          studentId: colorCtx.studentIdMap?.get(name) ?? null,
         });
       }
 
       rows.push({
         tab: cfg.tab,
         teacherName,
-        teacherNo: pick('teacher_no') as string | null,
+        teacherNo: toIdentifier(pick('teacher_no')),
         subjectGroup: pick('subject_group') as string | null,
         baseCount: toNum(pick('base_count')),
         prepaidCount: toNum(pick('prepaid_count')),
@@ -576,7 +607,7 @@ export function parseFunnel(workbook: ExcelJS.Workbook): FunnelRow[] {
 
     rows.push({
       managerName: typeof mgr === 'string' ? mgr : null,
-      studentId: typeof sid === 'string' ? sid : null,
+      studentId: toIdentifier(sid),
       studentName,
       grade: typeof grade === 'string' ? grade : null,
       firstEnrollDate: typeof firstDate === 'string' ? firstDate : null,
@@ -621,6 +652,332 @@ export function parseFunnel(workbook: ExcelJS.Workbook): FunnelRow[] {
   }
 
   return rows;
+}
+
+
+export type RenewalIssueSeverity = 'warning' | 'error';
+
+export interface RenewalQualityIssue {
+  errorType: string;
+  severity: RenewalIssueSeverity;
+  sheetName: string | null;
+  rowNumber: number | null;
+  columnNumber: number | null;
+  fieldName: string | null;
+  errorMessage: string;
+  details?: Record<string, string | number | boolean | null>;
+}
+
+const MAX_QUALITY_ISSUES = 500;
+
+function pushQualityIssue(issues: RenewalQualityIssue[], issue: RenewalQualityIssue): void {
+  if (issues.length < MAX_QUALITY_ISSUES) issues.push(issue);
+}
+
+function formulaProblem(
+  ws: ExcelJS.Worksheet,
+  row: number,
+  col: number,
+): 'formula_cache_missing' | 'formula_error' | null {
+  const cell = ws.getRow(row).getCell(col);
+  const raw = cell.value;
+  const value = raw !== null && typeof raw === 'object'
+    ? raw as unknown as Record<string, unknown>
+    : null;
+  const model = cell.model as typeof cell.model & { sharedFormula?: string };
+  const hasFormula = Boolean(
+    model.formula || model.sharedFormula || value?.formula || value?.sharedFormula,
+  );
+  if (!hasFormula) return null;
+
+  const result = value && 'result' in value ? value.result : model.result;
+  if (typeof result === 'string' && result.trim().startsWith('#')) return 'formula_error';
+  if (result !== null && typeof result === 'object' && 'error' in result) return 'formula_error';
+  if (result === null || result === undefined) return 'formula_cache_missing';
+  return null;
+}
+
+function collectFormulaIssue(
+  issues: RenewalQualityIssue[],
+  ws: ExcelJS.Worksheet,
+  row: number,
+  col: number | null,
+  fieldName: string,
+): void {
+  if (!col) return;
+  const problem = formulaProblem(ws, row, col);
+  if (!problem) return;
+  pushQualityIssue(issues, {
+    errorType: problem,
+    severity: 'warning',
+    sheetName: ws.name,
+    rowNumber: row,
+    columnNumber: col,
+    fieldName,
+    errorMessage: problem === 'formula_error'
+      ? '公式返回错误值，相关字段按空值导入'
+      : '公式缺少缓存结果，相关字段按空值导入',
+  });
+}
+
+/**
+ * 对实际参与导入的区域做质量检查。只输出 Sheet/行/列/字段定位，
+ * 不把教师或学生姓名写进错误消息与 details，避免错误清单泄露身份。
+ */
+export function inspectRenewalWorkbookQuality(
+  workbook: ExcelJS.Workbook,
+  teacherRows: TeacherStatsRow[],
+  managerRows: ManagerPerfRow[],
+  funnelRows: FunnelRow[],
+): RenewalQualityIssue[] {
+  const issues: RenewalQualityIssue[] = [];
+  if (workbook.worksheets.length === 0) {
+    pushQualityIssue(issues, {
+      errorType: 'empty_workbook',
+      severity: 'error',
+      sheetName: null,
+      rowNumber: null,
+      columnNumber: null,
+      fieldName: null,
+      errorMessage: '工作簿为空，未找到可导入的数据',
+    });
+    return issues;
+  }
+
+  const teacherSheets = TAB_CONFIGS
+    .map((cfg) => ({
+      cfg,
+      ws: workbook.getWorksheet(cfg.sheet) || workbook.getWorksheet(cfg.sheet.trim()),
+    }))
+    .filter((item): item is { cfg: TabConfig; ws: ExcelJS.Worksheet } => Boolean(item.ws));
+  const wsFunnel = workbook.getWorksheet('续生率');
+  const wsManagerStudents = workbook.getWorksheet('学管学生');
+  const wsPerf = workbook.getWorksheet('学管业绩统计表');
+
+  if (teacherSheets.length === 0) {
+    pushQualityIssue(issues, {
+      errorType: 'missing_sheet', severity: 'error', sheetName: null,
+      rowNumber: null, columnNumber: null, fieldName: null,
+      errorMessage: '缺少全部教师统计 Sheet，至少需要提供一个教师统计表',
+    });
+  }
+  if (!wsFunnel && !wsManagerStudents) {
+    pushQualityIssue(issues, {
+      errorType: 'missing_sheet', severity: 'error', sheetName: '续生率',
+      rowNumber: null, columnNumber: null, fieldName: null,
+      errorMessage: '缺少续生率 Sheet，且没有可回退的学管学生 Sheet',
+    });
+  }
+  if (!wsPerf) {
+    pushQualityIssue(issues, {
+      errorType: 'missing_sheet', severity: 'error', sheetName: '学管业绩统计表',
+      rowNumber: null, columnNumber: null, fieldName: null,
+      errorMessage: '缺少必需的学管业绩统计表 Sheet',
+    });
+  }
+
+
+  // 固定列来源兼容旧模板的无表头布局；一旦出现可识别表头，就校验其关键列完整性。
+  const validateFixedHeaders = (
+    ws: ExcelJS.Worksheet,
+    headerRow: number,
+    twoRows: boolean,
+    specs: Array<{ field: string; col: number; keywords: string[] }>,
+  ): void => {
+    const values = new Map(specs.map((spec) => {
+      const top = readHeader(ws, headerRow, spec.col);
+      const sub = twoRows ? readHeader(ws, headerRow + 1, spec.col) : '';
+      return [spec.field, top === sub ? top : [top, sub].filter(Boolean).join('')];
+    }));
+    const hasRecognizedHeader = specs.some((spec) => {
+      const value = values.get(spec.field) ?? '';
+      return spec.keywords.some((keyword) => value.includes(normHeader(keyword)));
+    });
+    if (!hasRecognizedHeader) return;
+    for (const spec of specs) {
+      const value = values.get(spec.field) ?? '';
+      if (spec.keywords.some((keyword) => value.includes(normHeader(keyword)))) continue;
+      pushQualityIssue(issues, {
+        errorType: 'missing_header', severity: 'error', sheetName: ws.name,
+        rowNumber: headerRow, columnNumber: spec.col, fieldName: spec.field,
+        errorMessage: `固定布局 Sheet 缺少必需表头字段 ${spec.field}`,
+      });
+    }
+  };
+  if (wsFunnel) {
+    validateFixedHeaders(wsFunnel, 1, false, [
+      { field: 'manager_name', col: FUNNEL_COLS.manager_name, keywords: ['学管'] },
+      { field: 'student_id', col: FUNNEL_COLS.student_id, keywords: ['学生编号', '学生ID', '学号'] },
+      { field: 'student_name', col: FUNNEL_COLS.student_name, keywords: ['学生', '姓名'] },
+    ]);
+  }
+  if (wsPerf) {
+    validateFixedHeaders(wsPerf, 3, true, [
+      { field: 'manager_name', col: PERF_COLS.manager_name, keywords: ['学管'] },
+      { field: 'renewed_count', col: PERF_COLS.renewed_count, keywords: ['续生数'] },
+    ]);
+  }
+
+  const teacherBySource = new Map(teacherRows.map((row) => [`${row.tab}:${row.sourceRow}`, row]));
+  for (const { cfg, ws } of teacherSheets) {
+    const headerMap = buildHeaderMap(ws, cfg.headerRow);
+    const colOf: Record<string, number | null> = {};
+    for (const [field, keywords] of Object.entries(cfg.fields)) {
+      colOf[field] = findCol(headerMap, keywords);
+      collectFormulaIssue(issues, ws, cfg.headerRow, colOf[field], field);
+    }
+    for (const field of ['teacher_name', 'base_count', 'renewed_count']) {
+      if (colOf[field]) continue;
+      pushQualityIssue(issues, {
+        errorType: 'missing_header', severity: 'error', sheetName: ws.name,
+        rowNumber: cfg.headerRow, columnNumber: null, fieldName: field,
+        errorMessage: `教师统计 Sheet 缺少必需表头字段 ${field}`,
+      });
+    }
+    const extraCols = Object.fromEntries(
+      Object.entries(cfg.extra).map(([field, keywords]) => [field, findCol(headerMap, keywords)]),
+    ) as Record<string, number | null>;
+
+    for (let r = cfg.dataStartRow; r <= ws.rowCount; r++) {
+      const teacherName = colOf.teacher_name ? readCell(ws, r, colOf.teacher_name) : null;
+      if (typeof teacherName === 'string' && ['数学组', '文科组', '理综组', '学习中心'].includes(teacherName)) break;
+      const metricColumns = Object.entries(colOf)
+        .filter(([field]) => !['teacher_name', 'teacher_no', 'subject_group'].includes(field));
+      if (typeof teacherName !== 'string' || teacherName === '') {
+        if (metricColumns.some(([, col]) => col && readCell(ws, r, col) !== null)) {
+          pushQualityIssue(issues, {
+            errorType: 'empty_key_data', severity: 'error', sheetName: ws.name,
+            rowNumber: r, columnNumber: colOf.teacher_name, fieldName: 'teacher_name',
+            errorMessage: '明细行存在指标数据，但教师关键字段为空',
+          });
+        }
+        continue;
+      }
+
+      for (const [field, col] of [...Object.entries(colOf), ...Object.entries(extraCols)]) {
+        collectFormulaIssue(issues, ws, r, col, field);
+      }
+
+      // 与网格解析使用相同的完整 80 列范围；空白分隔的状态区块不属于截断。
+      const gridEnd = cfg.gridStartCol + 80;
+      for (let col = cfg.gridStartCol; col < gridEnd; col++) {
+        collectFormulaIssue(issues, ws, r, col, 'student_grid');
+      }
+      for (let col = gridEnd; col <= ws.columnCount; col++) {
+        collectFormulaIssue(issues, ws, r, col, 'student_grid');
+        const name = readCell(ws, r, col);
+        if (typeof name !== 'string' || name === '') continue;
+        pushQualityIssue(issues, {
+          errorType: 'grid_truncated', severity: 'warning', sheetName: ws.name,
+          rowNumber: r, columnNumber: col, fieldName: 'student_grid',
+          errorMessage: '学生网格超出 80 列解析范围，后续内容未完整导入',
+          details: { gridColumnLimit: 80 },
+        });
+        break;
+      }
+
+      const parsed = teacherBySource.get(`${cfg.tab}:${r}`);
+      // 课时网格只包含课时分段内的学生关系，基数则覆盖全部在读学生，
+      // 两者本就不同口径；其余 tab 的网格应与教师基数逐行对账。
+      if (cfg.tab !== 'hours' && parsed && parsed.baseCount !== null && parsed.baseCount !== parsed.students.length) {
+        pushQualityIssue(issues, {
+          errorType: 'summary_detail_mismatch', severity: 'warning', sheetName: ws.name,
+          rowNumber: r, columnNumber: colOf.base_count, fieldName: 'base_count',
+          errorMessage: '教师汇总学生基数与学生网格明细数量不一致',
+          details: { summaryCount: parsed.baseCount, detailCount: parsed.students.length },
+        });
+      }
+    }
+  }
+
+  if (wsPerf) {
+    const managerBySource = new Map(managerRows.map((row) => [row.sourceRow, row]));
+    for (let r = 5; r <= wsPerf.rowCount; r++) {
+      const managerName = readCell(wsPerf, r, PERF_COLS.manager_name);
+      if (managerName === '合计' || managerName === '学习中心') break;
+      const hasMetrics = Object.entries(PERF_COLS).some(([field, col]) =>
+        field !== 'manager_name' && readCell(wsPerf, r, col) !== null);
+      if (typeof managerName !== 'string' || managerName === '') {
+        if (hasMetrics) {
+          pushQualityIssue(issues, {
+            errorType: 'empty_key_data', severity: 'error', sheetName: wsPerf.name,
+            rowNumber: r, columnNumber: PERF_COLS.manager_name, fieldName: 'manager_name',
+            errorMessage: '业绩明细存在指标数据，但学管关键字段为空',
+          });
+        }
+        continue;
+      }
+      for (const [field, col] of Object.entries(PERF_COLS)) {
+        collectFormulaIssue(issues, wsPerf, r, col, field);
+      }
+      const parsed = managerBySource.get(r);
+      if (parsed && parsed.renewedCount !== null) {
+        const detailCount = funnelRows.filter((row) =>
+          row.managerName === parsed.managerName && row.renewed === 1).length;
+        if (parsed.renewedCount !== detailCount) {
+          pushQualityIssue(issues, {
+            errorType: 'summary_detail_mismatch', severity: 'warning', sheetName: wsPerf.name,
+            rowNumber: r, columnNumber: PERF_COLS.renewed_count, fieldName: 'renewed_count',
+            errorMessage: '学管汇总续生数与续生率明细续费人数不一致',
+            details: { summaryCount: parsed.renewedCount, detailCount },
+          });
+        }
+      }
+    }
+  }
+
+  if (wsFunnel) {
+    for (let r = 2; r <= wsFunnel.rowCount; r++) {
+      const studentName = readCell(wsFunnel, r, FUNNEL_COLS.student_name);
+      const studentId = readCell(wsFunnel, r, FUNNEL_COLS.student_id);
+      const managerName = readCell(wsFunnel, r, FUNNEL_COLS.manager_name);
+      if (typeof studentName !== 'string' || studentName === '') {
+        if (studentId !== null || managerName !== null) {
+          pushQualityIssue(issues, {
+            errorType: 'empty_key_data', severity: 'error', sheetName: wsFunnel.name,
+            rowNumber: r, columnNumber: FUNNEL_COLS.student_name, fieldName: 'student_name',
+            errorMessage: '续生率明细存在关联数据，但学生关键字段为空',
+          });
+        }
+        continue;
+      }
+      for (const [field, col] of Object.entries(FUNNEL_COLS)) {
+        collectFormulaIssue(issues, wsFunnel, r, col, field);
+      }
+      if (typeof managerName !== 'string' || managerName === '') {
+        pushQualityIssue(issues, {
+          errorType: 'empty_key_data', severity: 'warning', sheetName: wsFunnel.name,
+          rowNumber: r, columnNumber: FUNNEL_COLS.manager_name, fieldName: 'manager_name',
+          errorMessage: '续生率明细的学管字段为空，该记录进入未分配分组',
+        });
+      }
+    }
+  }
+
+  if (teacherRows.length === 0) {
+    pushQualityIssue(issues, {
+      errorType: 'empty_key_data', severity: 'error',
+      sheetName: teacherSheets[0]?.ws.name ?? null,
+      rowNumber: null, columnNumber: null, fieldName: 'teacher_name',
+      errorMessage: '教师统计 Sheet 没有可导入的教师明细',
+    });
+  }
+  if (managerRows.length === 0) {
+    pushQualityIssue(issues, {
+      errorType: 'empty_key_data', severity: 'error', sheetName: wsPerf?.name ?? '学管业绩统计表',
+      rowNumber: null, columnNumber: null, fieldName: 'manager_name',
+      errorMessage: '学管业绩统计表没有可导入的学管明细',
+    });
+  }
+  if (funnelRows.length === 0) {
+    pushQualityIssue(issues, {
+      errorType: 'empty_key_data', severity: 'error',
+      sheetName: wsFunnel?.name ?? wsManagerStudents?.name ?? '续生率',
+      rowNumber: null, columnNumber: null, fieldName: 'student_name',
+      errorMessage: '续生率及回退来源均没有可导入的学生明细',
+    });
+  }
+  return issues;
 }
 
 /**

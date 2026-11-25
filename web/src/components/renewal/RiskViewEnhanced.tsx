@@ -1,234 +1,556 @@
-import React, { useState } from 'react';
-import { AlertTriangle, Search, Award } from 'lucide-react';
-import { Card, CardBody, CardHeader } from '../../components/ui/Card';
-import { cn } from '../../lib/utils';
-import { count, NOT_AVAILABLE_YET } from '../../lib/renewal';
-import BarList, { BarListRow } from './BarList';
-
-/** 风险学生增强视图所需字段（在 RenewalDashboard 中由基础数据转换而来） */
-interface RiskStudentEnhanced {
-  managerName: string | null;
-  studentId: string | null;
-  studentName: string;
-  grade: string | null;
-  enrollDays: number | null;
-  coef: number | null;
-  type: string | null;
-  courseProduct: string | null;
-  classLast1: number | null;
-  classLast2: number | null;
-  // 增强字段（后端暂未提供，预留字段）
-  teacherName?: string | null;
-  subjectGroup?: string | null;
-  riskLevel: 'low' | 'medium' | 'high';
-  riskCount: number;
-  status: 'renewed' | 'prepaid' | 'dropped' | 'graduating' | 'normal';
-  prepaid: boolean;
-  renewed: boolean;
-  remainingHours: number | null;
-  riskReasons: string[];
-}
+import { ClipboardPen, Download, Search, UserX } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardBody, CardHeader } from "../../components/ui/Card";
+import Badge from "../../components/ui/Badge";
+import { count, type RiskStudentRow } from "../../lib/renewal";
+import { downloadCsv } from "../../lib/exportCsv";
+import { api } from "../../api/client";
+import Button from "../ui/Button";
+import { Select } from "../ui/Field";
+import RiskFollowUpModal, {
+  type FollowUpStatus,
+  type RiskFollowUpRecord,
+} from "./RiskFollowUpModal";
 
 interface Props {
-  students: RiskStudentEnhanced[];
+  rows: RiskStudentRow[];
+  reportId: number;
 }
 
-const RISK_LEVELS = [
-  { key: 'all', label: '全部' },
-  { key: 'high', label: '高危（≥3项）' },
-  { key: 'medium', label: '中危（2项）' },
-  { key: 'low', label: '低危（1项）' },
+const FOLLOW_UP_LABEL: Record<FollowUpStatus, string> = {
+  pending: "待联系",
+  contacted: "已联系",
+  committed: "已承诺续费",
+  renewed: "已续费",
+  closed: "已关闭",
+};
+const FOLLOW_UP_TONE: Record<
+  FollowUpStatus,
+  "warning" | "info" | "violet" | "success" | "neutral"
+> = {
+  pending: "warning",
+  contacted: "info",
+  committed: "violet",
+  renewed: "success",
+  closed: "neutral",
+};
+const STATUS_OPTIONS = [
+  { value: "all", label: "全部状态" },
+  { value: "unrecorded", label: "未记录" },
+  ...Object.entries(FOLLOW_UP_LABEL).map(([value, label]) => ({
+    value,
+    label,
+  })),
+];
+const DUE_OPTIONS = [
+  { value: "all", label: "全部时间" },
+  { value: "overdue", label: "已逾期" },
+  { value: "today", label: "今天到期" },
+  { value: "week", label: "未来 7 天" },
+  { value: "none", label: "进行中但未排期" },
 ];
 
-const STATUS_COLORS: Record<string, string> = {
-  renewed: 'bg-emerald-500',
-  prepaid: 'bg-purple-500',
-  dropped: 'bg-red-500',
-  graduating: 'bg-amber-500',
-};
+function localIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
-export default function RiskViewEnhanced({ students }: Props) {
-  const [filter, setFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
-  const [search, setSearch] = useState('');
+function dayDistance(date: string, today: string): number {
+  return Math.round(
+    (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) /
+      86400000,
+  );
+}
 
-  if (students.length === 0) {
-    return (
-      <Card className="h-full">
-        <CardHeader
-          title="风险学生清单"
-          description="预警：预存未续、停课未结、高三毕业、课消异常的学生名单"
-          icon={<AlertTriangle className="h-5 w-5" />}
-        />
-        <CardBody className="py-16">
-          <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-100 flex items-center justify-center">
-              <AlertTriangle className="w-8 h-8 text-slate-300" />
-            </div>
-            <h3 className="text-lg font-medium text-slate-600 mb-1">{NOT_AVAILABLE_YET}</h3>
-            <p className="text-sm text-slate-400">续生率明细将在下个月录入完成后显示</p>
-          </div>
-        </CardBody>
-      </Card>
+function isActive(
+  record: RiskFollowUpRecord | undefined,
+): record is RiskFollowUpRecord {
+  return (
+    !!record &&
+    record.followUpStatus !== "renewed" &&
+    record.followUpStatus !== "closed"
+  );
+}
+
+export default function RiskViewEnhanced({ rows, reportId }: Props) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [dueFilter, setDueFilter] = useState("all");
+  const [records, setRecords] = useState<Record<string, RiskFollowUpRecord>>(
+    {},
+  );
+  const [selected, setSelected] = useState<RiskStudentRow | null>(null);
+  const [page, setPage] = useState(1);
+  const [followUpError, setFollowUpError] = useState("");
+  const [followUpLoadState, setFollowUpLoadState] = useState<
+    "loading" | "ready" | "error"
+  >("loading");
+  const followUpRequestRef = useRef(0);
+  const today = localIsoDate(new Date());
+  const followUpsReady = followUpLoadState === "ready";
+
+  const loadFollowUps = useCallback(async () => {
+    const requestId = ++followUpRequestRef.current;
+    setFollowUpError("");
+    setFollowUpLoadState("loading");
+    try {
+      const response = (await api.get(
+        `/renewal/risk-followups?reportId=${reportId}`,
+      )) as { records?: RiskFollowUpRecord[] };
+      if (requestId !== followUpRequestRef.current) return;
+      setRecords(
+        Object.fromEntries(
+          (response.records || []).map((record) => [record.studentKey, record]),
+        ),
+      );
+      setFollowUpLoadState("ready");
+    } catch (reason) {
+      if (requestId === followUpRequestRef.current) {
+        setFollowUpError(
+          reason instanceof Error ? reason.message : "跟进记录加载失败",
+        );
+        setFollowUpLoadState("error");
+      }
+    }
+  }, [reportId]);
+  useEffect(() => {
+    setRecords({});
+    setSelected(null);
+    void loadFollowUps();
+    return () => {
+      followUpRequestRef.current += 1;
+    };
+  }, [loadFollowUps]);
+
+  const owners = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          Object.values(records)
+            .map((record) => record.owner.trim())
+            .filter(Boolean),
+        ),
+      ).sort((left, right) => left.localeCompare(right, "zh-CN")),
+    [records],
+  );
+  const summary = useMemo(() => {
+    let unrecorded = 0;
+    let overdue = 0;
+    let dueToday = 0;
+    let nextSevenDays = 0;
+    for (const row of rows) {
+      const record = records[row.studentKey];
+      if (!record) unrecorded += 1;
+      if (!isActive(record) || !record.nextFollowUpDate) continue;
+      const distance = dayDistance(record.nextFollowUpDate, today);
+      if (distance < 0) overdue += 1;
+      if (distance === 0) dueToday += 1;
+      if (distance >= 0 && distance <= 7) nextSevenDays += 1;
+    }
+    return { unrecorded, overdue, dueToday, nextSevenDays };
+  }, [records, rows, today]);
+
+  const filteredRows = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase();
+    return rows.filter((row) => {
+      const record = records[row.studentKey];
+      if (
+        keyword &&
+        ![
+          row.studentName,
+          row.studentId,
+          row.managerName,
+          row.grade,
+          row.courseProduct,
+          record?.owner,
+          record?.outcome,
+        ].some((value) =>
+          String(value ?? "")
+            .toLocaleLowerCase()
+            .includes(keyword),
+        )
+      )
+        return false;
+      if (statusFilter === "unrecorded" && record) return false;
+      if (
+        statusFilter !== "all" &&
+        statusFilter !== "unrecorded" &&
+        record?.followUpStatus !== statusFilter
+      )
+        return false;
+      if (ownerFilter !== "all" && record?.owner !== ownerFilter) return false;
+      if (dueFilter !== "all") {
+        if (!isActive(record)) return false;
+        const distance = record.nextFollowUpDate
+          ? dayDistance(record.nextFollowUpDate, today)
+          : null;
+        if (dueFilter === "none" && distance !== null) return false;
+        if (dueFilter === "overdue" && (distance === null || distance >= 0))
+          return false;
+        if (dueFilter === "today" && distance !== 0) return false;
+        if (
+          dueFilter === "week" &&
+          (distance === null || distance < 0 || distance > 7)
+        )
+          return false;
+      }
+      return true;
+    });
+  }, [dueFilter, ownerFilter, query, records, rows, statusFilter, today]);
+
+  const pageSize = 50;
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = filteredRows.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [reportId, query, statusFilter, ownerFilter, dueFilter]);
+
+  function exportFilteredRows() {
+    downloadCsv(
+      `待关注学生-筛选结果-${today}.csv`,
+      [
+        { label: "学生编号", value: (row) => row.studentId },
+        { label: "学生", value: (row) => row.studentName },
+        { label: "学管", value: (row) => row.managerName },
+        { label: "年级", value: (row) => row.grade },
+        { label: "课程", value: (row) => row.courseProduct },
+        {
+          label: "跟进状态",
+          value: (row) =>
+            records[row.studentKey]
+              ? FOLLOW_UP_LABEL[records[row.studentKey].followUpStatus]
+              : "未记录",
+        },
+        {
+          label: "跟进负责人",
+          value: (row) => records[row.studentKey]?.owner ?? null,
+        },
+        {
+          label: "下次跟进日期",
+          value: (row) => records[row.studentKey]?.nextFollowUpDate ?? null,
+        },
+        {
+          label: "沟通与处置记录",
+          value: (row) => records[row.studentKey]?.outcome ?? null,
+        },
+      ],
+      filteredRows,
     );
   }
 
-  const filtered = students.filter(s => {
-    if (filter !== 'all' && s.riskLevel !== filter) return false;
-    if (search && !s.studentName.toLowerCase().includes(search.toLowerCase()) &&
-        !s.teacherName?.toLowerCase().includes(search.toLowerCase()) &&
-        !s.managerName?.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
-
-  // 汇总统计
-  const stats = students.reduce((acc, s) => {
-    acc[s.riskLevel] = (acc[s.riskLevel] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-
-  // TOP 风险榜单
-  const topRisk: BarListRow[] = students
-    .filter(s => s.riskLevel === 'high' || s.riskLevel === 'medium')
-    .sort((a, b) => (b.riskCount || 0) - (a.riskCount || 0))
-    .slice(0, 10)
-    .map((s, i) => ({
-      label: s.studentName,
-      value: String(s.riskCount || 0),
-      rawValue: s.riskCount || 0,
-      ratio: Math.max(...students.map(x => x.riskCount || 0), 1) > 0 ? ((s.riskCount || 0) / Math.max(...students.map(x => x.riskCount || 0), 1)) * 100 : 0,
-      hint: `${s.teacherName || '—'} · ${s.managerName || '—'} · ${s.status}`,
-      className: s.riskLevel === 'high' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700',
-      color: s.riskLevel === 'high' ? 'bg-red-500' : 'bg-amber-500',
-    }));
-
   return (
-    <Card className="h-full">
-      <CardHeader
-        title="风险学生清单"
-        icon={<AlertTriangle className="h-5 w-5" />}
-      />
-      <CardBody className="space-y-6 p-4">
-        {/* 筛选栏 */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px] max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="搜索学生/老师/学管..."
-              value={search}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-10 py-2 text-sm text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none"
-              aria-label="搜索学生、老师或学管"
-            />
-          </div>
-          <select
-            value={filter}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilter(e.target.value as 'all' | 'high' | 'medium' | 'low')}
-            className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none"
-            aria-label="按风险等级筛选"
-          >
-            {RISK_LEVELS.map(o => (
-              <option key={o.key} value={o.key}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* 风险等级分布 */}
-        <div className="flex gap-3 flex-wrap">
-          {RISK_LEVELS.slice(1).map(l => (
-            <div key={l.key} className="rounded-xl px-4 py-3 bg-slate-50 border border-slate-100 flex items-center gap-2">
-              <span className={cn('w-2.5 h-2.5 rounded-full',
-                l.key === 'high' && 'bg-red-500',
-                l.key === 'medium' && 'bg-amber-500',
-                l.key === 'low' && 'bg-sky-500',
-              )} />
-              <span className="text-sm font-medium text-slate-700">{l.label}</span>
-              <span className="text-lg font-bold tabular-nums text-slate-800">{stats[l.key] || 0}</span>
+    <>
+      <Card className="h-full">
+        <CardHeader
+          title="待关注学生"
+          description="接口口径：本月未续费且上月无课消（class_last1 = 0）；跟进记录独立于 Excel 原始状态"
+          icon={<UserX className="h-5 w-5" />}
+          action={<Badge tone="warning">{count(rows.length)} 人</Badge>}
+        />
+        <CardBody className="space-y-4 p-4">
+          {followUpError && (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600"
+            >
+              <span>{followUpError}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void loadFollowUps()}
+              >
+                重新加载跟进
+              </Button>
             </div>
-          ))}
-          <div className="rounded-xl px-4 py-3 bg-slate-50 border border-slate-100 flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
-            <span className="text-sm font-medium text-slate-700">合计</span>
-            <span className="text-lg font-bold tabular-nums text-slate-800">{students.length}</span>
+          )}
+          <div
+            className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+            aria-label="跟进概览"
+          >
+            {[
+              {
+                label: "未记录",
+                value: summary.unrecorded,
+                tone: "text-slate-700",
+              },
+              { label: "已逾期", value: summary.overdue, tone: "text-red-600" },
+              {
+                label: "今天到期",
+                value: summary.dueToday,
+                tone: "text-amber-600",
+              },
+              {
+                label: "未来 7 天",
+                value: summary.nextSevenDays,
+                tone: "text-brand-600",
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="rounded-xl border border-slate-100 bg-slate-50/70 px-4 py-3"
+              >
+                <div className="text-xs text-slate-500">{item.label}</div>
+                <div
+                  className={`mt-1 text-2xl font-semibold tabular-nums ${item.tone}`}
+                >
+                  {followUpsReady ? item.value : "—"}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
-
-        {/* TOP 风险榜单 */}
-        {topRisk.length > 0 && (
-          <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
-            <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
-              <Award className="h-4 w-4 text-red-500" />
-              高/中危 TOP 10（按风险项数排序）
-            </h4>
-            <BarList rows={topRisk} compact />
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <label className="relative block md:col-span-2 xl:col-span-1">
+              <span className="sr-only">搜索学生、学管、课程或跟进内容</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索学生或跟进内容"
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+              />
+            </label>
+            <Select
+              aria-label="按跟进状态筛选"
+              options={STATUS_OPTIONS}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              disabled={!followUpsReady}
+            />
+            <Select
+              aria-label="按跟进负责人筛选"
+              options={[
+                { value: "all", label: "全部负责人" },
+                ...owners.map((owner) => ({ value: owner, label: owner })),
+              ]}
+              value={ownerFilter}
+              onChange={(event) => setOwnerFilter(event.target.value)}
+              disabled={!followUpsReady}
+            />
+            <Select
+              aria-label="按跟进时间筛选"
+              options={DUE_OPTIONS}
+              value={dueFilter}
+              onChange={(event) => setDueFilter(event.target.value)}
+              disabled={!followUpsReady}
+            />
+            <Button
+              variant="outline"
+              icon={<Download className="h-4 w-4" />}
+              onClick={exportFilteredRows}
+              disabled={!followUpsReady || filteredRows.length === 0}
+            >
+              导出筛选结果
+            </Button>
           </div>
-        )}
-
-        {/* 明细表格 */}
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs text-slate-500">
-                <tr className="border-b border-slate-200">
-                  <th className="px-4 py-3 font-medium">学生</th>
-                  <th className="px-4 py-3 font-medium">年级</th>
-                  <th className="px-4 py-3 font-medium">老师</th>
-                  <th className="px-4 py-3 font-medium">学管</th>
-                  <th className="px-4 py-3 font-medium">科组</th>
-                  <th className="px-4 py-3 font-medium">风险等级</th>
-                  <th className="px-4 py-3 font-medium">风险项数</th>
-                  <th className="px-4 py-3 font-medium">状态标签</th>
-                  <th className="px-4 py-3 font-medium">预存</th>
-                  <th className="px-4 py-3 font-medium">续费</th>
-                  <th className="px-4 py-3 font-medium">剩余课时</th>
-                  <th className="px-4 py-3 font-medium">风险详情</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map((s, i) => (
-                  <tr key={s.studentName + ':' + s.teacherName + ':' + i} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3 font-medium text-slate-800">{s.studentName}</td>
-                    <td className="px-4 py-3 text-slate-600">{s.grade || '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">{s.teacherName || '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">{s.managerName || '—'}</td>
-                    <td className="px-4 py-3 text-slate-600">{s.subjectGroup || '—'}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-                        s.riskLevel === 'high' && 'bg-red-100 text-red-700',
-                        s.riskLevel === 'medium' && 'bg-amber-100 text-amber-700',
-                        s.riskLevel === 'low' && 'bg-sky-100 text-sky-700',
-                      )}>
-                        {RISK_LEVELS.find(x => x.key === s.riskLevel)?.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-700 font-medium">{s.riskCount}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn('inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium', STATUS_COLORS[s.status])}>
-                        {s.status === 'renewed' && '已续费'}
-                        {s.status === 'prepaid' && '已预存'}
-                        {s.status === 'dropped' && '停课/结课'}
-                        {s.status === 'graduating' && '高三毕业'}
-                        {s.status === 'normal' && '正常'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{s.prepaid ? '是' : '否'}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{s.renewed ? '是' : '否'}</td>
-                    <td className="px-4 py-3 tabular-nums text-slate-600">{s.remainingHours !== null ? count(s.remainingHours) : '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 text-xs max-w-xs truncate">{s.riskReasons.join('；') || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+            <span>
+              显示 {filteredRows.length} / {rows.length}{" "}
+              人；已逾期和今天到期只统计仍在跟进中的记录
+            </span>
+            {(query ||
+              statusFilter !== "all" ||
+              ownerFilter !== "all" ||
+              dueFilter !== "all") && (
+              <button
+                type="button"
+                className="font-medium text-brand-600 hover:text-brand-700"
+                onClick={() => {
+                  setQuery("");
+                  setStatusFilter("all");
+                  setOwnerFilter("all");
+                  setDueFilter("all");
+                }}
+              >
+                清除筛选
+              </button>
+            )}
           </div>
-        </div>
-
-        {filtered.length !== students.length && (
-          <div className="text-xs text-slate-400 text-center py-2">
-            共 {students.length} 条，筛选后显示 {filtered.length} 条
-          </div>
-        )}
-      </CardBody>
-    </Card>
+          {filteredRows.length === 0 ? (
+            <p className="rounded-xl bg-slate-50 px-4 py-12 text-center text-sm text-slate-500">
+              {rows.length === 0
+                ? "接口已成功返回空列表，当前没有符合该口径的学生"
+                : "没有匹配筛选条件的学生"}
+            </p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-slate-200">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-500">
+                    <tr className="border-b border-slate-200">
+                      <th className="px-4 py-3 font-medium">学管</th>
+                      <th className="px-4 py-3 font-medium">学生 ID</th>
+                      <th className="px-4 py-3 font-medium">学生</th>
+                      <th className="px-4 py-3 font-medium">年级</th>
+                      <th className="px-4 py-3 font-medium">课程</th>
+                      <th className="px-4 py-3 font-medium">在读天数</th>
+                      <th className="px-4 py-3 font-medium">系数</th>
+                      <th className="px-4 py-3 font-medium">类型</th>
+                      <th className="px-4 py-3 font-medium">上 2 月课消</th>
+                      <th className="px-4 py-3 font-medium">上月课消</th>
+                      <th className="px-4 py-3 font-medium">跟进状态</th>
+                      <th className="px-4 py-3 font-medium">负责人</th>
+                      <th className="px-4 py-3 font-medium">下次跟进</th>
+                      <th className="px-4 py-3 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {pageRows.map((row, index) => {
+                      const record = records[row.studentKey];
+                      const distance =
+                        isActive(record) && record.nextFollowUpDate
+                          ? dayDistance(record.nextFollowUpDate, today)
+                          : null;
+                      return (
+                        <tr
+                          key={
+                            row.studentKey ||
+                            `${row.studentId}:${row.sourceRow}:${index}`
+                          }
+                          className="hover:bg-slate-50/60"
+                        >
+                          <td className="px-4 py-3 text-slate-600">
+                            {row.managerName || "—"}
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-600">
+                            {row.studentId || "—"}
+                          </td>
+                          <td className="px-4 py-3 font-medium text-slate-700">
+                            {row.studentName || "—"}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {row.grade || "—"}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {row.courseProduct || "—"}
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-600">
+                            {count(row.enrollDays)}
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-600">
+                            {count(row.coef)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {row.type || "—"}
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-600">
+                            {count(row.classLast2)}
+                          </td>
+                          <td className="px-4 py-3 tabular-nums text-slate-600">
+                            {count(row.classLast1)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {!followUpsReady ? (
+                              followUpLoadState === "loading" ? (
+                                "加载中…"
+                              ) : (
+                                "状态未知"
+                              )
+                            ) : record ? (
+                              <Badge
+                                tone={FOLLOW_UP_TONE[record.followUpStatus]}
+                              >
+                                {FOLLOW_UP_LABEL[record.followUpStatus]}
+                              </Badge>
+                            ) : (
+                              "未记录"
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {followUpsReady ? record?.owner || "—" : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {record?.nextFollowUpDate ? (
+                              <div className="whitespace-nowrap">
+                                <div>{record.nextFollowUpDate}</div>
+                                {distance !== null && distance < 0 && (
+                                  <Badge tone="danger" className="mt-1">
+                                    逾期 {-distance} 天
+                                  </Badge>
+                                )}
+                                {distance === 0 && (
+                                  <Badge tone="warning" className="mt-1">
+                                    今天到期
+                                  </Badge>
+                                )}
+                              </div>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              icon={<ClipboardPen className="h-3.5 w-3.5" />}
+                              onClick={() => setSelected(row)}
+                              disabled={!followUpsReady}
+                            >
+                              {!followUpsReady
+                                ? "暂不可用"
+                                : record
+                                  ? "编辑跟进"
+                                  : "记录跟进"}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {totalPages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/60 px-4 py-3 text-xs text-slate-500">
+                  <span>
+                    第 {currentPage} / {totalPages} 页，每页 {pageSize}{" "}
+                    人；筛选与导出仍覆盖全部 {filteredRows.length} 人
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={currentPage <= 1}
+                      onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={currentPage >= totalPages}
+                      onClick={() =>
+                        setPage((value) => Math.min(totalPages, value + 1))
+                      }
+                    >
+                      下一页
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardBody>
+      </Card>
+      <RiskFollowUpModal
+        open={selected !== null}
+        student={selected}
+        reportId={reportId}
+        record={selected ? records[selected.studentKey] : null}
+        onClose={() => setSelected(null)}
+        onSaved={(record) =>
+          setRecords((previous) => ({
+            ...previous,
+            [record.studentKey]: record,
+          }))
+        }
+      />
+    </>
   );
 }

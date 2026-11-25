@@ -3,11 +3,15 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { assertTestDataIsolation } from './testDataIsolation.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+// 必须在解析 JWT、创建上传目录或打开任何数据库之前拦截未隔离的测试进程。
+assertTestDataIsolation({ defaultDataDir: path.resolve(__dirname, '../../data') });
 
 // 数据目录：允许通过 DATA_DIR 覆盖，便于测试隔离与自定义挂载路径
 const DATA_DIR = process.env.DATA_DIR

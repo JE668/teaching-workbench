@@ -104,12 +104,59 @@ export interface TeacherStatRow {
 export interface GroupSummaryRow {
   subjectGroup: string;
   teacherCount: number;
-  baseCount: number;
-  prepaidCount: number;
-  renewedCount: number;
+  baseCount: number | null;
+  prepaidCount: number | null;
+  renewedCount: number | null;
   prepaidRate: number | null;
   renewRate: number | null;
-  incentiveGap: number;
+  incentiveGap: number | null;
+}
+
+/** 看板唯一总览模型：所有分子、分母均来自同一份教师明细。 */
+export interface RenewalOverview {
+  sourceRows: number;
+  baseCount: number | null;
+  prepaidCount: number | null;
+  nonGradPrepaidCount: number | null;
+  renewedCount: number | null;
+  incentiveGap: number | null;
+  prepaidRate: number | null;
+  renewRate: number | null;
+}
+
+function sumKnown<T>(rows: T[], pick: (row: T) => number | null | undefined): number | null {
+  let total = 0;
+  let found = false;
+  for (const row of rows) {
+    const value = pick(row);
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      total += value;
+      found = true;
+    }
+  }
+  return found ? total : null;
+}
+
+function ratioPercent(numerator: number | null, denominator: number | null): number | null {
+  return numerator !== null && denominator !== null && denominator > 0
+    ? (numerator / denominator) * 100
+    : null;
+}
+
+export function buildRenewalOverview(rows: TeacherStatRow[]): RenewalOverview {
+  const baseCount = sumKnown(rows, row => row.baseCount);
+  const prepaidCount = sumKnown(rows, row => row.prepaidCount);
+  const renewedCount = sumKnown(rows, row => row.renewedCount);
+  return {
+    sourceRows: rows.length,
+    baseCount,
+    prepaidCount,
+    nonGradPrepaidCount: sumKnown(rows, row => row.extra?.prepaid_nongrad),
+    renewedCount,
+    incentiveGap: sumKnown(rows, row => row.incentiveGap),
+    prepaidRate: ratioPercent(prepaidCount, baseCount),
+    renewRate: ratioPercent(renewedCount, baseCount),
+  };
 }
 
 /** 学管业绩行 */
@@ -141,6 +188,8 @@ export interface FunnelRow {
 
 /** 风险学生行 */
 export interface RiskStudentRow {
+  studentKey: string;
+  sourceRow: number;
   managerName: string | null;
   studentId: string | null;
   studentName: string;

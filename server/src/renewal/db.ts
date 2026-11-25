@@ -49,12 +49,13 @@ export const SQL_NOW = "datetime('now', '+8 hours')";
 /**
  * 幂等初始化续费看板表结构。服务启动时调用。
  */
-export function initRenewalDb(): void {
+export function initRenewalDb(database: Database.Database = renewalDb): void {
   const sql = `
   -- 上传批次（一次上传一份汇总表 xlsx）
   CREATE TABLE IF NOT EXISTS renewal_report (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_name TEXT NOT NULL,
+    file_hash TEXT,
     file_size INTEGER NOT NULL DEFAULT 0,
     stat_month TEXT,
     center_name TEXT,
@@ -98,6 +99,8 @@ export function initRenewalDb(): void {
     tab TEXT NOT NULL,
     teacher_name TEXT,
     subject_group TEXT,
+    teacher_stat_id INTEGER,
+    student_id TEXT,
     student_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'normal',
     slot_index INTEGER,
@@ -153,9 +156,39 @@ export function initRenewalDb(): void {
     report_id INTEGER NOT NULL REFERENCES renewal_report(id) ON DELETE CASCADE,
     sheet_name TEXT,
     row_number INTEGER,
-    error_message TEXT
+    column_number INTEGER,
+    field_name TEXT,
+    error_type TEXT NOT NULL DEFAULT 'parse_error',
+    severity TEXT NOT NULL DEFAULT 'error',
+    error_message TEXT NOT NULL,
+    details_json TEXT
   );
   `;
-  renewalDb.exec(sql);
+  database.exec(sql);
+
+  // 老库通过补列升级；所有新增列都允许已有行保留空值/默认值。
+  const ensureColumn = (table: string, column: string, definition: string): void => {
+    const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (columns.some((item) => item.name === column)) return;
+    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  };
+
+  ensureColumn('grid_students', 'teacher_stat_id', 'INTEGER');
+  ensureColumn('grid_students', 'student_id', 'TEXT');
+  ensureColumn('renewal_report', 'file_hash', 'TEXT');
+  ensureColumn('renewal_import_error', 'error_type', "TEXT NOT NULL DEFAULT 'parse_error'");
+  ensureColumn('renewal_import_error', 'severity', "TEXT NOT NULL DEFAULT 'error'");
+  ensureColumn('renewal_import_error', 'column_number', 'INTEGER');
+  ensureColumn('renewal_import_error', 'field_name', 'TEXT');
+  ensureColumn('renewal_import_error', 'details_json', 'TEXT');
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_grid_students_teacher_stat ON grid_students(teacher_stat_id);
+    CREATE INDEX IF NOT EXISTS idx_grid_students_student_id ON grid_students(student_id);
+    DROP INDEX IF EXISTS idx_renewal_report_file_hash;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_renewal_report_file_hash
+      ON renewal_report(uploaded_by, file_hash)
+      WHERE file_hash IS NOT NULL AND uploaded_by IS NOT NULL;
+  `);
   log.info('续费看板表结构已初始化');
 }

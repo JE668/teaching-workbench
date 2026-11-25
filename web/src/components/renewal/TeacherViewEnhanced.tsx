@@ -2,11 +2,12 @@ import { useState, useMemo } from 'react';
 import { ChevronDown, Users, TrendingUp, Target, AlertCircle } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { cn } from '../../lib/utils';
-import { TAB_LABELS, TAB_ORDER, count, NOT_AVAILABLE_YET, pct, rankStyle, GRID_STATUS_META, type TeacherStatRow, type MentorMatrix, type TeacherGradeMatrix, type GroupGradeMatrix, type RateOverview, type MentorMatrixCell, type TeacherGradeMatrixCell, type GroupGradeMatrixCell, type GridStatus } from '../../lib/renewal';
+import { TAB_LABELS, TAB_ORDER, count, pct, rankStyle, GRID_STATUS_META, type TeacherStatRow, type MentorMatrix, type TeacherGradeMatrix, type GroupGradeMatrix, type RateOverview, type MentorMatrixCell, type TeacherGradeMatrixCell, type GroupGradeMatrixCell, type GridStatus } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
 import StudentGrid from './StudentGrid';
 import DimensionChart from './DimensionChart';
 import Modal from '../../components/ui/Modal';
+import { HOUR_BUCKETS, hourBucketCounts } from '../../lib/hourBuckets';
 
 interface Props {
   rows: TeacherStatRow[];
@@ -18,11 +19,6 @@ interface Props {
   teacherGradeMatrix?: TeacherGradeMatrix;
   groupGradeMatrix?: GroupGradeMatrix;
   rateOverview?: RateOverview;
-  reportId?: number;
-  fetchMentorMatrix?: (reportId: number) => Promise<MentorMatrix>;
-  fetchTeacherGradeMatrix?: (reportId: number) => Promise<TeacherGradeMatrix>;
-  fetchGroupGradeMatrix?: (reportId: number) => Promise<GroupGradeMatrix>;
-  fetchRateOverview?: (reportId: number) => Promise<RateOverview>;
   matrixLoading?: boolean;
 }
 
@@ -55,10 +51,10 @@ function tabColumns(tab: string): Col[] {
   }
   if (tab === 'hours') {
     return [
-      { key: 'enroll_0_80', label: '0–80课时在读', isRate: false, get: r => r.extra.enroll_0_80 ?? null },
-      { key: 'prepaid_0_80', label: '0–80课时预存', isRate: false, get: r => r.extra.prepaid_0_80 ?? null },
-      { key: 'enroll_80p', label: '80+课时在读', isRate: false, get: r => r.extra.enroll_80p ?? null },
-      { key: 'prepaid_80p', label: '80+课时预存', isRate: false, get: r => r.extra.prepaid_80p ?? null },
+      ...HOUR_BUCKETS.flatMap(bucket => [
+        { key: `enroll_${bucket.key}`, label: `${bucket.shortLabel}课时在读`, isRate: false, get: (r: TeacherStatRow) => hourBucketCounts(r, bucket).enrolled },
+        { key: `prepaid_${bucket.key}`, label: `${bucket.shortLabel}课时预存`, isRate: false, get: (r: TeacherStatRow) => hourBucketCounts(r, bucket).prepaid },
+      ]),
       { key: 'prepaidCount', label: '总预存', isRate: false, get: r => r.prepaidCount },
       { key: 'prepaidRate', label: '总预存率', isRate: true, get: r => r.prepaidRate },
     ];
@@ -75,6 +71,55 @@ function textColorForHex(hex: string): string {
   const b = parseInt(hex.slice(5, 7), 16);
   const yiq = (r * 299 + g * 587 + b * 114) / 1000;
   return yiq >= 128 ? '#1e293b' : '#f8fafc';
+}
+
+const STAGE_RATE_FIELDS = [
+  { label: '非毕业班', enrolledKey: 'enroll_nongrad', prepaidKey: 'prepaid_nongrad', barClass: 'bg-blue-500' },
+  { label: '初三', enrolledKey: 'enroll_g9', prepaidKey: 'prepaid_g9', barClass: 'bg-violet-500' },
+  { label: '高三', enrolledKey: 'enroll_g12', prepaidKey: 'prepaid_g12', barClass: 'bg-emerald-500' },
+] as const;
+
+function finiteMetric(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function StagePrepaidRates({ rows }: { rows: TeacherStatRow[] }) {
+  const stages = STAGE_RATE_FIELDS.map(stage => {
+    const enrolled = rows.reduce((sum, row) => sum + finiteMetric(row.extra[stage.enrolledKey]), 0);
+    const prepaid = rows.reduce((sum, row) => sum + finiteMetric(row.extra[stage.prepaidKey]), 0);
+    return { ...stage, enrolled, prepaid, rate: enrolled > 0 ? (prepaid / enrolled) * 100 : null };
+  });
+
+  return (
+    <section aria-label="学段预存率" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-800">学段预存率</h3>
+        <p className="text-xs text-slate-500">预存人数 ÷ 同学段在读人数（先汇总人数，再计算比例）</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        {stages.map(stage => (
+          <div key={stage.label} role="group" aria-label={stage.label + '预存率'} className="rounded-lg bg-slate-50/80 p-3 ring-1 ring-slate-100">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-slate-700">{stage.label}</span>
+              <span className="text-lg font-semibold tabular-nums text-slate-800">
+                {stage.rate === null ? '—' : stage.rate.toFixed(1) + '%'}
+              </span>
+            </div>
+            <p className="mt-1 text-xs tabular-nums text-slate-500">
+              预存 {count(stage.prepaid)} 人 ÷ 在读 {count(stage.enrolled)} 人
+            </p>
+            {stage.rate === null ? (
+              <p className="mt-2 text-xs text-slate-400">在读基数为 0，比例不适用</p>
+            ) : (
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
+                <div className={cn('h-full rounded-full', stage.barClass)} style={{ width: Math.max(0, Math.min(100, stage.rate)) + '%' }} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function TeacherRow({
@@ -123,7 +168,22 @@ function TeacherRow({
           )}
         </td>
         <td className="px-4 py-3" aria-label="学生状态">
-          <StudentGrid students={r.students} />
+          {r.students.length > 0 ? (
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={event => {
+                event.stopPropagation();
+                onToggle();
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 hover:text-brand-700"
+            >
+              {open ? '收起' : '查看'} {r.students.length} 名学生明细
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden="true" />
+            </button>
+          ) : (
+            <span className="text-xs text-slate-400">无学生明细</span>
+          )}
         </td>
       </tr>
       {open && (
@@ -159,8 +219,8 @@ function MatrixLegend() {
 function MatrixCellDetail({ cell, type, onClose }: { cell: MentorMatrixCell | TeacherGradeMatrixCell | GroupGradeMatrixCell | null; type: 'mentor' | 'grade' | 'group'; onClose: () => void }) {
   if (!cell) return null;
 
-  const prepaidRate = cell.prepaidRate ?? 0;
-  const renewRate = cell.renewRate ?? 0;
+  const prepaidRate = cell.prepaidRate;
+  const renewRate = cell.renewRate;
 
   const title = type === 'mentor'
     ? (cell as MentorMatrixCell).teacherName + ' × ' + (cell as MentorMatrixCell).managerName
@@ -174,11 +234,11 @@ function MatrixCellDetail({ cell, type, onClose }: { cell: MentorMatrixCell | Te
         <div className="flex items-center gap-4 text-sm text-slate-500 flex-wrap">
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-full bg-purple-200" aria-hidden="true"></span>
-            <span>预存 {cell.prepaidCount} 人 ({prepaidRate.toFixed(1)}%)</span>
+            <span>预存 {cell.prepaidCount} 人 ({pct(prepaidRate)})</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-full bg-emerald-200" aria-hidden="true"></span>
-            <span>续费 {cell.renewedCount} 人 ({renewRate.toFixed(1)}%)</span>
+            <span>续费 {cell.renewedCount} 人 ({pct(renewRate)})</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-full bg-slate-200" aria-hidden="true"></span>
@@ -231,11 +291,6 @@ export default function TeacherViewEnhanced({
   teacherGradeMatrix,
   groupGradeMatrix,
   rateOverview,
-  reportId,
-  fetchMentorMatrix,
-  fetchTeacherGradeMatrix,
-  fetchGroupGradeMatrix,
-  fetchRateOverview,
   matrixLoading,
 }: Props) {
   const [matrixView, setMatrixView] = useState<'mentor' | 'grade' | 'group'>('mentor');
@@ -246,35 +301,85 @@ export default function TeacherViewEnhanced({
   const closeCellDetail = () => setCellDetail({ open: false, cell: null, type: 'mentor' });
 
   const cols = useMemo(() => tabColumns(tab), [tab]);
-  const maxRenewed = rows.reduce((m, r) => Math.max(m, r.renewedCount || 0), 0);
+  const renewedRows = rows.filter(r => typeof r.renewedCount === 'number');
+  const prepaidRows = rows.filter(r => typeof r.prepaidCount === 'number');
+  const nonGradRows = rows.filter(r => typeof r.extra?.prepaid_nongrad === 'number');
+  const maxRenewed = renewedRows.reduce((m, r) => Math.max(m, r.renewedCount ?? 0), 0);
+  const maxPrepaid = prepaidRows.reduce((m, r) => Math.max(m, r.prepaidCount ?? 0), 0);
+  const maxNonGrad = nonGradRows.reduce((m, r) => Math.max(m, r.extra.prepaid_nongrad ?? 0), 0);
   const hasGapData = rows.some(r => typeof r.incentiveGap === 'number');
-  const gapLabel = tab === 'incentive' ? '激励差额' : '80%目标差额';
-  const gapPositive = rows.filter(r => (r.incentiveGap || 0) > 0).sort((a, b) => (b.incentiveGap || 0) - (a.incentiveGap || 0));
-  const maxGap = gapPositive.reduce((m, r) => Math.max(m, r.incentiveGap || 0), 0);
+  const gapPositive = rows
+    .filter(r => typeof r.incentiveGap === 'number' && r.incentiveGap > 0)
+    .sort((a, b) => (b.incentiveGap ?? 0) - (a.incentiveGap ?? 0));
 
-  const renewalRanking: BarListRow[] = rows.filter(r => typeof r.renewedCount === 'number')
-    .sort((a, b) => (b.renewedCount || 0) - (a.renewedCount || 0))
+  const renewalRanking: BarListRow[] = renewedRows.slice()
+    .sort((a, b) => (b.renewedCount ?? 0) - (a.renewedCount ?? 0))
     .slice(0, 10)
     .map((r, i) => ({
       label: r.teacherName || '未知教师',
       value: count(r.renewedCount),
-      rawValue: r.renewedCount || 0,
-      ratio: maxRenewed > 0 ? ((r.renewedCount || 0) / maxRenewed) * 100 : 0,
+      rawValue: r.renewedCount ?? 0,
+      ratio: maxRenewed > 0 ? ((r.renewedCount ?? 0) / maxRenewed) * 100 : 0,
       hint: '基数 ' + count(r.baseCount) + ' · 预存 ' + count(r.prepaidCount) + ' · 续科率 ' + pct(r.renewRate),
       className: rankStyle(i),
     }));
 
-  const gapRanking: BarListRow[] = gapPositive
+  const prepaidRanking: BarListRow[] = prepaidRows.slice()
+    .sort((a, b) => (b.prepaidCount ?? 0) - (a.prepaidCount ?? 0))
     .slice(0, 10)
     .map((r, i) => ({
       label: r.teacherName || '未知教师',
-      value: count(r.incentiveGap || 0),
-      rawValue: r.incentiveGap || 0,
-      ratio: maxGap > 0 ? ((r.incentiveGap || 0) / maxGap) * 100 : 0,
-      hint: '基数 ' + count(r.baseCount) + ' · 续科 ' + count(r.renewedCount) + ' · 续科率 ' + pct(r.renewRate),
+      value: count(r.prepaidCount),
+      rawValue: r.prepaidCount ?? 0,
+      ratio: maxPrepaid > 0 ? ((r.prepaidCount ?? 0) / maxPrepaid) * 100 : 0,
+      hint: '基数 ' + count(r.baseCount) + ' · 预存率 ' + pct(r.prepaidRate),
       className: rankStyle(i),
-      color: 'bg-amber-500',
+      color: 'bg-violet-500',
     }));
+
+  const nonGradRanking: BarListRow[] = nonGradRows.slice()
+    .sort((a, b) => (b.extra.prepaid_nongrad ?? 0) - (a.extra.prepaid_nongrad ?? 0))
+    .slice(0, 10)
+    .map((r, i) => ({
+      label: r.teacherName || '未知教师',
+      value: count(r.extra.prepaid_nongrad),
+      rawValue: r.extra.prepaid_nongrad ?? 0,
+      ratio: maxNonGrad > 0 ? ((r.extra.prepaid_nongrad ?? 0) / maxNonGrad) * 100 : 0,
+      hint: '非毕业班在读 ' + count(r.extra.enroll_nongrad),
+      className: rankStyle(i),
+      color: 'bg-emerald-500',
+    }));
+
+  const gapRanking: BarListRow[] = gapPositive.slice(0, 10).map((r, i) => ({
+    label: r.teacherName || '未知教师',
+    value: count(r.incentiveGap),
+    rawValue: r.incentiveGap ?? 0,
+    ratio: 0,
+    hint: '基数 ' + count(r.baseCount) + ' · 续科 ' + count(r.renewedCount) + ' · 续科率 ' + pct(r.renewRate),
+    className: rankStyle(i),
+    color: 'bg-amber-500',
+  }));
+
+  const rankingSections = tab === 'stage'
+    ? [
+        { key: 'prepaid', title: '预存人数 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid },
+        { key: 'nongrad', title: '非毕业班预存 TOP 10', rows: nonGradRanking, maxValue: maxNonGrad },
+      ]
+    : tab === 'incentive'
+      ? [
+          { key: 'renewal', title: '续科人数 TOP 10', rows: renewalRanking, maxValue: maxRenewed },
+          ...(hasGapData ? [{ key: 'gap', title: '激励差额 TOP 10', rows: gapRanking, maxValue: undefined }] : []),
+        ]
+      : tab === 'hours'
+        ? [
+            { key: 'prepaid', title: '预存人数 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid },
+            { key: 'renewal', title: '续科人数 TOP 10', rows: renewalRanking, maxValue: maxRenewed },
+          ]
+        : [
+            { key: 'renewal', title: '续科人数 TOP 10', rows: renewalRanking, maxValue: maxRenewed },
+            { key: 'prepaid', title: '预存人数 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid },
+          ];
+  const visibleRankings = rankingSections.filter(section => section.rows.length > 0 || section.key === 'gap');
 
   if (rows.length === 0) {
     return (
@@ -285,8 +390,8 @@ export default function TeacherViewEnhanced({
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-100 flex items-center justify-center">
               <Users className="w-8 h-8 text-slate-300" />
             </div>
-            <h3 className="text-lg font-medium text-slate-600 mb-1">{NOT_AVAILABLE_YET}</h3>
-            <p className="text-sm text-slate-400">该统计表的数据将在下个月录入完成后显示</p>
+            <h3 className="text-lg font-medium text-slate-600 mb-1">当前统计表暂无教师明细</h3>
+            <p className="text-sm text-slate-400">接口已成功返回空列表，可切换统计表 tab 或报表批次</p>
           </div>
         </CardBody>
       </Card>
@@ -350,6 +455,7 @@ export default function TeacherViewEnhanced({
         />
         <CardBody className="space-y-6 p-4">
           <DimensionChart rows={rows} tab={tab} />
+          {tab === 'stage' && <StagePrepaidRates rows={rows} />}
 
           {/* Rate Panel */}
           {tab === 'mentor' && rateOverview && (
@@ -458,13 +564,22 @@ export default function TeacherViewEnhanced({
             ) : (
               <>
                 {matrixView === 'mentor' && mentorMatrix && (
-                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <div
+                    className="overflow-x-auto rounded-lg border border-slate-200"
+                    role="region"
+                    aria-label="教师 × 学管匹配矩阵，可横向滚动"
+                    tabIndex={0}
+                  >
                     <table className="w-full text-left text-sm min-w-max">
+                      <caption className="border-b border-slate-100 bg-slate-50/70 px-3 py-2 text-left text-xs text-slate-500">
+                        <span className="font-medium text-slate-700">共 {mentorMatrix.managers.length} 名学管</span>
+                        <span className="ml-2">左右滑动查看全部学管列，教师列固定显示</span>
+                      </caption>
                       <thead className="bg-slate-50 text-xs text-slate-500 sticky top-0 z-10">
                         <tr className="border-b border-slate-200">
                           <th className="px-3 py-2 font-medium sticky left-0 z-20 bg-slate-50 border-r border-slate-200">教师</th>
                           {mentorMatrix.managers.map(m => (
-                            <th key={m} className="px-3 py-2 font-medium text-center min-w-[120px]">{m}</th>
+                            <th key={m} className="px-3 py-2 font-medium text-center min-w-[120px] whitespace-nowrap">{m}</th>
                           ))}
                           <th className="px-3 py-2 font-medium text-center min-w-[120px]">合计</th>
                         </tr>
@@ -728,36 +843,30 @@ export default function TeacherViewEnhanced({
           </div>
           )}
 
-          {/* 快速榜单 */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
-              <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
-                <TrendingUp className="h-4 w-4 text-emerald-500" />
-                续科人数 TOP 10
-              </h4>
-              {renewalRanking.length > 0 ? (
-                <BarList rows={renewalRanking} maxValue={maxRenewed} compact />
-              ) : (
-                <p className="text-sm text-slate-400 text-center py-4">暂无续科数据</p>
-              )}
-            </div>
-            <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
-              <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
-                <AlertCircle className="h-4 w-4 text-amber-500" />
-                {gapLabel} TOP 10
-              </h4>
-              {gapRanking.length > 0 ? (
-                <BarList rows={gapRanking} compact />
-              ) : (
-                <div className={hasGapData
-                  ? 'rounded-xl bg-emerald-50/60 px-4 py-6 text-center text-sm text-emerald-700 ring-1 ring-emerald-100'
-                  : 'rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-400 ring-1 ring-slate-100'
-                }>
-                  {hasGapData ? `所有老师都已达标，没有${gapLabel}缺口` : `当前表未提供${gapLabel}数据`}
+          {/* 每个 tab 只展示有接口字段支撑的榜单。 */}
+          {visibleRankings.length > 0 ? (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {visibleRankings.map(section => (
+                <div key={section.key} className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
+                    {section.key === 'gap'
+                      ? <AlertCircle className="h-4 w-4 text-amber-500" />
+                      : <TrendingUp className="h-4 w-4 text-emerald-500" />}
+                    {section.title}
+                  </h4>
+                  {section.rows.length > 0 ? (
+                    <BarList rows={section.rows} maxValue={section.maxValue} compact />
+                  ) : (
+                    <div className="rounded-xl bg-emerald-50/60 px-4 py-6 text-center text-sm text-emerald-700 ring-1 ring-emerald-100">
+                      已提供差额数据的教师均无正向缺口
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
             </div>
-          </div>
+          ) : (
+            <p className="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-400">当前表未提供可排名的指标</p>
+          )}
 
           {/* 明细表格 */}
           <div className="rounded-xl border border-slate-200 overflow-hidden">

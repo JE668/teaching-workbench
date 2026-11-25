@@ -490,7 +490,7 @@ export default function TeachingReview() {
               label="听评课"
               value={summary.workload.observations}
               unit="节"
-              hint="按听课日期统计，仅计 final 记录"
+              hint="按听课日期统计全部听评课记录，草稿、已反馈和已归档均计入"
               icon={<Eye className="h-4 w-4" />}
             />
             <MetricCard

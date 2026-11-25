@@ -37,11 +37,20 @@ function makeReport(overrides: Record<string, unknown> = {}) {
 function mockApi(reports: unknown[] = []) {
   getMock.mockImplementation((path: string) => {
     if (path === '/renewal/reports') return Promise.resolve({ reports });
+    if (path.startsWith('/renewal/dashboard/teacher-stats?tab=stage&reportId=')) {
+      return Promise.resolve({ rows: [
+        { baseCount: 200, prepaidCount: 150, extra: { prepaid_nongrad: 100 } },
+        { baseCount: 106, prepaidCount: 76, extra: { prepaid_nongrad: 60 } },
+      ] });
+    }
+    if (path.startsWith('/renewal/analytics/manager-perf?reportId=')) {
+      return Promise.resolve({ rows: Array.from({ length: 6 }, (_, index) => ({ managerName: `学管${index + 1}` })) });
+    }
     if (/^\/renewal\/reports\/\d+\/errors$/.test(path)) {
       return Promise.resolve({
         errors: [
-          { sheet_name: '老师学生', row_number: 42, error_message: '学生姓名为空' },
-          { sheet_name: '续科率', row_number: 88, error_message: '本月是否续科不是 是/否' },
+          { sheet_name: '老师学生', row_number: 42, column_number: 3, error_type: 'missing_value', severity: 'error', error_message: '学生姓名为空', field_name: 'student_name' },
+          { sheet_name: '续科率', row_number: 88, error_type: 'invalid_value', severity: 'warning', error_message: '本月是否续科不是 是/否', details_json: '{"summaryCount":88,"detailCount":86}' },
         ],
       });
     }
@@ -110,6 +119,35 @@ describe('续费统计表上传', () => {
     expect(path).toBe('/renewal/upload');
     expect((form.get('file') as File).name).toBe('续费统计表.xlsx');
     await screen.findByText('解析完成：2026-10 续费统计汇总.xlsx');
+    expect(await screen.findByText('306')).toBeInTheDocument();
+    expect(screen.getByText('226')).toBeInTheDocument();
+    expect(screen.getByText('160')).toBeInTheDocument();
+    expect(screen.getByText('6')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看这个批次的看板' })).toHaveAttribute('href', '/renewal?reportId=3');
+  });
+
+  it('重复文件定位原批次，警告不会被成功提示掩盖', async () => {
+    const uploaded = makeReport({
+      reportId: 8,
+      fileName: '带警告的续费统计.xlsx',
+      status: 'committed_with_warnings',
+      errorCount: 2,
+    });
+    mockApi([uploaded]);
+    uploadMock.mockResolvedValue({ report: uploaded, deduplicated: true });
+    const user = userEvent.setup();
+    renderWithProviders(<RenewalUpload />);
+    await screen.findByRole('table');
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, fakeFile('带警告的续费统计.xlsx'));
+    await user.click(screen.getByRole('button', { name: /上传并解析/ }));
+
+    expect(await screen.findByText('解析完成，请先核对：带警告的续费统计.xlsx')).toBeInTheDocument();
+    expect(screen.getByText('原批次')).toBeInTheDocument();
+    expect(await screen.findByText('导入问题与警告 · 批次 #8')).toBeInTheDocument();
+    expect(screen.getByText('第 42 行 · 第 3 列')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看这个批次的看板' })).toHaveAttribute('href', '/renewal?reportId=8');
   });
 
   it('拖拽 xlsx 文件即可选中', async () => {
@@ -139,11 +177,13 @@ describe('续费统计表上传', () => {
 
     await user.click(within(table).getByText('3 条错误'));
 
-    expect(await screen.findByText('解析错误明细')).toBeInTheDocument();
+    expect(await screen.findByText('导入问题与警告 · 批次 #2')).toBeInTheDocument();
     const errTable = screen.getAllByRole('table')[0];
     expect(within(errTable).getByText('老师学生')).toBeInTheDocument();
     expect(within(errTable).getByText('学生姓名为空')).toBeInTheDocument();
     expect(within(errTable).getByText('续科率')).toBeInTheDocument();
+    expect(within(errTable).getByText('C42 · 学生姓名')).toBeInTheDocument();
+    expect(within(errTable).getByText('汇总值：88 · 明细值：86')).toBeInTheDocument();
   });
 
   it('删除批次要经过确认', async () => {

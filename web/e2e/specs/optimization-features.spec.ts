@@ -377,4 +377,52 @@ test.describe('优化功能真实浏览器验收', () => {
     expect(thirdGroups.ok()).toBeTruthy();
     expect((await thirdGroups.json()).groups).toEqual([]);
   });
+
+  test('默认草稿听评课进入教学复盘，AI 报告生成进入业务指标', async ({ page }) => {
+    const token = await loginAsNewUser(page, uniqueUsername('optobsmetrics'));
+    const month = currentMonth();
+    const createdResponse = await page.request.post('/api/observations', {
+      headers: auth(token),
+      data: {
+        topic: '一次函数课堂观察',
+        observedAt: month + '-15 09:00:00',
+        classNotes: '课堂参与度高，建议增加分层练习',
+        grade: '五年级',
+        subject: '数学',
+        studentName: '复盘验收学生',
+      },
+    });
+    expect(createdResponse.ok(), await createdResponse.text()).toBeTruthy();
+    const observationId = (await createdResponse.json()).observation.id as number;
+
+    try {
+      const summaryResponse = await page.request.get('/api/teaching-review/summary?month=' + month, { headers: auth(token) });
+      expect(summaryResponse.ok()).toBeTruthy();
+      expect((await summaryResponse.json()).workload.observations).toBe(1);
+
+      const reportResponse = await page.request.post('/api/observations/' + observationId + '/report', {
+        headers: auth(token),
+        data: {},
+      });
+      expect(reportResponse.ok(), await reportResponse.text()).toBeTruthy();
+      expect((await reportResponse.json()).report.length).toBeGreaterThan(0);
+
+      const aiResponse = await page.request.get('/api/ai-metrics/summary', { headers: auth(token) });
+      expect(aiResponse.ok()).toBeTruthy();
+      const aiBody = await aiResponse.json();
+      expect(aiBody.summary.some((row: { group: string }) => row.group === 'observation_once')).toBe(true);
+
+      await page.goto('/review');
+      const outputTrend = page.getByRole('img', { name: '近 6 个月教学产出趋势图' });
+      await expect(outputTrend).toBeVisible();
+      await expect(outputTrend.getByText('1 节')).toBeVisible();
+
+      await page.goto('/ai-metrics');
+      const observationMetric = page.getByRole('row').filter({ hasText: '听评课报告（整篇生成）' });
+      await expect(observationMetric).toBeVisible();
+      await expect(observationMetric.getByRole('cell').nth(1)).toHaveText('1');
+    } finally {
+      await page.request.delete('/api/observations/' + observationId, { headers: auth(token) });
+    }
+  });
 });

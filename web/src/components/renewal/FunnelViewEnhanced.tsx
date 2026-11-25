@@ -1,131 +1,94 @@
-import { Funnel, Users, TrendingUp, AlertTriangle, Target } from 'lucide-react';
+import { Activity, CalendarDays, CheckCircle2, Users } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
-import { count, NOT_AVAILABLE_YET, pct } from '../../lib/renewal';
-import FunnelChart from './FunnelChart';
-import BarList from './BarList';
+import { count, pct, type FunnelRow } from '../../lib/renewal';
 
 interface Props {
-  stages: { name: string; value: number }[];
-  managerRows?: { manager: string; students: number; renewed: number; rate: number }[];
+  rows: FunnelRow[];
 }
 
-export default function FunnelViewEnhanced({ stages, managerRows }: Props) {
-  const hasData = stages.length > 0 && stages.some(s => s.value > 0);
-  const totalAtTop = stages[0]?.value ?? 0;
+type NumericKey = 'students' | 'classedLast2' | 'classedLast1' | 'renewed';
 
-  if (!hasData) {
-    return (
-      <Card className="h-full">
-        <CardHeader
-          title="续生漏斗"
-          description="从在册基数 → 续费意向 → 正式续费 → 到课的转化路径"
-          icon={<Funnel className="h-5 w-5" />}
-        />
-        <CardBody className="py-16">
-          <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-100 flex items-center justify-center">
-              <Funnel className="w-8 h-8 text-slate-300" />
-            </div>
-            <h3 className="text-lg font-medium text-slate-600 mb-1">{NOT_AVAILABLE_YET}</h3>
-            <p className="text-sm text-slate-400">续生率明细将在下个月录入完成后显示</p>
-          </div>
-        </CardBody>
-      </Card>
-    );
-  }
+function sumKnown(rows: FunnelRow[], key: NumericKey): number | null {
+  const values = rows.map(r => r[key]).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null;
+}
 
-  // 转换为 FunnelChart 需要的格式
-  const funnelSteps = stages.map((s, i) => ({
-    label: s.name,
-    count: s.value,
-    width: totalAtTop > 0 ? (s.value / totalAtTop) * 100 : 0,
-    conversionRate: i === 0 ? 100 : stages[i - 1]?.value ? (s.value / stages[i - 1].value) * 100 : 0,
-    dropOff: i === 0 ? 0 : (stages[i - 1]?.value || 0) - s.value,
-  }));
+export default function FunnelViewEnhanced({ rows }: Props) {
+  const students = sumKnown(rows, 'students');
+  const classedLast2 = sumKnown(rows, 'classedLast2');
+  const classedLast1 = sumKnown(rows, 'classedLast1');
+  const renewed = sumKnown(rows, 'renewed');
+  const overallRenewRate = students !== null && students > 0 && renewed !== null
+    ? (renewed / students) * 100
+    : null;
+  const metrics = [
+    { label: '学生基数', value: students, icon: <Users className="h-5 w-5" />, note: '接口学生基数合计' },
+    { label: '上 2 月有课消', value: classedLast2, icon: <CalendarDays className="h-5 w-5" />, note: '独立指标 · 非前置阶段' },
+    { label: '上 1 月有课消', value: classedLast1, icon: <Activity className="h-5 w-5" />, note: '独立指标 · 非相邻转化' },
+    { label: '本月已续费', value: renewed, icon: <CheckCircle2 className="h-5 w-5" />, note: '整体续费率的分子' },
+  ];
 
   return (
     <Card className="h-full">
       <CardHeader
-        title="续生漏斗"
-        icon={<Funnel className="h-5 w-5" />}
+        title="课消与续费概览"
+        description="各列为独立统计，不构成严格嵌套漏斗；不计算阶段转化或阶段流失"
+        icon={<Activity className="h-5 w-5" />}
       />
       <CardBody className="space-y-6 p-4">
-        {/* 主漏斗 */}
-        <FunnelChart
-          steps={funnelSteps}
-          onStepClick={(step, index) => {
-            if (step.label.includes('正式续费') && managerRows?.length) {
-              // 触发下钻逻辑（未来扩展）
-            }
-          }}
-        />
-
-        {/* 关键转化指标 */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {funnelSteps.slice(1).map((s, i) => (
-            <div key={s.label} className="rounded-xl bg-slate-50 p-4 border border-slate-100">
-              <p className="text-xs text-slate-500 uppercase tracking-wide">{s.label} / 上一层</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-brand-600">{pct(s.conversionRate)}</p>
-              <p className="mt-1 text-xs text-slate-400">流失 {count(s.dropOff)} 人</p>
+          {metrics.map(metric => (
+            <div key={metric.label} className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+              <div className="flex items-center justify-between text-slate-400">
+                <p className="text-xs font-medium text-slate-500">{metric.label}</p>
+                {metric.icon}
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-slate-800">{count(metric.value)}</p>
+              <p className="mt-1 text-xs text-slate-400">{metric.note}</p>
             </div>
           ))}
         </div>
 
-        {/* 学管分解（如有数据） */}
-        {managerRows && managerRows.length > 0 && (
-          <div className="rounded-xl bg-slate-50/50 p-4 border border-slate-100">
-            <h4 className="flex items-center gap-2 text-sm font-semibold text-slate-700 mb-3">
-              <Users className="h-4 w-4 text-brand-500" />
-              学管分解 · 正式续费人数 TOP 10
-            </h4>
-            <BarList
-              rows={managerRows
-                .sort((a, b) => b.renewed - a.renewed)
-                .slice(0, 10)
-                .map((r, i) => ({
-                  label: r.manager,
-                  value: count(r.renewed),
-                  rawValue: r.renewed,
-                  ratio: totalAtTop > 0 ? (r.renewed / totalAtTop) * 100 : 0,
-                  hint: `学生数 ${count(r.students)} · 续生率 ${pct(r.rate)}`,
-                  className: i === 0 ? 'bg-amber-100 text-amber-700' : i < 3 ? 'bg-slate-100 text-slate-600' : 'bg-slate-50 text-slate-400',
-                }))}
-              compact
-            />
+        <div className="rounded-xl border border-brand-100 bg-brand-50/60 p-4">
+          <p className="text-sm font-medium text-brand-800">整体续费率</p>
+          <p className="mt-1 text-3xl font-bold tabular-nums text-brand-700">{pct(overallRenewRate)}</p>
+          <p className="mt-1 text-sm text-brand-700/80">
+            本月已续费 {count(renewed)} / 学生基数 {count(students)} · 分子分母同源
+          </p>
+        </div>
+
+        {rows.length === 0 ? (
+          <p className="rounded-xl bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">接口已成功返回空列表，暂无课消与续费明细</p>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-slate-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs text-slate-500">
+                  <tr className="border-b border-slate-200">
+                    <th className="px-4 py-3 font-medium">学管</th>
+                    <th className="px-4 py-3 font-medium">学生基数</th>
+                    <th className="px-4 py-3 font-medium">上 2 月有课消</th>
+                    <th className="px-4 py-3 font-medium">上 1 月有课消</th>
+                    <th className="px-4 py-3 font-medium">本月已续费</th>
+                    <th className="px-4 py-3 font-medium">整体续费率</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map((row, index) => (
+                    <tr key={`${row.managerName}:${index}`} className="hover:bg-slate-50/60">
+                      <td className="px-4 py-3 font-medium text-slate-700">{row.managerName || '未分配'}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-600">{count(row.students)}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-600">{count(row.classedLast2)}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-600">{count(row.classedLast1)}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-700">{count(row.renewed)}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-700">{pct(row.renewRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
-
-        {/* 洞察卡片 */}
-        <div className="grid gap-3 lg:grid-cols-3">
-          <div className="rounded-xl bg-brand-50 p-4 border border-brand-100">
-            <div className="flex items-center gap-2">
-              <Target className="h-5 w-5 text-brand-500" />
-              <span className="font-medium text-brand-700">整体转化率</span>
-            </div>
-            <p className="mt-2 text-3xl font-bold text-brand-600 tabular-nums">{pct(funnelSteps[funnelSteps.length - 1]?.conversionRate ?? 0)}</p>
-            <p className="mt-1 text-sm text-brand-500">从在册基数到最终到课</p>
-          </div>
-          <div className="rounded-xl bg-amber-50 p-4 border border-amber-100">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-amber-500" />
-              <span className="font-medium text-amber-700">最大流失点</span>
-            </div>
-            <p className="mt-2 text-3xl font-bold text-amber-600 tabular-nums">
-              {funnelSteps.slice(1).sort((a, b) => b.dropOff - a.dropOff)[0]?.label || '—'}
-            </p>
-            <p className="mt-1 text-sm text-amber-500">流失 {funnelSteps.slice(1).sort((a, b) => b.dropOff - a.dropOff)[0]?.dropOff || 0} 人</p>
-          </div>
-          <div className="rounded-xl bg-emerald-50 p-4 border border-emerald-100">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-emerald-500" />
-              <span className="font-medium text-emerald-700">最佳转化层级</span>
-            </div>
-            <p className="mt-2 text-3xl font-bold text-emerald-600 tabular-nums">
-              {funnelSteps.slice(1).sort((a, b) => b.conversionRate - a.conversionRate)[0]?.label || '—'}
-            </p>
-            <p className="mt-1 text-sm text-emerald-500">{pct(funnelSteps.slice(1).sort((a, b) => b.conversionRate - a.conversionRate)[0]?.conversionRate ?? 0)} 通过</p>
-          </div>
-        </div>
       </CardBody>
     </Card>
   );

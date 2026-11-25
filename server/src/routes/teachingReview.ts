@@ -282,7 +282,7 @@ router.get('/team', (req: AuthenticatedRequest, res) => {
       (SELECT COUNT(*) FROM students s WHERE s.user_id = u.id) AS students,
       (SELECT COUNT(*) FROM followups f WHERE f.user_id = u.id AND f.created_at >= ? AND f.created_at < ?) AS followups,
       (SELECT COUNT(*) FROM monthly_reports r WHERE r.user_id = u.id AND r.year_month = ?) AS reports,
-      (SELECT COUNT(*) FROM observations o WHERE o.user_id = u.id AND o.status = 'final' AND o.observed_at >= ? AND o.observed_at < ?) AS observations,
+      (SELECT COUNT(*) FROM observations o WHERE o.user_id = u.id AND o.observed_at >= ? AND o.observed_at < ?) AS observations,
       (SELECT COUNT(*) FROM lesson_plans p WHERE p.user_id = u.id AND p.month = ?) AS lessonPlans,
       (SELECT COUNT(*) FROM ai_metrics a WHERE a.user_id = u.id AND a.created_at >= ? AND a.created_at < ?) AS aiCalls,
       (SELECT COUNT(*) FROM ai_metrics a WHERE a.user_id = u.id AND a.created_at >= ? AND a.created_at < ? AND a.status = 'success') AS aiSuccessCalls
@@ -325,7 +325,7 @@ router.get('/summary', (req: AuthenticatedRequest, res) => {
       .prepare('SELECT COUNT(*) AS n FROM monthly_reports WHERE user_id = ? AND year_month = ?')
       .get(userId, month) as CountRow;
     const observationRow = db
-      .prepare("SELECT COUNT(*) AS n FROM observations WHERE user_id = ? AND status = 'final' AND observed_at >= ? AND observed_at < ?")
+      .prepare("SELECT COUNT(*) AS n FROM observations WHERE user_id = ? AND observed_at >= ? AND observed_at < ?")
       .get(userId, monthStart, monthEnd) as CountRow;
     const lessonPlanRow = db
       .prepare('SELECT COUNT(*) AS n FROM lesson_plans WHERE user_id = ? AND month = ?')
@@ -667,7 +667,7 @@ router.get('/trend', (req: AuthenticatedRequest, res) => {
       ).n;
       const observations = (
         db
-          .prepare("SELECT COUNT(*) AS n FROM observations WHERE user_id = ? AND status = 'final' AND observed_at >= ? AND observed_at < ?")
+          .prepare("SELECT COUNT(*) AS n FROM observations WHERE user_id = ? AND observed_at >= ? AND observed_at < ?")
           .get(userId, start, end) as CountRow
       ).n;
       const ai = db

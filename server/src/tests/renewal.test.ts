@@ -106,7 +106,7 @@ function buildWorkbook(): ExcelJS.Workbook {
   return wb;
 }
 
-async function uploadWorkbook(wb: ExcelJS.Workbook, name: string) {
+async function uploadWorkbook(wb: ExcelJS.Workbook, name: string, authToken = token) {
   // exceljs 的 Buffer 声明遮蔽了 node 全局 Buffer，这里跟仓库其它测试一致地跳过类型
   // exceljs 的 Buffer 声明遮蔽了 node 全局 Buffer，跟仓库其它上传测试一致地跳过类型
   const buf = await wb.xlsx.writeBuffer() as any;
@@ -114,7 +114,7 @@ async function uploadWorkbook(wb: ExcelJS.Workbook, name: string) {
   form.append('file', new Blob([buf as any], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   }), name);
-  return req('POST', '/api/renewal/upload', { token, raw: form });
+  return req('POST', '/api/renewal/upload', { token: authToken, raw: form });
 }
 
 before(async () => {
@@ -219,6 +219,62 @@ describe('续费看板', () => {
     assert.ok(!names.includes('学生F'), '已续费的学生F 不应进风险清单');
     assert.ok(names.includes('学生G'), '学生G 上1个月无课消且未续费，应入选');
     assert.ok(!names.includes('学生H'), '学生H 上1个月有课消，不算风险');
+  });
+
+
+  test('报表、分析、错误与删除按用户隔离，同文件不跨用户去重', async () => {
+    const otherToken = await createUser('renewal-other-user');
+    const ownerReports = await req('GET', '/api/renewal/reports', { token });
+    const reportId = (ownerReports.body.reports[0] as any).reportId as number;
+    const otherReports = await req('GET', '/api/renewal/reports', { token: otherToken });
+    assert.deepEqual(otherReports.body.reports, []);
+
+    const paths = [
+      '/api/renewal/dashboard/teacher-stats?tab=incentive',
+      '/api/renewal/analytics/mentor-matrix',
+      '/api/renewal/analytics/teacher-grade-matrix',
+      '/api/renewal/analytics/group-grade-matrix',
+      '/api/renewal/analytics/rate-overview',
+      '/api/renewal/analytics/group-compare?tab=incentive',
+      '/api/renewal/analytics/manager-perf',
+      '/api/renewal/analytics/funnel',
+      '/api/renewal/analytics/risk-list',
+      '/api/renewal/analytics/student-status',
+    ];
+    for (const path of paths) {
+      const separator = path.includes('?') ? '&' : '?';
+      const response = await req('GET', path + separator + 'reportId=' + reportId, { token: otherToken });
+      assert.equal(response.status, 404, path);
+    }
+    const privateErrors = await req('GET', '/api/renewal/reports/' + reportId + '/errors', { token: otherToken });
+    assert.equal(privateErrors.status, 404);
+    const forbiddenDelete = await req('DELETE', '/api/renewal/reports/' + reportId, { token: otherToken });
+    assert.equal(forbiddenDelete.status, 404);
+    const ownerStillReads = await req('GET', '/api/renewal/analytics/risk-list?reportId=' + reportId + '&page=Infinity&pageSize=Infinity', { token });
+    assert.equal(ownerStillReads.status, 200);
+    assert.equal(ownerStillReads.body.page, 1);
+    assert.equal(ownerStillReads.body.pageSize, 50);
+
+    const shared = buildWorkbook();
+    shared.created = new Date('2026-01-01T00:00:00Z');
+    shared.modified = new Date('2026-01-01T00:00:00Z');
+    const ownerSecond = await uploadWorkbook(shared, '同内容隔离.xlsx');
+    assert.equal(ownerSecond.status, 201);
+    const otherUpload = await uploadWorkbook(shared, '同内容隔离.xlsx', otherToken);
+    assert.equal(otherUpload.status, 201);
+    assert.notEqual(otherUpload.body.report.reportId, ownerSecond.body.report.reportId);
+    assert.equal(otherUpload.body.report.deduplicated, false);
+    const otherAfterUpload = await req('GET', '/api/renewal/reports', { token: otherToken });
+    assert.equal((otherAfterUpload.body.reports as any[]).length, 1);
+    assert.equal((otherAfterUpload.body.reports[0] as any).reportId, otherUpload.body.report.reportId);
+
+    const cleanup = await req('DELETE', '/api/renewal/reports/' + ownerSecond.body.report.reportId, { token });
+    assert.equal(cleanup.status, 200);
+    const ownerAfterCleanup = await req('GET', '/api/renewal/reports', { token });
+    assert.equal((ownerAfterCleanup.body.reports as any[]).length, 1);
+    assert.equal((ownerAfterCleanup.body.reports[0] as any).reportId, reportId);
+    const otherSurvives = await req('GET', '/api/renewal/reports/' + otherUpload.body.report.reportId + '/errors', { token: otherToken });
+    assert.equal(otherSurvives.status, 200);
   });
 
   test('删除报表后明细级联清空', async () => {

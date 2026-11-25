@@ -1,4 +1,5 @@
-import { getSharedClient, withUserAiSlot, acquireAiSlot, releaseAiSlot, describeAiError, startStreamWatchdog, AI_QUEUE_TIMEOUT_MS } from './ai/index.js';
+import { getSharedClient, withUserAiSlot, acquireAiSlot, releaseAiSlot, describeAiError, startStreamWatchdog, AI_QUEUE_TIMEOUT_MS, countWords } from './ai/index.js';
+import { recordAiMetrics } from './aiMetrics.js';
 import { getAiConfig } from '../config/settings.js';
 import { OVERALL_GRADE_LABELS } from '../utils/mappers.js';
 import { log } from '../utils/logger.js';
@@ -189,8 +190,33 @@ export function resetObservationGenerator(): void {
   generatorImpl = generateObservationReport;
 }
 /** 路由统一入口 */
-export function runObservationGeneration(userId: number, p: ObservationReportParams): Promise<string> {
-  return generatorImpl(userId, p);
+export async function runObservationGeneration(userId: number, p: ObservationReportParams): Promise<string> {
+  const config = getAiConfig(userId);
+  const startedAt = Date.now();
+  try {
+    const report = await generatorImpl(userId, p);
+    await recordAiMetrics({
+      userId,
+      provider: config.provider,
+      model: config.model,
+      endpoint: 'observation_once',
+      latencyMs: Date.now() - startedAt,
+      status: 'success',
+      wordCount: countWords(report),
+    });
+    return report;
+  } catch (error: any) {
+    await recordAiMetrics({
+      userId,
+      provider: config.provider,
+      model: config.model,
+      endpoint: 'observation_once',
+      latencyMs: Date.now() - startedAt,
+      status: 'error',
+      errorMessage: error.message,
+    });
+    throw error;
+  }
 }
 
 /** 单次真实生成（不落库、不含字数重试——评课报告比回访长，不设字数窗口） */
@@ -276,11 +302,43 @@ export function resetObservationStreamer(): void {
   streamerImpl = streamObservationGeneration;
 }
 /** 路由统一流式入口 */
-export function runObservationStream(
+export async function* runObservationStream(
   userId: number,
   p: ObservationReportParams
 ): AsyncGenerator<string> {
-  return streamerImpl(userId, p);
+  const config = getAiConfig(userId);
+  const startedAt = Date.now();
+  let fullReport = '';
+  let recorded = false;
+  try {
+    for await (const delta of streamerImpl(userId, p)) {
+      fullReport += delta;
+      yield delta;
+    }
+    recorded = true;
+    await recordAiMetrics({
+      userId,
+      provider: config.provider,
+      model: config.model,
+      endpoint: 'observation_stream',
+      latencyMs: Date.now() - startedAt,
+      status: 'success',
+      wordCount: countWords(fullReport),
+    });
+  } catch (error: any) {
+    if (!recorded) {
+      await recordAiMetrics({
+        userId,
+        provider: config.provider,
+        model: config.model,
+        endpoint: 'observation_stream',
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: error.message,
+      });
+    }
+    throw error;
+  }
 }
 
 /** 暴露错误翻译，供路由复用（与回访一致的用户友好提示） */

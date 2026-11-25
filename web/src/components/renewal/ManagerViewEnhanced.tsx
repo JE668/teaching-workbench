@@ -2,7 +2,7 @@ import { Users, Target, DollarSign, Award } from 'lucide-react';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import { cn } from '../../lib/utils';
-import { clampRatio, count, money, NOT_AVAILABLE_YET, pct, rankStyle, type ManagerPerfRow } from '../../lib/renewal';
+import { clampRatio, count, money, pct, rankStyle, type ManagerPerfRow } from '../../lib/renewal';
 import BarList, { BarListRow } from './BarList';
 
 interface Props {
@@ -26,44 +26,53 @@ export default function ManagerViewEnhanced({ rows }: Props) {
     );
   }
 
-  // 汇总计算
-  const totals = rows.reduce(
-    (acc, r) => {
-      acc.cashflow += r.cashflowTotal || 0;
-      acc.task += r.taskAmount || 0;
-      acc.renewed += r.renewedCount || 0;
-      acc.tutored += r.tutoredCount || 0;
-      return acc;
-    },
-    { cashflow: 0, task: 0, renewed: 0, tutored: 0 }
-  );
+  const sumKnown = (pick: (row: ManagerPerfRow) => number | null | undefined): number | null => {
+    const values = rows.map(pick).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null;
+  };
+  const totals = {
+    cashflow: sumKnown(r => r.cashflowTotal),
+    task: sumKnown(r => r.taskAmount),
+    renewed: sumKnown(r => r.renewedCount),
+    tutored: sumKnown(r => r.tutoredCount),
+    actualStudents: sumKnown(r => r.actualStudents),
+  };
+  const completionRate = totals.cashflow !== null && totals.task !== null && totals.task > 0
+    ? (totals.cashflow / totals.task) * 100
+    : null;
+  const averagePerStudent = totals.cashflow !== null && totals.actualStudents !== null && totals.actualStudents > 0
+    ? totals.cashflow / totals.actualStudents
+    : null;
+  const completionRows = rows.filter(r => typeof r.completionRate === 'number' && Number.isFinite(r.completionRate));
+  const achievedCount = completionRows.filter(r => (r.completionRate ?? 0) >= 100).length;
+  const maxCashflow = rows.reduce((max, r) => Math.max(max, r.cashflowTotal ?? 0), 0);
 
-  const completionRate = totals.task > 0 ? (totals.cashflow / totals.task) * 100 : 0;
-
-  // 榜单数据
   const cashflowRanking: BarListRow[] = rows
+    .filter(r => typeof r.cashflowTotal === 'number' && Number.isFinite(r.cashflowTotal))
+    .slice()
+    .sort((a, b) => (b.cashflowTotal ?? 0) - (a.cashflowTotal ?? 0))
     .slice(0, 10)
     .map((r, i) => ({
       label: r.managerName,
       value: money(r.cashflowTotal),
-      rawValue: r.cashflowTotal || 0,
-      ratio: Math.max(...rows.map(x => x.cashflowTotal || 0), 1) > 0 ? ((r.cashflowTotal || 0) / Math.max(...rows.map(x => x.cashflowTotal || 0), 1)) * 100 : 0,
+      rawValue: r.cashflowTotal ?? 0,
+      ratio: maxCashflow > 0 ? ((r.cashflowTotal ?? 0) / maxCashflow) * 100 : 0,
       hint: `任务 ${money(r.taskAmount)} · 完成率 ${pct(r.completionRate)}`,
       className: rankStyle(i),
     }));
 
-  const completionRanking: BarListRow[] = rows
+  const completionRanking: BarListRow[] = completionRows
     .slice()
-    .sort((a, b) => (a.completionRate || 0) - (b.completionRate || 0))
+    .sort((a, b) => (a.completionRate ?? 0) - (b.completionRate ?? 0))
     .slice(0, 10)
     .map((r, i) => ({
       label: r.managerName,
       value: pct(r.completionRate),
-      rawValue: r.completionRate || 0,
-      ratio: (r.completionRate || 0),
+      rawValue: r.completionRate ?? 0,
+      ratio: r.completionRate ?? 0,
       hint: `现金流 ${money(r.cashflowTotal)} / 任务 ${money(r.taskAmount)}`,
       className: rankStyle(i),
-      color: (r.completionRate || 0) >= 100 ? 'bg-emerald-500' : (r.completionRate || 0) >= 80 ? 'bg-sky-500' : 'bg-amber-500',
+      color: (r.completionRate ?? 0) >= 100 ? 'bg-emerald-500' : (r.completionRate ?? 0) >= 80 ? 'bg-sky-500' : 'bg-amber-500',
     }));
 
   return (
@@ -79,26 +88,26 @@ export default function ManagerViewEnhanced({ rows }: Props) {
           <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
             <p className="text-xs text-slate-500 uppercase tracking-wide">团队现金流</p>
             <p className="mt-1 text-2xl font-bold text-slate-800 tabular-nums">{money(totals.cashflow)}</p>
-            <p className="mt-1 text-xs text-slate-400">任务 ${money(totals.task)} · 完成率 ${pct(completionRate)}</p>
+            <p className="mt-1 text-xs text-slate-400">任务 {money(totals.task)} · 完成率 {pct(completionRate)}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
             <p className="text-xs text-slate-500 uppercase tracking-wide">续生人数</p>
             <p className="mt-1 text-2xl font-bold text-emerald-600 tabular-nums">{count(totals.renewed)}</p>
-            <p className="mt-1 text-xs text-slate-400">带生 ${count(totals.tutored)} 人</p>
+            <p className="mt-1 text-xs text-slate-400">带生 {count(totals.tutored)} 人</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
             <p className="text-xs text-slate-500 uppercase tracking-wide">平均单产</p>
             <p className="mt-1 text-2xl font-bold text-brand-600 tabular-nums">
-              {rows.length > 0 ? money(totals.cashflow / rows.length) : '—'}
+              {money(averagePerStudent)}
             </p>
-            <p className="mt-1 text-xs text-slate-400">人均现金流</p>
+            <p className="mt-1 text-xs text-slate-400">团队现金流 / 实际学生数 {count(totals.actualStudents)}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4 border border-slate-100">
             <p className="text-xs text-slate-500 uppercase tracking-wide">达标人数</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-${completionRate >= 100 ? 'emerald-600' : 'brand-600'}">
-              {rows.filter(r => (r.completionRate || 0) >= 100).length} / {rows.length}
+            <p className="mt-1 text-2xl font-bold tabular-nums text-brand-600">
+              {completionRows.length > 0 ? `${achievedCount} / ${completionRows.length}` : '—'}
             </p>
-            <p className="mt-1 text-xs text-slate-400">完成率 ≥ 100%</p>
+            <p className="mt-1 text-xs text-slate-400">仅有完成率数据的学管 · 完成率 ≥ 100%</p>
           </div>
         </div>
 
@@ -152,10 +161,10 @@ export default function ManagerViewEnhanced({ rows }: Props) {
                     </td>
                     <td className="px-4 py-3 font-medium text-slate-700">{r.managerName}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">
-                      {r.renew.total !== null ? money(r.renew.total) : <span className="text-slate-400">{NOT_AVAILABLE_YET}</span>}
+                      {money(r.renew.total)}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">
-                      {r.newsign.total !== null ? money(r.newsign.total) : <span className="text-slate-400">{NOT_AVAILABLE_YET}</span>}
+                      {money(r.newsign.total)}
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">{count(r.renewedCount)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">{pct(r.renewRate)}</td>
@@ -174,7 +183,7 @@ export default function ManagerViewEnhanced({ rows }: Props) {
                     </td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">{count(r.actualStudents)}</td>
                     <td className="px-4 py-3 tabular-nums text-slate-700">
-                      {r.perStudent !== null ? money(r.perStudent) : <span className="text-slate-400">{NOT_AVAILABLE_YET}</span>}
+                      {money(r.perStudent)}
                     </td>
                   </tr>
                 ))}

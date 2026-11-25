@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { BarChart3 } from 'lucide-react';
 import type { TeacherStatRow } from '../../lib/renewal';
+import { HOUR_BUCKETS, hourBucketCounts, summarizeHourBucket } from '../../lib/hourBuckets';
 
 interface DimensionDefinition {
   label: string;
@@ -8,17 +9,11 @@ interface DimensionDefinition {
   prepaidKey: string;
 }
 
-const DIMENSIONS: Record<'stage' | 'hours', DimensionDefinition[]> = {
-  stage: [
-    { label: '非毕业班', enrolledKey: 'enroll_nongrad', prepaidKey: 'prepaid_nongrad' },
-    { label: '初三', enrolledKey: 'enroll_g9', prepaidKey: 'prepaid_g9' },
-    { label: '高三', enrolledKey: 'enroll_g12', prepaidKey: 'prepaid_g12' },
-  ],
-  hours: [
-    { label: '0–80 课时', enrolledKey: 'enroll_0_80', prepaidKey: 'prepaid_0_80' },
-    { label: '80+ 课时', enrolledKey: 'enroll_80p', prepaidKey: 'prepaid_80p' },
-  ],
-};
+const STAGE_DIMENSIONS: DimensionDefinition[] = [
+  { label: '非毕业班', enrolledKey: 'enroll_nongrad', prepaidKey: 'prepaid_nongrad' },
+  { label: '初三', enrolledKey: 'enroll_g9', prepaidKey: 'prepaid_g9' },
+  { label: '高三', enrolledKey: 'enroll_g12', prepaidKey: 'prepaid_g12' },
+];
 
 function sumExtra(rows: TeacherStatRow[], key: string): number | null {
   let found = false;
@@ -39,17 +34,23 @@ function formatCount(value: number | null): string {
 
 /** 学段/课时的在读与预存分布；仅汇总 Excel 原始人数，不重算业务比率。 */
 export default function DimensionChart({ rows, tab }: { rows: TeacherStatRow[]; tab: string }) {
-  const definitions = tab === 'stage' || tab === 'hours' ? DIMENSIONS[tab] : null;
-  const data = useMemo(() => definitions?.map(item => ({
-    ...item,
-    enrolled: sumExtra(rows, item.enrolledKey),
-    prepaid: sumExtra(rows, item.prepaidKey),
-  })) ?? [], [definitions, rows]);
+  const isHourView = tab === 'hours';
+  const definitions = tab === 'stage' ? STAGE_DIMENSIONS : isHourView ? [] : null;
+  const data = useMemo(() => isHourView
+    ? HOUR_BUCKETS.map(bucket => ({ label: bucket.label, ...summarizeHourBucket(rows, bucket) }))
+    : definitions?.map(item => ({
+      ...item,
+      enrolled: sumExtra(rows, item.enrolledKey),
+      prepaid: sumExtra(rows, item.prepaidKey),
+    })) ?? [], [definitions, isHourView, rows]);
 
   if (!definitions) return null;
   const title = tab === 'stage' ? '学段学生与预存分布' : '课时学生与预存分布';
   const maxEnrolled = Math.max(...data.map(item => item.enrolled ?? 0), 1);
   const hasData = data.some(item => item.enrolled !== null || item.prepaid !== null);
+  const missingHourTeachers = isHourView
+    ? rows.filter(row => hourBucketCounts(row, HOUR_BUCKETS[0]).enrolled === null).length
+    : 0;
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="dimension-chart-title">
@@ -59,7 +60,11 @@ export default function DimensionChart({ rows, tab }: { rows: TeacherStatRow[]; 
             <BarChart3 className="h-4 w-4 text-brand-600" aria-hidden="true" />
             {title}
           </h3>
-          <p className="mt-1 text-xs text-slate-500">按 {rows.length} 位教师明细汇总，不重复计入科组小计与学习中心总计</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {isHourView
+              ? `按 ${rows.length} 位教师的学生网格五档分组汇总，新增续费学生不重复计入`
+              : `按 ${rows.length} 位教师明细汇总，不重复计入科组小计与学习中心总计`}
+          </p>
         </div>
         <div className="flex items-center gap-4 text-xs text-slate-500" aria-label="图例">
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-slate-300" />在读人数</span>
@@ -94,7 +99,14 @@ export default function DimensionChart({ rows, tab }: { rows: TeacherStatRow[]; 
           ))}
         </div>
       ) : (
-        <p className="mt-5 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">当前报表未提供该维度的拆分数据</p>
+        <p className="mt-5 rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+          {isHourView ? '当前报表缺少可识别的课时学生网格，空值未按 0 人统计' : '当前报表未提供该维度的拆分数据'}
+        </p>
+      )}
+      {isHourView && hasData && missingHourTeachers > 0 && (
+        <p role="note" className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          另有 {missingHourTeachers} 位教师缺少可识别的课时学生网格，未按 0 人计入。
+        </p>
       )}
     </section>
   );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { FileUp, Trash2, TrendingUp, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react';
 import { api } from '../api/client';
 import { useToast } from '../components/ui/Toast';
@@ -8,7 +8,35 @@ import Badge from '../components/ui/Badge';
 import { Card, CardBody, CardHeader } from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
 import { cn, relativeTime } from '../lib/utils';
-import { fileSize, type ReportSummary } from '../lib/renewal';
+import { fileSize, type ManagerPerfRow, type ReportSummary, type TeacherStatRow } from '../lib/renewal';
+import ImportIssueCenter, { type ImportErrorRow, type ImportIssueDetails } from '../components/renewal/ImportIssueCenter';
+
+type ImportErrorDetails = {
+  reportId: number | null;
+  loading: boolean;
+  rows: ImportErrorRow[];
+  error: string;
+};
+
+type Reconciliation = {
+  baseCount: number | null;
+  prepaidCount: number | null;
+  nongradPrepaid: number | null;
+  managerCount: number;
+};
+
+function parseIssueDetails(value: unknown): ImportIssueDetails {
+  let parsed = value;
+  if (typeof value === 'string' && value.trim()) {
+    try { parsed = JSON.parse(value); } catch { return {}; }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter(([, item]) => (
+      item === null || ['string', 'number', 'boolean'].includes(typeof item)
+    )),
+  ) as ImportIssueDetails;
+}
 
 /**
  * 续费统计表上传页。
@@ -17,7 +45,6 @@ import { fileSize, type ReportSummary } from '../lib/renewal';
  * 上传后后端解析入库，看板页即可出图。一次上传 = 一个批次，可整批删除重传。
  */
 export default function RenewalUpload() {
-  const navigate = useNavigate();
   const toast = useToast();
   const [reports, setReports] = useState<ReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,9 +52,24 @@ export default function RenewalUpload() {
   const [dragActive, setDragActive] = useState(false);
   const [picked, setPicked] = useState<File | null>(null);
   const [doneReport, setDoneReport] = useState<ReportSummary | null>(null);
-  const [errors, setErrors] = useState<{ sheetName: string | null; rowNumber: number | null; errorMessage: string }[]>([]);
+  const [deduplicated, setDeduplicated] = useState(false);
+  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
+  const [reconciliationError, setReconciliationError] = useState(false);
+  const [importErrors, setImportErrors] = useState<ImportErrorDetails>({
+    reportId: null,
+    loading: false,
+    rows: [],
+    error: '',
+  });
   const inputRef = useRef<HTMLInputElement>(null);
-  const errorReportId = useRef<number | null>(null);
+  const importErrorRequestRef = useRef(0);
+  const currentErrorReportIdRef = useRef<number | null>(null);
+
+  const clearImportErrors = useCallback(() => {
+    importErrorRequestRef.current += 1;
+    currentErrorReportIdRef.current = null;
+    setImportErrors({ reportId: null, loading: false, rows: [], error: '' });
+  }, []);
 
   useEffect(() => {
     loadReports();
@@ -58,13 +100,21 @@ export default function RenewalUpload() {
     }
     setPicked(first);
     setDoneReport(null);
-  }, [toast]);
+    setReconciliation(null);
+    setReconciliationError(false);
+    clearImportErrors();
+  }, [toast, clearImportErrors]);
 
   const pick = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     setPicked(file);
-    if (file) setDoneReport(null);
-  }, []);
+    if (file) {
+      setDoneReport(null);
+      setReconciliation(null);
+      setReconciliationError(false);
+      clearImportErrors();
+    }
+  }, [clearImportErrors]);
 
   async function doUpload() {
     if (!picked) return;
@@ -72,12 +122,19 @@ export default function RenewalUpload() {
     try {
       const form = new FormData();
       form.append('file', picked);
-      const res = await api.upload<{ report: ReportSummary }>('/renewal/upload', form);
-      setDoneReport(res.report);
-      toast.success('上传并解析完成');
+      const res = await api.upload<{ report: ReportSummary; deduplicated?: boolean }>('/renewal/upload', form);
+      const report = res.report;
+      setDoneReport(report);
+      setDeduplicated(res.deduplicated === true);
+      setReconciliation(null);
+      setReconciliationError(false);
+      clearImportErrors();
+      if (res.deduplicated) toast.info('这份文件已上传过，已定位到原批次');
+      else if (report.errorCount > 0 || report.status === 'committed_with_warnings') toast.info('批次已保存，请先核对导入警告');
+      else toast.success('上传并解析完成');
       setPicked(null);
-      await loadReports();
-      navigate('/renewal');
+      await Promise.all([loadReports(), loadReconciliation(report)]);
+      if (report.errorCount > 0) await showErrors(report);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '上传失败');
     } finally {
@@ -90,6 +147,13 @@ export default function RenewalUpload() {
     if (!window.confirm('删除该批次后，对应看板和明细会一起清空。确定删除吗？')) return;
     try {
       await api.delete('/renewal/reports/' + id);
+      if (currentErrorReportIdRef.current === id || doneReport?.reportId === id) {
+        clearImportErrors();
+        setDoneReport(null);
+        setReconciliation(null);
+        setReconciliationError(false);
+        setDeduplicated(false);
+      }
       toast.success('已删除');
       await loadReports();
     } catch (err) {
@@ -97,23 +161,74 @@ export default function RenewalUpload() {
     }
   }
 
-  /** 点批次行拉取解析错误明细（后端 /reports/:id/errors） */
-  async function showErrors(report: ReportSummary) {
+  /** 上传后先对账，再由用户主动进入看板，避免错误批次被当成完整数据。 */
+  async function loadReconciliation(report: ReportSummary) {
     try {
-      const res = await api.get('/renewal/reports/' + report.reportId + '/errors') as { errors: { sheet_name: string | null; row_number: number | null; error_message: string }[] };
-      // 后端 renewal_import_error 的列名是 snake_case，映射成前端状态用的驼峰
-      setErrors((res.errors || []).map((e) => ({
-        sheetName: e.sheet_name,
-        rowNumber: e.row_number,
-        errorMessage: e.error_message,
-      })));
-      errorReportId.current = report.reportId;
+      const [stageRes, managerRes] = await Promise.all([
+        api.get('/renewal/dashboard/teacher-stats?tab=stage&reportId=' + report.reportId) as Promise<{ rows: TeacherStatRow[] }>,
+        api.get('/renewal/analytics/manager-perf?reportId=' + report.reportId) as Promise<{ rows: ManagerPerfRow[] }>,
+      ]);
+      const sum = (selector: (row: TeacherStatRow) => number | null | undefined) => {
+        let available = false;
+        const total = (stageRes.rows || []).reduce((acc, row) => {
+          const value = selector(row);
+          if (typeof value !== 'number' || !Number.isFinite(value)) return acc;
+          available = true;
+          return acc + value;
+        }, 0);
+        return available ? total : null;
+      };
+      setReconciliation({
+        baseCount: sum((row) => row.baseCount),
+        prepaidCount: sum((row) => row.prepaidCount),
+        nongradPrepaid: sum((row) => row.extra?.prepaid_nongrad),
+        managerCount: (managerRes.rows || []).length,
+      });
+    } catch {
+      setReconciliationError(true);
+    }
+  }
+
+  /** 点批次行拉取解析错误明细（后端 /reports/:id/errors） */
+  async function showErrors(report: ReportSummary | number) {
+    const reportId = typeof report === 'number' ? report : report.reportId;
+    const requestId = ++importErrorRequestRef.current;
+    currentErrorReportIdRef.current = reportId;
+    setImportErrors({ reportId, loading: true, rows: [], error: '' });
+    try {
+      const res = await api.get('/renewal/reports/' + reportId + '/errors') as { errors: {
+        sheet_name?: string | null; row_number?: number | null; column_number?: number | null;
+        error_type?: string | null; severity?: 'error' | 'warning'; error_message: string;
+        sheetName?: string | null; rowNumber?: number | null; columnNumber?: number | null;
+        errorType?: string | null; errorMessage?: string;
+        field_name?: string | null; details_json?: string | null;
+        fieldName?: string | null; details?: ImportIssueDetails | string | null;
+      }[] };
+      const rows = (res.errors || []).map((e) => ({
+        sheetName: e.sheetName ?? e.sheet_name ?? null,
+        rowNumber: e.rowNumber ?? e.row_number ?? null,
+        columnNumber: e.columnNumber ?? e.column_number ?? null,
+        errorType: e.errorType ?? e.error_type ?? null,
+        severity: e.severity === 'warning' ? 'warning' as const : 'error' as const,
+        errorMessage: e.errorMessage ?? e.error_message,
+        fieldName: e.fieldName ?? e.field_name ?? null,
+        details: parseIssueDetails(e.details ?? e.details_json),
+      }));
+      if (requestId !== importErrorRequestRef.current || currentErrorReportIdRef.current !== reportId) return;
+      setImportErrors({ reportId, loading: false, rows, error: '' });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '加载错误明细失败');
+      if (requestId !== importErrorRequestRef.current || currentErrorReportIdRef.current !== reportId) return;
+      setImportErrors({
+        reportId,
+        loading: false,
+        rows: [],
+        error: err instanceof Error ? err.message : '加载错误明细失败',
+      });
     }
   }
 
   const latest = reports[0];
+  const doneHasIssues = Boolean(doneReport && (doneReport.errorCount > 0 || doneReport.status === 'committed_with_warnings'));
 
   return (
     <div className="space-y-6">
@@ -153,7 +268,7 @@ export default function RenewalUpload() {
           </div>
 
           <div className="mt-4 flex items-center justify-between gap-3">
-            <p className="text-xs text-slate-400">上传后自动跳转看板；重复上传会新增批次，不会覆盖旧数据。</p>
+            <p className="text-xs text-slate-400">上传后先展示识别结果与对账警告；相同文件重复上传会定位到原批次。</p>
             <Button onClick={doUpload} loading={uploading} disabled={!picked} icon={<FileUp className="h-4 w-4" />}>
               {uploading ? '解析中…' : '上传并解析'}
             </Button>
@@ -165,16 +280,37 @@ export default function RenewalUpload() {
         <Card>
           <CardBody className="p-5">
             <div className="flex items-start gap-3">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+              {doneHasIssues
+                ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                : <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />}
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-700">解析完成：{doneReport.fileName}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-slate-700">
+                    {doneHasIssues ? '解析完成，请先核对' : '解析完成'}：{doneReport.fileName}
+                  </p>
+                  {deduplicated && <Badge tone="info">原批次</Badge>}
+                </div>
                 <p className="mt-0.5 text-xs text-slate-400">
                   {doneReport.centerName ? doneReport.centerName + ' · ' : ''}
-                  {doneReport.statMonth || '未识别月份'} · 解析行数 {doneReport.rowCount ?? 0} · 错误 {doneReport.errorCount} 条
+                  {doneReport.statMonth || '未识别月份'} · 解析行数 {doneReport.rowCount ?? '—'} · 待核对 {doneReport.errorCount} 条
                 </p>
-                <div className="mt-2">
-                  <Link to="/renewal" className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700">
-                    <TrendingUp className="h-4 w-4" /> 查看看板
+                <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="上传对账摘要">
+                  {([
+                    ['学段学生基数', reconciliation?.baseCount],
+                    ['总预存', reconciliation?.prepaidCount],
+                    ['非毕业班预存', reconciliation?.nongradPrepaid],
+                    ['学管人数', reconciliation?.managerCount],
+                  ] as const).map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-slate-50 px-3 py-3">
+                      <p className="text-xs text-slate-400">{label}</p>
+                      <p className="mt-1 text-lg font-semibold text-slate-700">{value ?? '—'}</p>
+                    </div>
+                  ))}
+                </div>
+                {reconciliationError && <p className="mt-2 text-xs text-amber-600">批次已保存，对账摘要加载失败；请进入看板后重试。</p>}
+                <div className="mt-4">
+                  <Link to={'/renewal?reportId=' + doneReport.reportId} className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700">
+                    <TrendingUp className="h-4 w-4" /> 查看这个批次的看板
                   </Link>
                 </div>
               </div>
@@ -183,39 +319,21 @@ export default function RenewalUpload() {
         </Card>
       )}
 
-      {errors.length > 0 && (
-        <Card>
-          <CardHeader
-            title="解析错误明细"
-            description="这些行没进看板，其余行不受影响"
-            icon={<AlertTriangle className="h-5 w-5" />}
-            action={<Badge tone="danger">{errors.length} 条</Badge>}
-          />
-          <CardBody className="max-h-64 overflow-y-auto p-0">
-            <table className="w-full text-left text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-xs text-slate-500">
-                <tr>
-                  <th className="px-5 py-2.5 font-medium">sheet</th>
-                  <th className="px-5 py-2.5 font-medium">行</th>
-                  <th className="px-5 py-2.5 font-medium">原因</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {errors.map((e, i) => (
-                  <tr key={i}>
-                    <td className="px-5 py-2 text-slate-600">{e.sheetName || '-'}</td>
-                    <td className="px-5 py-2 text-slate-600">{e.rowNumber ?? '-'}</td>
-                    <td className="px-5 py-2 text-slate-600">{e.errorMessage}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardBody>
-        </Card>
+      {importErrors.reportId !== null && (
+        <ImportIssueCenter
+          reportId={importErrors.reportId}
+          loading={importErrors.loading}
+          rows={importErrors.rows}
+          error={importErrors.error}
+          onRetry={() => {
+            if (importErrors.reportId !== null) void showErrors(importErrors.reportId);
+          }}
+          onClose={clearImportErrors}
+        />
       )}
 
       <Card>
-        <CardHeader title="历史批次" description="点击行可下载解析错误明细；删除为整批回滚" icon={<CheckCircle2 className="h-5 w-5" />} />
+        <CardHeader title="历史批次" description="点击待核对数量查看问题位置；删除为整批回滚" icon={<CheckCircle2 className="h-5 w-5" />} />
         <CardBody className="p-0">
           {loading ? (
             <div className="flex items-center justify-center py-10 text-sm text-slate-400">
@@ -252,9 +370,15 @@ export default function RenewalUpload() {
                       <td className="px-5 py-3 text-slate-600">{r.statMonth || '-'}</td>
                       <td className="px-5 py-3 text-slate-600">{r.rowCount ?? '-'}</td>
                       <td className="px-5 py-3">
-                        {r.errorCount > 0 ? (
-                          <button onClick={() => showErrors(r)} className="inline-flex" title="查看解析错误明细">
-                            <Badge tone="warning">{r.errorCount} 条错误</Badge>
+                        {r.status === 'processing' ? (
+                          <Badge tone="info">解析中</Badge>
+                        ) : r.status === 'failed' ? (
+                          <button onClick={() => showErrors(r)} className="inline-flex" title="查看导入失败原因">
+                            <Badge tone="danger">导入失败{r.errorCount > 0 ? ` · ${r.errorCount} 条` : ''}</Badge>
+                          </button>
+                        ) : r.errorCount > 0 ? (
+                          <button onClick={() => showErrors(r)} className="inline-flex" title="查看导入问题与警告">
+                            <Badge tone="warning">{r.errorCount} 条{r.status === 'committed_with_warnings' ? '警告' : '错误'}</Badge>
                           </button>
                         ) : (
                           <Badge tone="success">正常</Badge>

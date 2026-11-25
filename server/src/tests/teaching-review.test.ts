@@ -47,7 +47,7 @@ function insertFollowup(
   ).lastInsertRowid);
 }
 
-function insertObservation(ownerId: number, topic: string, observedAt: string, status: 'draft' | 'final'): void {
+function insertObservation(ownerId: number, topic: string, observedAt: string | null, status: 'draft' | 'sent' | 'archived'): void {
   db.prepare('INSERT INTO observations (user_id, topic, observed_at, status) VALUES (?, ?, ?, ?)').run(
     ownerId,
     topic,
@@ -151,11 +151,13 @@ before(async () => {
   insertParentView.run(userId, followupA, 'review-followup-a', '2026-10-06 12:00:00');
   insertParentView.run(userId, followupB, 'review-followup-b', null);
 
-  insertObservation(userId, '十月定稿一', '2026-10-08', 'final');
-  insertObservation(userId, '十月定稿二', '2026-10-25', 'final');
-  insertObservation(userId, '十月草稿不计入', '2026-10-10', 'draft');
-  insertObservation(userId, '九月定稿', '2026-09-15', 'final');
-  insertObservation(otherUserId, '他人十月定稿', '2026-10-11', 'final');
+  insertObservation(userId, '十月已反馈', '2026-10-08', 'sent');
+  insertObservation(userId, '十月已归档', '2026-10-25', 'archived');
+  insertObservation(userId, '十月草稿也计入', '2026-10-10', 'draft');
+  insertObservation(userId, '九月已反馈', '2026-09-15', 'sent');
+  insertObservation(otherUserId, '他人十月已反馈', '2026-10-11', 'sent');
+  insertObservation(userId, '无听课日期不计入月度', null, 'draft');
+  insertObservation(userId, '次月一日不计入十月', '2026-11-01', 'draft');
 
   const octoberReportA = insertReport(userId, studentA, MONTH);
   const octoberReportB = insertReport(userId, studentB, MONTH);
@@ -239,17 +241,17 @@ after(async () => {
 });
 
 describe('teaching-review 固定数据回归', () => {
-  test('summary 只计 final 听评课，并完整汇总 retry、重试次数、token 与字数目标', async () => {
+  test('summary 统计 draft/sent/archived 听评课，并完整汇总 retry、重试次数、token 与字数目标', async () => {
     const res = await req('GET', '/api/teaching-review/summary?month=' + MONTH, { token });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(res.body.workload, {
       followups: 2,
       reports: 2,
-      observations: 2,
+      observations: 3,
       lessonPlans: 0,
       lessonPlansConfirmed: 0,
       students: 4,
-      total: 6,
+      total: 7,
     });
     assert.equal(res.body.quality.aiCalls, 4);
     assert.equal(res.body.quality.aiSuccessRate, 50);
@@ -378,7 +380,7 @@ describe('teaching-review 固定数据回归', () => {
     assert.deepEqual(res.body.students.map((student: any) => student.studentId), [studentC, studentD], '并列冷学生按 studentId 稳定排序');
   });
 
-  test('trend 以 endMonth 为终点，并按相同 final 与月份口径返回固定三点', async () => {
+  test('trend 以 endMonth 为终点，全部反馈状态与月份边界均按同一口径统计', async () => {
     const res = await req('GET', '/api/teaching-review/trend?months=3&endMonth=' + MONTH, { token });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(res.body, {
@@ -386,9 +388,27 @@ describe('teaching-review 固定数据回归', () => {
       points: [
         { month: '2026-08', followups: 0, reports: 0, observations: 0, aiCalls: 0, aiSuccessRate: null },
         { month: '2026-09', followups: 1, reports: 1, observations: 1, aiCalls: 1, aiSuccessRate: 100 },
-        { month: '2026-10', followups: 2, reports: 2, observations: 2, aiCalls: 4, aiSuccessRate: 50 },
+        { month: '2026-10', followups: 2, reports: 2, observations: 3, aiCalls: 4, aiSuccessRate: 50 },
       ],
     });
+  });
+
+  test('真实 API 新建的默认 draft 听评课立即进入 summary 与 trend', async () => {
+    const created = await req('POST', '/api/observations', {
+      token,
+      body: { topic: '真实API默认草稿', observedAt: '2026-10-20 09:00:00', classNotes: '真实课堂记录' },
+    });
+    const observationId = created.body.observation.id;
+    try {
+      assert.equal(created.status, 200, JSON.stringify(created.body));
+      assert.equal(created.body.observation.status, 'draft');
+      const summary = await req('GET', '/api/teaching-review/summary?month=' + MONTH, { token });
+      assert.equal(summary.body.workload.observations, 4);
+      const trend = await req('GET', '/api/teaching-review/trend?months=2&endMonth=' + MONTH, { token });
+      assert.equal(trend.body.points[1].observations, 4);
+    } finally {
+      db.prepare('DELETE FROM observations WHERE id = ? AND user_id = ?').run(observationId, userId);
+    }
   });
 
   test('summary、students、trend 均隔离其他用户的数据', async () => {
@@ -454,7 +474,7 @@ describe('teaching-review 固定数据回归', () => {
       const ownerRow = team.body.teachers.find((row: any) => row.teacherId === userId);
       assert.deepEqual(ownerRow, {
         teacherId: userId, username: 'teaching-review-owner', students: 4,
-        followups: 2, reports: 2, observations: 2,
+        followups: 2, reports: 2, observations: 3,
         lessonPlans: 0, aiCalls: 4, aiSuccessRate: 50,
       });
 

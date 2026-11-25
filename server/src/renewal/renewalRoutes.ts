@@ -12,13 +12,14 @@ import {
   listReports,
   deleteReport,
   latestReportId,
+  ownsReport,
 } from './renewalService.js';
 import {
   getTeacherStats,
   getGroupComparison,
   getManagerPerf,
   getFunnel,
-  getRiskStudents,
+  getRiskStudentsPage,
   getStudentStatusSummary,
   getMentorMatrix,
   getTeacherGradeMatrix,
@@ -76,36 +77,51 @@ router.post('/upload', renewalUploadLimiter, (req: AuthenticatedRequest, res, ne
     try {
       // multer 自身的错误（扩展名不过滤、超过体积上限、磁盘写入失败）统一转 400。
       // 不能交给 errorHandler：那会变成一个 500，用户只能看到「服务器内部错误」。
-      if (err) return res.status(400).json({ error: '文件读取失败：' + err.message });
+      if (err) {
+        const message = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE'
+          ? '文件超过 60MB 上限'
+          : err.message === '仅支持 xlsx / xls 格式' ? err.message : '文件读取失败，请检查文件格式后重试';
+        return res.status(400).json({ error: message });
+      }
       if (!req.file) return res.status(400).json({ error: '未收到文件（表单字段名应为 file）' });
 
       const file = req.file;
       // 上传文件入库成功后即删：数据已在库里，磁盘不留副本
-      const report = await importRenewalFile(file.path, file.originalname, file.size, req.userId ?? null);
+      const report = await importRenewalFile(file.path, file.originalname, file.size, req.userId!);
       cleanup();
-      res.status(201).json({ report });
+      const deduplicated = report.deduplicated === true;
+      const httpStatus = report.status === 'rejected'
+        ? 422
+        : report.status === 'failed' ? 400 : deduplicated ? 200 : 201;
+      res.status(httpStatus).json({
+        report,
+        deduplicated,
+        ...(report.status === 'rejected'
+          ? { error: '导入数据存在阻断性质量问题，请查看错误明细' }
+          : report.status === 'failed' ? { error: 'xlsx 解析失败' } : {}),
+      });
     } catch (e) {
       cleanup();
       const msg = e instanceof Error ? e.message : String(e);
       log.error({ err: msg }, '续费统计表上传失败');
-      res.status(400).json({ error: '解析失败：' + msg.slice(0, 300) });
+      res.status(400).json({ error: '解析失败，请确认文件为有效的 xlsx 工作簿后重试' });
     }
   });
 });
 
 /** 报表批次列表 */
-router.get('/reports', (_req, res) => {
-  res.json({ reports: listReports() });
+router.get('/reports', (req: AuthenticatedRequest, res) => {
+  res.json({ reports: listReports(req.userId!) });
 });
 
 /** 删除一批（整批回滚） */
-router.delete('/reports/:id', (req, res) => {
+router.delete('/reports/:id', (req: AuthenticatedRequest, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: '无效的报表 id' });
     return;
   }
-  const ok = deleteReport(id);
+  const ok = deleteReport(id, req.userId!);
   if (!ok) {
     res.status(404).json({ error: '报表不存在' });
     return;
@@ -114,13 +130,42 @@ router.delete('/reports/:id', (req, res) => {
 });
 
 /** 解析错误明细 */
-router.get('/reports/:id/errors', (req, res) => {
+router.get('/reports/:id/errors', (req: AuthenticatedRequest, res) => {
   const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0 || !ownsReport(id, req.userId!)) {
+    return res.status(404).json({ error: '报表不存在' });
+  }
   const rows = renewalDb.prepare(`
-    SELECT sheet_name, row_number, error_message FROM renewal_import_error
-    WHERE report_id = ? ORDER BY row_number
-  `).all(id);
-  res.json({ errors: rows });
+    SELECT sheet_name, row_number, column_number, field_name,
+           error_type, severity, error_message, details_json
+    FROM renewal_import_error
+    WHERE report_id = ?
+    ORDER BY COALESCE(row_number, 0), COALESCE(column_number, 0), id
+  `).all(id) as Array<{ severity: 'error' | 'warning'; error_type: string }>;
+  const groupMap = new Map<string, { severity: string; errorType: string; count: number }>();
+  let errorCount = 0;
+  let warningCount = 0;
+  for (const row of rows) {
+    if (row.severity === 'error') errorCount += 1;
+    if (row.severity === 'warning') warningCount += 1;
+    const key = `${row.severity}\0${row.error_type}`;
+    const group = groupMap.get(key);
+    if (group) group.count += 1;
+    else groupMap.set(key, { severity: row.severity, errorType: row.error_type, count: 1 });
+  }
+  const groups = [...groupMap.values()].sort((a, b) => {
+    if (a.severity !== b.severity) {
+      if (a.severity === 'error') return -1;
+      if (b.severity === 'error') return 1;
+    }
+    return b.count - a.count
+      || a.errorType.localeCompare(b.errorType)
+      || a.severity.localeCompare(b.severity);
+  });
+  res.json({
+    summary: { total: rows.length, errorCount, warningCount, groups },
+    errors: rows,
+  });
 });
 
 
@@ -130,7 +175,7 @@ router.get('/reports/:id/errors', (req, res) => {
  */
 router.get('/dashboard/teacher-stats', (req: AuthenticatedRequest, res) => {
   const tab = String(req.query.tab || 'incentive');
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
@@ -139,13 +184,14 @@ router.get('/dashboard/teacher-stats', (req: AuthenticatedRequest, res) => {
     const rows = getTeacherStats(reportId, tab);
     res.json({ tab, reportId, rows });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    log.error({ err }, '续费教师统计读取失败');
+    res.status(400).json({ error: '教师统计读取失败，请检查 tab 参数或稍后重试' });
   }
 });
 
 /** 学管矩阵（仅 mentor tab） */
 router.get('/analytics/mentor-matrix', (req: AuthenticatedRequest, res) => {
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
@@ -154,30 +200,34 @@ router.get('/analytics/mentor-matrix', (req: AuthenticatedRequest, res) => {
     const matrix = getMentorMatrix(reportId);
     res.json({ matrix }); // 返回 { matrix: ... } 以兼容前端
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    log.error({ err }, '续费学管矩阵读取失败');
+    res.status(400).json({ error: '学管矩阵读取失败，请稍后重试' });
   }
 });
 
 /** 教师 × 年级 矩阵（仅 mentor tab） */
-router.get('/analytics/teacher-grade-matrix', asyncHandler(async (req, res) => {
+router.get('/analytics/teacher-grade-matrix', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const reportId = Number(req.query.reportId);
   if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  if (!ownsReport(reportId, req.userId!)) return res.status(404).json({ error: '报表不存在' });
   const matrix = getTeacherGradeMatrix(reportId);
   res.json({ matrix });
 }));
 
 /** 科组 × 年级 矩阵（仅 mentor tab） */
-router.get('/analytics/group-grade-matrix', asyncHandler(async (req, res) => {
+router.get('/analytics/group-grade-matrix', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const reportId = Number(req.query.reportId);
   if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  if (!ownsReport(reportId, req.userId!)) return res.status(404).json({ error: '报表不存在' });
   const matrix = getGroupGradeMatrix(reportId);
   res.json({ matrix });
 }));
 
 /** 整体续费概览（仅 mentor tab） */
-router.get('/analytics/rate-overview', asyncHandler(async (req, res) => {
+router.get('/analytics/rate-overview', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const reportId = Number(req.query.reportId);
   if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  if (!ownsReport(reportId, req.userId!)) return res.status(404).json({ error: '报表不存在' });
   const overview = getRateOverview(reportId);
   res.json({ overview });
 }));
@@ -185,7 +235,7 @@ router.get('/analytics/rate-overview', asyncHandler(async (req, res) => {
 /** 科组对比 */
 router.get('/analytics/group-compare', (req: AuthenticatedRequest, res) => {
   const tab = String(req.query.tab || 'incentive');
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
@@ -194,13 +244,14 @@ router.get('/analytics/group-compare', (req: AuthenticatedRequest, res) => {
     const rows = getGroupComparison(reportId, tab);
     res.json({ tab, reportId, rows });
   } catch (err) {
-    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    log.error({ err }, '续费科组对比读取失败');
+    res.status(400).json({ error: '科组对比读取失败，请检查 tab 参数或稍后重试' });
   }
 });
 
 /** 学管业绩 */
 router.get('/analytics/manager-perf', (req: AuthenticatedRequest, res) => {
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
@@ -210,7 +261,7 @@ router.get('/analytics/manager-perf', (req: AuthenticatedRequest, res) => {
 
 /** 续生漏斗 */
 router.get('/analytics/funnel', (req: AuthenticatedRequest, res) => {
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
@@ -220,18 +271,23 @@ router.get('/analytics/funnel', (req: AuthenticatedRequest, res) => {
 
 /** 风险学生清单 */
 router.get('/analytics/risk-list', (req: AuthenticatedRequest, res) => {
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
   }
-  const limit = Math.min(Number(req.query.limit) || 200, 500);
-  res.json({ reportId, rows: getRiskStudents(reportId, limit) });
+  const rawPage = Number(req.query.page);
+  const rawPageSize = Number(req.query.pageSize || req.query.limit);
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+  const pageSize = Number.isFinite(rawPageSize) && rawPageSize > 0
+    ? Math.min(200, Math.floor(rawPageSize))
+    : 50;
+  res.json({ reportId, ...getRiskStudentsPage(reportId, page, pageSize) });
 });
 
 /** 学生网格状态分布 */
 router.get('/analytics/student-status', (req: AuthenticatedRequest, res) => {
-  const reportId = resolveReportId(req.query.reportId);
+  const reportId = resolveReportId(req.query.reportId, req.userId!);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
@@ -240,13 +296,15 @@ router.get('/analytics/student-status', (req: AuthenticatedRequest, res) => {
 });
 
 /** 解析报表 id：显式传则用它，否则取最新一份 */
-function resolveReportId(raw: unknown): number | null {
+function resolveReportId(raw: unknown, userId: number): number | null {
+  let reportId: number | null = null;
   if (typeof raw === 'string' && raw.trim()) {
     const n = Number(raw);
-    if (Number.isInteger(n) && n > 0) return n;
-    return null;
+    reportId = Number.isInteger(n) && n > 0 ? n : null;
+  } else {
+    reportId = latestReportId(userId);
   }
-  return latestReportId();
+  return reportId && ownsReport(reportId, userId) ? reportId : null;
 }
 
 export default router;

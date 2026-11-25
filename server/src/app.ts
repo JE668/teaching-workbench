@@ -28,6 +28,7 @@ import reportAiRoutes from './routes/reports.ai.js';
 import aiMetricsRoutes from './routes/aiMetrics.js';
 import renewalRoutes from './renewal/renewalRoutes.js';
 import { initRenewalDb } from './renewal/db.js';
+import { actionRouter, initRenewalActions } from './renewal/actionRoutes.js';
 import knowledgeGraphRoutes from './routes/knowledgeGraph.js';
 import examAnalysisRoutes from './routes/examAnalysis.js';
 import unifiedDraftsRoutes from './routes/unifiedDrafts.js';
@@ -51,6 +52,7 @@ export async function createApp() {
   // 续费看板模块（独立 renewal.db）：初始化表结构。
   // 数据源收敛为一份用户做好的续费统计表 xlsx，解析入库后看板直接出图。
   initRenewalDb();
+  initRenewalActions();
 
   const app = express();
 
@@ -260,6 +262,7 @@ export async function createApp() {
   // 上传用户在 Excel 里已做好的续费统计表，解析入库；
   // 教师统计表按 激励/学段/学管/课时 4 个 tab 出图，另有科组对比/学管业绩/续生漏斗/风险清单。
   app.use('/api/renewal', authMiddleware, renewalRoutes);
+  app.use('/api/renewal', authMiddleware, actionRouter);
 
   // ========== 知识图谱模块 ==========
   // 从月度总结/回访/观察记录中抽取知识点，维护 mastery 动态更新，

@@ -99,7 +99,7 @@ test.describe('月度总结与课程规划', () => {
     const dlg = page.locator('div.fixed.inset-0.z-50').last();
     await expect(dlg.getByText('新建月份报告')).toBeVisible();
     await dlg.getByLabel('学生').selectOption(String(reportStudentId));
-    await dlg.getByLabel('月份').fill('2026-09');
+    await dlg.getByLabel('月份', { exact: true }).fill('2026-09');
     await dlg.getByLabel('学期').selectOption('秋季');
     await dlg.getByRole('button', { name: '创建' }).click();
     // 报告已经在开头清空过，所以这里一定是「已新建」而不是「已有报告」
