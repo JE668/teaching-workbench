@@ -213,5 +213,19 @@ describe('Toast', () => {
 
     fireEvent.click(closeBtn);
     expect(screen.queryByText('保存成功')).not.toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('卸载时清理自动关闭定时器，避免环境销毁后更新状态', () => {
+    const { unmount } = render(<ToastProvider><Trigger /></ToastProvider>);
+    fireEvent.click(screen.getByRole('button', { name: '成功' }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    unmount();
+
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => {
+      vi.runAllTimers();
+    });
   });
 });
