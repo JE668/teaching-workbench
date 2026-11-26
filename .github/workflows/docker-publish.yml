@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-  # PR 分支只跑测试、不发布镜像（镜像构建对 GITHUB_TOKEN 有权限要求，且不应污染 GHCR）
+  # PR 同样构建前端镜像并做真实容器验收，但不登录 GHCR、不推送镜像。
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -272,9 +272,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
   build-frontend:
-    name: Build & Push Frontend
-    # 同上：PR 不发布镜像
-    if: github.event_name != 'pull_request'
+    name: Build & Verify Frontend
+    # PR 也构建并验收；仅 GHCR 登录和推送步骤在非 PR 事件执行。
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [test-web, deploy-assets, e2e]
@@ -290,6 +289,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -315,11 +315,12 @@ jobs:
             org.opencontainers.image.description=1对1教学工作台前端
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
-      - name: Verify Frontend Container Before Push
+      - name: Verify Frontend Container
         timeout-minutes: 3
         run: bash scripts/verify/frontend-container-smoke.sh "ghcr.io/je668/teaching-workbench-frontend:${{ github.sha }}"
 
       - name: Push Verified Frontend Image
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           docker push "ghcr.io/je668/teaching-workbench-frontend:${{ github.sha }}"

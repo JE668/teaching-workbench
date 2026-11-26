@@ -81,13 +81,37 @@ done
 
 # ---------- 5. deploy.sh 关键守卫存在性 ----------
 head_ "5. deploy.sh 关键修复仍在（防回退）"
-grep -q 'DEPLOY_TAG="${\?TAG\?:-latest}"' deploy.sh 2>/dev/null                  && ok "pull 与 compose 同 TAG" || bad "pull 未同 TAG"
-grep -q 'docker pull "\$REGISTRY/\$PROJECT-backend:\$DEPLOY_TAG"' deploy.sh       && ok "pull 使用 DEPLOY_TAG" || bad "pull落后仍用 latest"
-grep -qE 'mkdir -p "\$\{DATA_PATH:-\./data\}/uploads"' deploy.sh                  && ok "首部署创建数据目录" || bad "缺 mkdir 数据目录"
+if [ "$(grep -c 'pull backend frontend' deploy.sh)" -eq 2 ]; then
+  ok "部署与回滚均由 Compose 统一 pull backend/frontend"
+else
+  bad "Compose pull 路径缺失"
+fi
+if grep -qE '^DEPLOY_TAG=|^docker pull ' deploy.sh; then
+  bad "仍存在绕过 Compose 环境解析的手动镜像拉取"
+else
+  ok "pull 与 up 共享 Compose 的 TAG/.env 解析"
+fi
+grep -q 'port frontend 80' deploy.sh                                            && ok "健康端口取实际 Compose 运行映射" || bad "仍在手工解析 FRONTEND_PORT"
+if [ "$(grep -c 'verify_deployment "' deploy.sh)" -eq 2 ]; then
+  ok "正常部署与回滚执行同一套运行时验收"
+else
+  bad "回滚或正常部署缺少运行时验收"
+fi
+grep -q 'mkdir -p "$DEPLOY_DATA_PATH/uploads"' deploy.sh                    && ok "首部署创建统一解析后的数据目录" || bad "缺 mkdir 数据目录"
+grep -q 'DEPLOY_DATA_PATH=.*|| true' deploy.sh                               && ok "DATA_PATH 缺省不会让 pipefail 中止部署" || bad "DATA_PATH 解析缺少兜底"
 grep -q 'FROM node:26' server/Dockerfile                                          && ok "server 基础镜像存在" || bad "server Dockerfile 异常"
 grep -q 'http://127.0.0.1:80/healthz' web/Dockerfile                         && ok "前端健康检查探容器内 IPv4 静态端点" || bad "前端健康检查配置回退"
 grep -q 'location = /healthz' web/nginx.conf                                  && ok "nginx 提供独立健康端点" || bad "nginx 缺少 /healthz"
 grep -q 'frontend-container-smoke.sh' .github/workflows/docker-publish.yml    && ok "镜像推送前执行真实容器验收" || bad "前端发布链缺少运行时验收"
+grep -q 'up -d --remove-orphans' deploy.sh                                      && ok "部署仅重建变化服务并清理孤儿容器" || bad "部署未使用增量 up"
+if grep -qE 'docker compose .* down --remove-orphans' deploy.sh; then
+  bad "部署仍会先停止整个栈"
+else
+  ok "部署不再主动全栈 down"
+fi
+grep -q 'wait_for_frontend' deploy.sh                                          && ok "前端运行时检查包含有界启动重试" || bad "前端检查缺少启动重试"
+grep -q 'frontend_health_url=.*healthz' deploy.sh                              && ok "宿主机检查覆盖前端静态健康端点" || bad "宿主机检查漏掉前端 healthz"
+grep -q 'curl -sf --connect-timeout 2 --max-time 3' deploy.sh                  && ok "宿主机健康请求具有连接和总超时上限" || bad "宿主机健康请求可能无限等待"
 
 # ---------- 6. backup.sh 快照语义 ----------
 head_ "6. backup.sh 回退路径（M25 校正后的语义）"
@@ -97,8 +121,16 @@ grep -q 'integrity_check' backup.sh                          && ok "备份后完
 grep -q 'backup_one_db "renewal.db"' backup.sh                    && ok "备份 renewal.db（续费看板）" || bad "backup.sh 未备份 renewal.db"
 grep -q 'verify_one_db "$RENEWAL_DB_FILE"' backup.sh              && ok "备份后校验 renewal.db" || bad "未校验 renewal.db 备份件"
 
-# ---------- 7. restore.sh 以 root 修属主 ----------
-head_ "7. restore.sh 恢复属主（M26）"
+# ---------- 7. deploy.sh 隔离运行时行为（不调用真实 Docker） ----------
+head_ "7. deploy.sh 隔离运行时行为（Docker/curl stub）"
+if python3 scripts/verify/verify-deploy-runtime.py; then
+  ok "成功、慢启动失败与回滚控制流正确"
+else
+  bad "部署运行时行为回归"
+fi
+
+# ---------- 8. restore.sh 以 root 修属主 ----------
+head_ "8. restore.sh 恢复属主（M26）"
 grep -q 'docker exec -u 0 "\$CONTAINER"' scripts/restore.sh  && ok "chown 以 root 执行" || bad "chown 仍以非 root 执行"
 grep -q 'PUID:-1001' scripts/restore.sh                       && ok "属主落到 PUID" || bad "属主未落到 PUID"
 grep -q '/app/data/renewal.db' scripts/restore.sh                  && ok "恢复 renewal.db" || bad "restore.sh 未恢复 renewal.db"

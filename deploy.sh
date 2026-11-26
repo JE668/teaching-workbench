@@ -5,18 +5,17 @@
 
 set -euo pipefail
 
-REGISTRY="ghcr.io/je668"
-PROJECT="teaching-workbench"
 COMPOSE_FILE="docker-compose.yml"
 BACKUP_DIR="${HOME}/backups/teaching-workbench"
-ROLLBACK_FILE="/tmp/teaching-workbench-last-tag"
+ROLLBACK_FILE="${ROLLBACK_FILE:-/tmp/teaching-workbench-last-tag}"
 
-# 读取 .env 中的前端端口（健康检查用；默认 80）
-# 注意：set -e 下命令替换失败会终止脚本，故必须兜底；并校验为纯数字。
-FRONTEND_PORT=$(grep -E '^FRONTEND_PORT=' .env 2>/dev/null | tail -1 | cut -d= -f2 | tr -d ' \r' || true)
-case "$FRONTEND_PORT" in
-  '' | *[!0-9]*) FRONTEND_PORT=80 ;;
-esac
+# Compose 会读取 .env，但 shell 不会自动获得其中的 DATA_PATH。
+# 显式解析并允许环境变量优先；无匹配必须兜底，不能让 pipefail 中止部署。
+DEPLOY_DATA_PATH="${DATA_PATH:-}"
+if [ -z "$DEPLOY_DATA_PATH" ]; then
+  DEPLOY_DATA_PATH="$(grep -E '^DATA_PATH=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' \r' || true)"
+fi
+DEPLOY_DATA_PATH="${DEPLOY_DATA_PATH:-./data}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -79,6 +78,76 @@ JWT_SECRET=%s
 }
 ensure_env_secrets
 
+diagnose_frontend() {
+  local container_id
+  container_id=$(docker compose -f "$COMPOSE_FILE" ps -q frontend 2>/dev/null || true)
+  if [ -n "$container_id" ]; then
+    docker inspect "$container_id" --format \
+      'ref={{.Config.Image}} id={{.Image}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}} ports={{json .NetworkSettings.Ports}} mounts={{json .Mounts}} health={{json .State.Health}}' || true
+  fi
+  docker compose -f "$COMPOSE_FILE" exec -T frontend nginx -t || true
+  docker compose -f "$COMPOSE_FILE" exec -T frontend netstat -lnt || true
+  docker compose -f "$COMPOSE_FILE" logs --tail=100 frontend || true
+}
+
+frontend_runtime_error() {
+  warn "$1"
+  diagnose_frontend
+  exit 1
+}
+
+wait_for_frontend() {
+  local attempt
+  log "等待前端 nginx 配置、80 监听与容器内健康探针就绪..."
+  # compose up 返回不代表 nginx 已完成启动；有界重试避免启动竞态造成假失败。
+  for attempt in $(seq 1 15); do
+    if docker compose -f "$COMPOSE_FILE" exec -T frontend nginx -t >/dev/null 2>&1 \
+      && docker compose -f "$COMPOSE_FILE" exec -T frontend netstat -lnt 2>/dev/null \
+        | awk '$4 ~ /:80$/ { found=1 } END { exit !found }' \
+      && docker compose -f "$COMPOSE_FILE" exec -T frontend \
+        wget --quiet --tries=1 -T 3 --spider http://127.0.0.1:80/healthz >/dev/null 2>&1; then
+      log "前端容器运行时检查通过（第 ${attempt} 次探测）"
+      return 0
+    fi
+    sleep 2
+  done
+  frontend_runtime_error "前端 nginx 配置、80 监听或容器内健康探针在 30 秒内未就绪"
+}
+
+verify_deployment() {
+  local completion_label="$1"
+  local frontend_address frontend_port frontend_health_url health_url
+  wait_for_frontend
+
+  # 从实际运行容器取得 Compose 已规范化的映射端口，避免自行解析引号/注释时误判。
+  frontend_address=$(docker compose -f "$COMPOSE_FILE" port frontend 80 2>/dev/null | head -1 | tr -d ' \r' || true)
+  frontend_port="${frontend_address##*:}"
+  case "$frontend_port" in
+    '' | *[!0-9]*) frontend_runtime_error "无法从 docker compose port frontend 80 取得有效端口（${frontend_address:-empty}）" ;;
+  esac
+
+  log "等待宿主机端口上的前端与后端健康检查..."
+  # /healthz 验证前端静态服务；/health 经 nginx 反代验证后端，二者必须同时通过。
+  frontend_health_url="http://127.0.0.1:${frontend_port}/healthz"
+  health_url="http://127.0.0.1:${frontend_port}/health"
+  for attempt in $(seq 1 10); do
+    if curl -sf --connect-timeout 2 --max-time 3 "$frontend_health_url" > /dev/null 2>&1 \
+      && curl -sf --connect-timeout 2 --max-time 3 "$health_url" > /dev/null 2>&1; then
+      log "前后端服务已启动并健康 ($frontend_health_url, $health_url)"
+      break
+    fi
+    if [ "$attempt" -eq 10 ]; then
+      frontend_runtime_error "前后端健康检查超时 ($frontend_health_url, $health_url)"
+    fi
+    sleep 2
+  done
+
+  log "========== ${completion_label}状态 =========="
+  docker compose -f "$COMPOSE_FILE" ps
+  log "本地访问: http://127.0.0.1:${frontend_port}"
+  log "========== ${completion_label}完成 =========="
+}
+
 if [ "$DO_ROLLBACK" = true ]; then
   if [ -f "$ROLLBACK_FILE" ]; then
     LAST_TAG=$(cat "$ROLLBACK_FILE")
@@ -91,9 +160,9 @@ if [ "$DO_ROLLBACK" = true ]; then
         ;;
     esac
     log "回滚到版本: $LAST_TAG"
-    TAG="$LAST_TAG" docker compose -f "$COMPOSE_FILE" pull
-    TAG="$LAST_TAG" docker compose -f "$COMPOSE_FILE" up -d
-    log "回滚完成"
+    TAG="$LAST_TAG" docker compose -f "$COMPOSE_FILE" pull backend frontend
+    TAG="$LAST_TAG" docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+    verify_deployment "回滚"
   else
     error "未找到上次部署记录"
   fi
@@ -139,22 +208,15 @@ else
   log "已用 --no-backup 跳过部署前备份"
 fi
 
-log "拉取镜像（TAG=${TAG:-latest}，与 compose 启动同一标签）..."
-# 必须与 compose 的 ${TAG:-latest} 用同一标签：回滚钉住 TAG 后再部署时，
-# 无条件 pull latest 会"拉新镜像、跑旧版本、还打印部署完成"。
-DEPLOY_TAG="${TAG:-latest}"
-docker pull "$REGISTRY/$PROJECT-backend:$DEPLOY_TAG"
-docker pull "$REGISTRY/$PROJECT-frontend:$DEPLOY_TAG"
+log "拉取 backend/frontend 镜像（由 Compose 统一解析 TAG 与 .env）..."
+# 不再自行 grep TAG 后 docker pull：pull 与 up 必须共享 Compose 的环境展开。
+docker compose -f "$COMPOSE_FILE" pull backend frontend
 
 # ====== 老版本数据迁移（命名卷 → 目录）======
 # 早期版本用 Docker 命名卷 teaching_workbench_db 存数据。
 # 改成目录挂载后，若不迁移，用户会以为"数据全没了"。
 migrate_legacy_volume() {
-  local data_path
-  # 注意：必须一起去掉 \r —— .env 若是 CRLF 换行，
-  # 路径会变成 "./data\r"，导致下面的存在性判断永远不成立、每次部署重复迁移。
-  data_path="$(grep -E '^DATA_PATH=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' \r')"
-  data_path="${data_path:-./data}"
+  local data_path="$DEPLOY_DATA_PATH"
 
   # 只在老卷存在、且新目录还没有数据库时才迁移
   if ! docker volume inspect teaching_workbench_db >/dev/null 2>&1; then
@@ -183,49 +245,10 @@ migrate_legacy_volume
 
 # 绑定挂载目录不存在时 Docker 会以 root 创建，容器内非 root 用户写库 EACCES。
 # 部署前显式建好并提示属主（属主不对时 Docker Desktop/根less 环境通常可写，本地 root 环境需 chown）。
-mkdir -p "${DATA_PATH:-./data}/uploads"
-log "重启服务..."
-docker compose -f "$COMPOSE_FILE" down --remove-orphans
-docker compose -f "$COMPOSE_FILE" up -d
+mkdir -p "$DEPLOY_DATA_PATH/uploads"
+log "更新服务（保留未变化容器，避免全栈 down 带来额外停机）..."
+# up 会按新镜像/配置重建需要更新的服务；不要先 down 整个栈，
+# 否则前端镜像异常时连本来健康的后端也会被主动停掉。
+docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 
-diagnose_frontend() {
-  local container_id
-  container_id=$(docker compose -f "$COMPOSE_FILE" ps -q frontend 2>/dev/null || true)
-  if [ -n "$container_id" ]; then
-    docker inspect "$container_id" --format       'ref={{.Config.Image}} id={{.Image}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}} ports={{json .NetworkSettings.Ports}} mounts={{json .Mounts}} health={{json .State.Health}}' || true
-  fi
-  docker compose -f "$COMPOSE_FILE" logs --tail=100 frontend || true
-}
-
-frontend_runtime_error() {
-  warn "$1"
-  diagnose_frontend
-  exit 1
-}
-
-log "验证前端容器配置与 80 端口监听..."
-docker compose -f "$COMPOSE_FILE" exec -T frontend nginx -t   || frontend_runtime_error "nginx 配置校验失败"
-docker compose -f "$COMPOSE_FILE" exec -T frontend netstat -lnt   | awk '$4 ~ /:80$/ { found=1 } END { exit !found }'   || frontend_runtime_error "nginx 进程存在但容器内没有 80 端口监听"
-docker compose -f "$COMPOSE_FILE" exec -T frontend   wget --quiet --tries=1 -T 3 --spider http://127.0.0.1:80/healthz   || frontend_runtime_error "前端容器内 IPv4 健康探针失败"
-
-log "等待前后端服务启动..."
-sleep 5
-# 后端 3000 仅在容器网络内暴露（expose），宿主机访问不到，
-# 因此通过前端已发布端口做端到端健康检查（nginx 会把 /health 反代到后端）。
-# 显式使用 127.0.0.1，避免 localhost 优先解析 IPv6 导致误报。
-HEALTH_URL="http://127.0.0.1:${FRONTEND_PORT}/health"
-for i in $(seq 1 10); do
-  if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
-    log "服务已启动并健康 ($HEALTH_URL)"
-    break
-  fi
-  if [ "$i" -eq 10 ]; then
-    frontend_runtime_error "前后端健康检查超时 ($HEALTH_URL)"
-  fi
-  sleep 2
-done
-
-log "========== 部署状态 =========="
-docker compose -f "$COMPOSE_FILE" ps
-log "本地访问: http://127.0.0.1:${FRONTEND_PORT}"
-log "========== 部署完成 =========="
+verify_deployment "部署"
