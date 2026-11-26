@@ -188,26 +188,44 @@ log "重启服务..."
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 docker compose -f "$COMPOSE_FILE" up -d
 
-log "等待服务启动..."
+diagnose_frontend() {
+  local container_id
+  container_id=$(docker compose -f "$COMPOSE_FILE" ps -q frontend 2>/dev/null || true)
+  if [ -n "$container_id" ]; then
+    docker inspect "$container_id" --format       'ref={{.Config.Image}} id={{.Image}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}} ports={{json .NetworkSettings.Ports}} mounts={{json .Mounts}} health={{json .State.Health}}' || true
+  fi
+  docker compose -f "$COMPOSE_FILE" logs --tail=100 frontend || true
+}
+
+frontend_runtime_error() {
+  warn "$1"
+  diagnose_frontend
+  exit 1
+}
+
+log "验证前端容器配置与 80 端口监听..."
+docker compose -f "$COMPOSE_FILE" exec -T frontend nginx -t   || frontend_runtime_error "nginx 配置校验失败"
+docker compose -f "$COMPOSE_FILE" exec -T frontend netstat -lnt   | awk '$4 ~ /:80$/ { found=1 } END { exit !found }'   || frontend_runtime_error "nginx 进程存在但容器内没有 80 端口监听"
+docker compose -f "$COMPOSE_FILE" exec -T frontend   wget --quiet --tries=1 -T 3 --spider http://127.0.0.1:80/healthz   || frontend_runtime_error "前端容器内 IPv4 健康探针失败"
+
+log "等待前后端服务启动..."
 sleep 5
 # 后端 3000 仅在容器网络内暴露（expose），宿主机访问不到，
 # 因此通过前端已发布端口做端到端健康检查（nginx 会把 /health 反代到后端）。
-HEALTH_URL="http://localhost:${FRONTEND_PORT}/health"
+# 显式使用 127.0.0.1，避免 localhost 优先解析 IPv6 导致误报。
+HEALTH_URL="http://127.0.0.1:${FRONTEND_PORT}/health"
 for i in $(seq 1 10); do
   if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
     log "服务已启动并健康 ($HEALTH_URL)"
     break
   fi
   if [ "$i" -eq 10 ]; then
-    warn "健康检查超时 ($HEALTH_URL)，请查看日志: docker compose -f $COMPOSE_FILE logs"
-    # 超时不能照常 exit 0：上游 cron/CI 会把一次没起来的部署当成成功。
-    # 退出码置非零，运维告警才能接得住。
-    exit 1
+    frontend_runtime_error "前后端健康检查超时 ($HEALTH_URL)"
   fi
   sleep 2
 done
 
 log "========== 部署状态 =========="
 docker compose -f "$COMPOSE_FILE" ps
-log "本地访问: http://localhost:${FRONTEND_PORT}"
+log "本地访问: http://127.0.0.1:${FRONTEND_PORT}"
 log "========== 部署完成 =========="

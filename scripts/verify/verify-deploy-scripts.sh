@@ -30,7 +30,7 @@ assert_eq() { # want got desc
 
 # ---------- 1. 语法 ----------
 head_ "1. 脚本语法（bash -n）"
-for f in deploy.sh backup.sh scripts/restore.sh scripts/install-backup-cron.sh; do
+for f in deploy.sh backup.sh scripts/restore.sh scripts/install-backup-cron.sh scripts/verify/frontend-container-smoke.sh; do
   if bash -n "$f" 2>/dev/null; then ok "$f 语法正确"; else bad "$f 语法错误"; fi
 done
 
@@ -85,7 +85,9 @@ grep -q 'DEPLOY_TAG="${\?TAG\?:-latest}"' deploy.sh 2>/dev/null                 
 grep -q 'docker pull "\$REGISTRY/\$PROJECT-backend:\$DEPLOY_TAG"' deploy.sh       && ok "pull 使用 DEPLOY_TAG" || bad "pull落后仍用 latest"
 grep -qE 'mkdir -p "\$\{DATA_PATH:-\./data\}/uploads"' deploy.sh                  && ok "首部署创建数据目录" || bad "缺 mkdir 数据目录"
 grep -q 'FROM node:26' server/Dockerfile                                          && ok "server 基础镜像存在" || bad "server Dockerfile 异常"
-grep -q 'http://localhost/index.html' web/Dockerfile                              && ok "前端健康检查探本地静态页" || bad "前端健康检查仍穿透后端"
+grep -q 'http://127.0.0.1:80/healthz' web/Dockerfile                         && ok "前端健康检查探容器内 IPv4 静态端点" || bad "前端健康检查配置回退"
+grep -q 'location = /healthz' web/nginx.conf                                  && ok "nginx 提供独立健康端点" || bad "nginx 缺少 /healthz"
+grep -q 'frontend-container-smoke.sh' .github/workflows/docker-publish.yml    && ok "镜像推送前执行真实容器验收" || bad "前端发布链缺少运行时验收"
 
 # ---------- 6. backup.sh 快照语义 ----------
 head_ "6. backup.sh 回退路径（M25 校正后的语义）"

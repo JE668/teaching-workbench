@@ -85,8 +85,8 @@ for f in promptTemplates.ts reportTemplate.ts; do
 done
 echo "✅ shared 副本一致"
 
-# ===== 6. nginx 配置粗校验（CI 无 docker，跑不了 nginx -t）=====
-# 只挡括号不配对与安全头意外丢失这两类低级回归。
+# ===== 6. nginx 静态校验 + 真实容器验收入口 =====
+# 本脚本只做静态防回退；镜像发布前由 frontend-container-smoke.sh 真正启动容器验收。
 BRACE_STATE=$(grep -vE '^\s*#' web/nginx.conf | awk '
   { for (i = 1; i <= length($0); i++) {
       c = substr($0, i, 1)
@@ -109,6 +109,12 @@ grep -q 'Content-Security-Policy-Report-Only' "$SEC_HEADERS_FILE" \
 # 安全头 snippet 必须被拷进前端镜像，否则 include 会在 nginx 启动时报 ENOENT
 grep -q 'COPY security-headers.conf /etc/nginx/security-headers.conf' web/Dockerfile \
   || fail "web/Dockerfile 未把 security-headers.conf 拷进镜像"
-echo "✅ nginx 配置粗校验通过"
+grep -q 'listen 80 default_server;' web/nginx.conf   || fail "web/nginx.conf 未显式监听容器 80 端口"
+grep -q 'location = /healthz' web/nginx.conf   || fail "web/nginx.conf 缺少独立前端健康端点 /healthz"
+grep -q 'http://127.0.0.1:80/healthz' web/Dockerfile   || fail "web/Dockerfile 健康检查未使用容器内 IPv4 静态端点"
+[ -x scripts/verify/frontend-container-smoke.sh ]   || fail "缺少可执行的 frontend-container-smoke.sh 运行时验收脚本"
+grep -q 'frontend-container-smoke.sh' .github/workflows/docker-publish.yml   || fail "前端镜像推送前未接入真实容器运行时验收"
+grep -q 'load: true' .github/workflows/docker-publish.yml   || fail "前端镜像未加载到本地做运行时验收"
+echo "✅ nginx 静态配置与运行时验收入口检查通过"
 
 echo "✅ 部署资产守护全部通过"

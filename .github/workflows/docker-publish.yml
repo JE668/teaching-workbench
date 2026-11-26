@@ -296,12 +296,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & Push Frontend
+      - name: Build Frontend for Runtime Verification
         uses: docker/build-push-action@v7
         timeout-minutes: 20
         with:
           context: ./web
-          push: true
+          # 先加载到本地做真实容器验收，通过后才允许推送 GHCR。
+          load: true
+          push: false
           # 标签策略：latest（部署用）+ 提交 SHA（回滚用，可精确定位）
           tags: |
             ghcr.io/je668/teaching-workbench-frontend:latest
@@ -312,3 +314,13 @@ jobs:
             org.opencontainers.image.title=teaching-workbench-frontend
             org.opencontainers.image.description=1对1教学工作台前端
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Verify Frontend Container Before Push
+        timeout-minutes: 3
+        run: bash scripts/verify/frontend-container-smoke.sh "ghcr.io/je668/teaching-workbench-frontend:${{ github.sha }}"
+
+      - name: Push Verified Frontend Image
+        run: |
+          set -euo pipefail
+          docker push "ghcr.io/je668/teaching-workbench-frontend:${{ github.sha }}"
+          docker push "ghcr.io/je668/teaching-workbench-frontend:latest"

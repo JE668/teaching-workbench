@@ -29,9 +29,9 @@ COPY security-headers.conf /etc/nginx/security-headers.conf
 # 暴露端口
 EXPOSE 80
 
-# 健康检查探【本地静态页】：/health 会反代到后端，后端挂掉会把"前端明明还能
-# 服务静态页"误判成 unhealthy。探 /index.html 只反映前端自身状态。
+# 健康检查探【容器内静态端点】：/health 会反代到后端，后端挂掉会把"前端明明还能
+# 服务静态页"误判成 unhealthy。显式使用 IPv4，排除 localhost 的 IPv6 解析歧义。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost/index.html || exit 1
+  CMD wget --quiet --tries=1 -T 3 --spider http://127.0.0.1:80/healthz || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
