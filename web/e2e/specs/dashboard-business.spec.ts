@@ -46,6 +46,17 @@ async function mockRenewal(page: Page, options: { riskCount?: number } = {}): Pr
     ],
   };
   const followUps: Array<Record<string, unknown>> = [];
+  let managerRows: Array<Record<string, unknown>> = [{
+    managerName: '郑淼林',
+    renew: { one2one: 40, one2many: 10, small: 2, other: 0, total: 52 },
+    newsign: { one2one: 18, one2many: 4, small: 0, other: 0, total: 22 },
+    renewedCount: 26, tutoredCount: 34, renewRate: 76.5,
+    taskAmount: 100, importedTaskAmount: 100,
+    productTargets: { one2one: 50, one2many: 10, small: 2, other: null },
+    productCashflow: { one2one: 58, one2many: 14, small: 2, other: 0, total: 74 },
+    cashflowTotal: 74, completionRate: 74, actualStudents: 31,
+    perStudent: 74 / 31, avgOrder: 8.9, gap80: 6,
+  }];
   const riskCount = options.riskCount ?? 1;
   const riskRows = Array.from({ length: riskCount }, (_, index) => ({
     studentKey: `S${String(index + 1).padStart(3, '0')}`, sourceRow: 7 + index,
@@ -123,7 +134,25 @@ async function mockRenewal(page: Page, options: { riskCount?: number } = {}): Pr
       body = { record };
     } else if (path.endsWith('/risk-followups')) {
       body = { reportId: Number(requestUrl.searchParams.get('reportId')), records: followUps };
-    } else if (path.includes('/group-compare') || path.includes('/manager-perf')) {
+    } else if (path.includes('/manager-targets') && route.request().method() === 'PUT') {
+      const payload = route.request().postDataJSON() as { targets: Array<{ managerName: string; targetAmount: number | null; productTargets: Record<string, number | null> | null }> };
+      const target = payload.targets[0];
+      managerRows = managerRows.map(row => {
+        if (row.managerName !== target.managerName) return row;
+        const taskAmount = target.targetAmount ?? row.importedTaskAmount as number;
+        const cashflowTotal = row.cashflowTotal as number;
+        return {
+          ...row,
+          taskAmount,
+          productTargets: target.productTargets ?? { one2one: null, one2many: null, small: null, other: null },
+          completionRate: taskAmount > 0 ? cashflowTotal / taskAmount * 100 : null,
+          gap80: taskAmount * 0.8 - cashflowTotal,
+        };
+      });
+      body = { reportId: 1, rows: managerRows };
+    } else if (path.includes('/manager-targets') || path.includes('/manager-perf')) {
+      body = { reportId: 1, rows: managerRows };
+    } else if (path.includes('/group-compare')) {
       body = { reportId: 1, rows: [] };
     } else if (path.includes('/funnel')) {
       body = { reportId: 1, rows: [{ managerName: '郑淼林', students: 20, classedLast2: 18, classedLast1: 15, renewed: 14 }] };
@@ -228,7 +257,7 @@ test.describe('看板业务表达浏览器验收', () => {
     await expect(page.getByRole('group', { name: '非毕业班预存率', exact: true })).toContainText('预存 160 人 ÷ 在读 221 人');
     await expect(page.getByRole('group', { name: '初三预存率', exact: true })).toContainText('85.9%');
     await expect(page.getByRole('group', { name: '高三预存率', exact: true })).toContainText('52.4%');
-    await expect(page.getByRole('heading', { name: '预存人数 TOP 10', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '预存率优先 TOP 10', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: '非毕业班预存 TOP 10', exact: true })).toBeVisible();
     await expect(page.getByRole('cell', { name: '—', exact: true })).toHaveCount(3);
     await expect(page.getByText('所有老师都已达标', { exact: true })).toHaveCount(0);
@@ -262,6 +291,35 @@ test.describe('看板业务表达浏览器验收', () => {
     await page.getByRole('radio', { name: '教师×年级', exact: true }).click();
     await expect(page.getByRole('columnheader', { name: '初三', exact: true })).toBeVisible();
     expect(riskRequests).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  test('学管业绩可编辑任务并区分四产品现金流', async ({ page }, testInfo) => {
+    await loginAsNewUser(page, username('managerTargets'));
+    await mockRenewal(page);
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto('/renewal');
+    await page.getByRole('tab', { name: '学管业绩', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '分产品现金流', exact: true })).toBeVisible();
+    for (const product of ['一对一', '一对多', '小班', '其他']) {
+      await expect(page.getByRole('row', { name: `郑淼林 ${product}现金流`, exact: true })).toBeVisible();
+    }
+    const one2one = page.getByRole('row', { name: '郑淼林 一对一现金流', exact: true });
+    await expect(one2one).toContainText('116.0%');
+    await page.getByRole('button', { name: '设置现金流任务', exact: true }).click();
+    await page.getByRole('textbox', { name: '郑淼林 总任务', exact: true }).fill('200');
+    await page.getByRole('textbox', { name: '郑淼林 一对一目标', exact: true }).fill('100');
+    await page.getByRole('button', { name: '保存 郑淼林任务', exact: true }).click();
+    await expect(page.getByText('郑淼林现金流任务已保存', { exact: true })).toBeVisible();
+    await expect(page.getByText('已调整', { exact: true })).toBeVisible();
+    await expect(one2one).toContainText('58.0%');
+    await page.screenshot({ path: testInfo.outputPath('manager-product-cashflow.png'), fullPage: true });
+    await page.getByRole('button', { name: '设置现金流任务', exact: true }).click();
+    await page.getByRole('button', { name: '恢复 郑淼林 Excel 任务', exact: true }).click();
+    await expect(page.getByText('郑淼林已恢复 Excel 任务', { exact: true })).toBeVisible();
+    await expect(page.getByText('已调整', { exact: true })).toHaveCount(0);
+    await expect(one2one).toContainText('—');
     expect(errors).toEqual([]);
   });
 

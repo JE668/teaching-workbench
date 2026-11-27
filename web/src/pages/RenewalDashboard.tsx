@@ -340,10 +340,31 @@ export default function RenewalDashboard() {
       ], groupRows);
     } else if (view === 'manager') {
       downloadCsv(prefix, [
-        { label: '学管', value: row => row.managerName }, { label: '续费合计', value: row => row.renew.total },
-        { label: '新签合计', value: row => row.newsign.total }, { label: '任务金额', value: row => row.taskAmount },
-        { label: '现金流合计', value: row => row.cashflowTotal }, { label: '完成率（%）', value: row => row.completionRate },
-        { label: '实际带生数', value: row => row.actualStudents }, { label: '已续科人数', value: row => row.renewedCount },
+        { label: '学管', value: row => row.managerName },
+        { label: '续费-一对一', value: row => row.renew.one2one },
+        { label: '续费-一对多', value: row => row.renew.one2many },
+        { label: '续费-小班', value: row => row.renew.small },
+        { label: '续费-其他', value: row => row.renew.other },
+        { label: '续费合计', value: row => row.renew.total },
+        { label: '新签-一对一', value: row => row.newsign.one2one },
+        { label: '新签-一对多', value: row => row.newsign.one2many },
+        { label: '新签-小班', value: row => row.newsign.small },
+        { label: '新签-其他', value: row => row.newsign.other },
+        { label: '新签合计', value: row => row.newsign.total },
+        { label: '现金流-一对一', value: row => row.productCashflow?.one2one },
+        { label: '现金流-一对多', value: row => row.productCashflow?.one2many },
+        { label: '现金流-小班', value: row => row.productCashflow?.small },
+        { label: '现金流-其他', value: row => row.productCashflow?.other },
+        { label: '现金流目标-一对一', value: row => row.productTargets?.one2one },
+        { label: '现金流目标-一对多', value: row => row.productTargets?.one2many },
+        { label: '现金流目标-小班', value: row => row.productTargets?.small },
+        { label: '现金流目标-其他', value: row => row.productTargets?.other },
+        { label: 'Excel任务金额', value: row => row.importedTaskAmount ?? row.taskAmount },
+        { label: '有效任务金额', value: row => row.taskAmount },
+        { label: '现金流合计', value: row => row.cashflowTotal },
+        { label: '完成率（%）', value: row => row.completionRate },
+        { label: '实际带生数', value: row => row.actualStudents },
+        { label: '已续科人数', value: row => row.renewedCount },
       ], managerRows);
     } else if (view === 'funnel') {
       downloadCsv(prefix, [
@@ -399,7 +420,11 @@ export default function RenewalDashboard() {
       />;
     }
     if (view === 'group') return <GroupViewEnhanced rows={groupRows} tab={tab} setTab={selectTab} />;
-    if (view === 'manager') return <ManagerViewEnhanced rows={managerRows} />;
+    if (view === 'manager') return reportId === null ? null : <ManagerViewEnhanced
+      rows={managerRows}
+      reportId={reportId}
+      onSaved={(rows: ManagerPerfRow[]) => setManagerRows(rows)}
+    />;
     if (view === 'funnel') return <FunnelViewEnhanced rows={funnelRows} />;
     return reportId === null ? null : <RiskViewEnhanced key={reportId} rows={riskRows} reportId={reportId} />;
   };

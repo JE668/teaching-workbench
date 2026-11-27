@@ -4,6 +4,12 @@ import userEvent from "@testing-library/user-event";
 import RenewalDashboard from "./RenewalDashboard";
 import { renderWithProviders } from "../test/test-utils";
 import { api } from "../api/client";
+import { downloadCsv } from "../lib/exportCsv";
+
+vi.mock("../lib/exportCsv", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/exportCsv")>();
+  return { ...actual, downloadCsv: vi.fn() };
+});
 
 vi.mock("../api/client", () => ({
   api: {
@@ -14,6 +20,7 @@ vi.mock("../api/client", () => ({
 }));
 
 const getMock = api.get as Mock;
+const downloadMock = downloadCsv as Mock;
 
 /** 教师统计行：tab 特有拆分列塞 extra */
 function makeTeacher(overrides: Record<string, unknown> = {}) {
@@ -224,6 +231,7 @@ function mockApi(
 
 beforeEach(() => {
   getMock.mockReset();
+  downloadMock.mockReset();
 });
 
 describe("续费看板", () => {
@@ -549,6 +557,41 @@ describe("续费看板", () => {
     // 表格行里的完成率（汇总卡片也有 110.0%，取表格里的）
     const cells = await screen.findAllByText("110.0%");
     expect(cells.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("学管业绩导出包含八项产品、产品现金流及任务目标", async () => {
+    const manager = makeManager({
+      importedTaskAmount: 1200000,
+      taskAmount: 1300000,
+      productTargets: { one2one: 700000, one2many: 300000, small: 200000, other: 100000 },
+      productCashflow: { one2one: 58, one2many: 14, small: 2, other: 0, total: 1330000 },
+    });
+    mockApi({ teacher: [makeTeacher()], manager: [manager] });
+    const user = userEvent.setup();
+    renderWithProviders(<RenewalDashboard />);
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("tab", { name: "学管业绩" }));
+    await screen.findByRole("cell", { name: "郑淼林" });
+    await user.click(screen.getByRole("button", { name: "导出当前视图" }));
+
+    expect(downloadMock).toHaveBeenCalledTimes(1);
+    const columns = downloadMock.mock.calls[0][1] as { label: string; value: (row: unknown) => unknown }[];
+    const rows = downloadMock.mock.calls[0][2] as unknown[];
+    const labels = columns.map(column => column.label);
+    for (const prefix of ["续费", "新签", "现金流", "现金流目标"]) {
+      for (const product of ["一对一", "一对多", "小班", "其他"]) {
+        expect(labels).toContain(`${prefix}-${product}`);
+      }
+    }
+    expect(labels).toContain("Excel任务金额");
+    expect(labels).toContain("有效任务金额");
+    const values = Object.fromEntries(columns.map(column => [column.label, column.value(rows[0])]));
+    expect(values["续费-一对一"]).toBe(40);
+    expect(values["新签-一对一"]).toBe(18);
+    expect(values["现金流-一对一"]).toBe(58);
+    expect(values["现金流目标-一对一"]).toBe(700000);
+    expect(values["Excel任务金额"]).toBe(1200000);
+    expect(values["有效任务金额"]).toBe(1300000);
   });
 
   it("课消与续费视图展示独立指标和同源整体续费率", async () => {

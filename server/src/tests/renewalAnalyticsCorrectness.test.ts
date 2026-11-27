@@ -331,3 +331,46 @@ test('风险清单分页返回全量计数，跨页无遗漏且无重复', () =>
   assert.equal(new Set(keys).size, 205);
   assert.equal(getRiskStudentsPage(reportId, 3, 200).rows.length, 0);
 });
+
+test('编号未命中时按唯一姓名补配学管，明确编号冲突仍隔离', () => {
+  const reportId = addReport('identity-fallback.xlsx');
+  const teacherId = addTeacher({ reportId, sourceRow: 10, teacherName: '关联教师', studentCount: 5 });
+  const grid = (studentId: string | null, studentName: string, slotIndex: number) => addGridStudent({
+    reportId, teacherStatId: teacherId, sourceRow: 10, teacherName: '关联教师',
+    studentId, studentName, status: 'prepaid', slotIndex,
+  });
+  grid('A-LOCAL', '编号缺失', 0);
+  grid('B-LOCAL', '编号冲突', 1);
+  grid(null, '姓名唯一', 2);
+  grid(null, '同名多人', 3);
+  grid('E-ID', '编号优先', 4);
+  const funnel = (studentId: string | null, studentName: string, managerName: string, sourceRow: number) => {
+    renewalDb.prepare(`
+      INSERT INTO student_funnel (report_id, student_id, student_name, manager_name, grade, renewed, source_row)
+      VALUES (?, ?, ?, ?, '初二', 0, ?)
+    `).run(reportId, studentId, studentName, managerName, sourceRow);
+  };
+  funnel(null, '编号缺失', '学管甲', 1);
+  funnel('B-OTHER', '编号冲突', '学管乙', 2);
+  funnel('C-ID', '姓名唯一', '学管丙', 3);
+  funnel('D-ID-1', '同名多人', '学管丁', 4);
+  funnel('D-ID-2', '同名多人', '学管丁', 5);
+  funnel('E-ID', '编号优先', '学管戊', 6);
+  funnel('E-OTHER', '编号优先', '另一学管', 7);
+
+  const matrix = getMentorMatrix(reportId);
+  const cells = matrix.cells.flatMap(cell => cell.students.map(student => ({ manager: cell.managerName, ...student })));
+  assert.equal(cells.find(row => row.name === '编号缺失')?.manager, '学管甲');
+  assert.equal(cells.find(row => row.name === '编号缺失')?.studentId, 'A-LOCAL');
+  assert.equal(cells.find(row => row.name === '编号冲突')?.manager, '未分配学管');
+  assert.equal(cells.find(row => row.name === '编号冲突')?.ambiguous, true);
+  assert.equal(cells.find(row => row.name === '姓名唯一')?.manager, '学管丙');
+  assert.equal(cells.find(row => row.name === '姓名唯一')?.studentId, 'C-ID');
+  assert.equal(cells.find(row => row.name === '同名多人')?.manager, '未分配学管');
+  assert.equal(cells.find(row => row.name === '编号优先')?.manager, '学管戊');
+  const overview = getRateOverview(reportId);
+  assert.deepEqual(
+    overview.byManager.filter(row => row.baseCount > 0).map(row => [row.managerName, row.baseCount]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    [['学管丙', 1], ['学管戊', 1], ['学管甲', 1], ['未分配学管', 2]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  );
+});

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -26,6 +26,7 @@ import {
   getGroupGradeMatrix,
   getRateOverview,
 } from './analytics.js';
+import { ManagerTargetError, saveManagerTargets } from './managerTargetService.js';
 
 /**
  * 续费看板路由。
@@ -249,15 +250,54 @@ router.get('/analytics/group-compare', (req: AuthenticatedRequest, res) => {
   }
 });
 
-/** 学管业绩 */
-router.get('/analytics/manager-perf', (req: AuthenticatedRequest, res) => {
-  const reportId = resolveReportId(req.query.reportId, req.userId!);
+type ManagerTargetHandler = (req: AuthenticatedRequest, res: Response) => void;
+
+/** 已知输入错误可读；数据库等未知异常只记录日志并返回固定文案。 */
+function handleManagerTargets(publicError: string, handler: ManagerTargetHandler) {
+  return (req: AuthenticatedRequest, res: Response) => {
+    try {
+      handler(req, res);
+    } catch (error) {
+      if (error instanceof ManagerTargetError) {
+        res.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+      log.error({ err: error, path: req.path, method: req.method }, publicError);
+      res.status(500).json({ error: publicError });
+    }
+  };
+}
+
+function managerTargetUserId(req: AuthenticatedRequest): number {
+  const userId = req.userId;
+  if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) {
+    throw new ManagerTargetError('用户身份无效', 401);
+  }
+  return userId;
+}
+
+function managerPerfResponse(req: AuthenticatedRequest, res: Response): void {
+  const userId = managerTargetUserId(req);
+  const reportId = resolveReportId(req.query.reportId, userId);
   if (!reportId) {
     res.status(404).json({ error: '还没有上传任何续费统计表' });
     return;
   }
-  res.json({ reportId, rows: getManagerPerf(reportId) });
-});
+  res.json({ reportId, rows: getManagerPerf(reportId, userId) });
+}
+
+/** 学管业绩（含有效任务与四产品现金流） */
+router.get('/analytics/manager-perf', handleManagerTargets('获取学管业绩失败', managerPerfResponse));
+
+/** 读取目标任务时与学管业绩使用同一合并视图，避免两套 effective 口径。 */
+router.get('/analytics/manager-targets', handleManagerTargets('获取学管任务失败', managerPerfResponse));
+
+/** 批量按字段保存覆盖；null 清除覆盖，未传字段保持原值。 */
+router.put('/analytics/manager-targets', handleManagerTargets('保存学管任务失败', (req, res) => {
+  const userId = managerTargetUserId(req);
+  const reportId = saveManagerTargets(req.body, userId);
+  res.json({ reportId, rows: getManagerPerf(reportId, userId) });
+}));
 
 /** 续生漏斗 */
 router.get('/analytics/funnel', (req: AuthenticatedRequest, res) => {

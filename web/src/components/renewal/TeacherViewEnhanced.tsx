@@ -8,6 +8,7 @@ import StudentGrid from './StudentGrid';
 import DimensionChart from './DimensionChart';
 import Modal from '../../components/ui/Modal';
 import { HOUR_BUCKETS, hourBucketCounts } from '../../lib/hourBuckets';
+import { rankByRenewalMetric, type RenewalRankingMode } from '../../lib/renewalRanking';
 
 interface Props {
   rows: TeacherStatRow[];
@@ -83,6 +84,20 @@ function finiteMetric(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function rankingRuleText(mode: RenewalRankingMode): string {
+  return mode === 'pre'
+    ? '预存率降序 → 预存人数降序 → 名称升序，空值最后'
+    : '续科率降序 → 续科人数降序 → 名称升序，空值最后';
+}
+
+function rateBarWidth(value: number | null | undefined): string {
+  return (typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0) + '%';
+}
+
+function teacherDisplayName(row: TeacherStatRow): string {
+  return row.teacherName || '未知教师';
+}
+
 function StagePrepaidRates({ rows }: { rows: TeacherStatRow[] }) {
   const stages = STAGE_RATE_FIELDS.map(stage => {
     const enrolled = rows.reduce((sum, row) => sum + finiteMetric(row.extra[stage.enrolledKey]), 0);
@@ -137,13 +152,20 @@ function TeacherRow({
   colSpan: number;
   onToggle: () => void;
 }) {
+  const hasStudentDetails = r.students.length > 0;
+  const detailsMissing = r.studentCount > r.students.length;
+  const detailsOpen = open && hasStudentDetails;
+
   return (
     <>
-      <tr className="hover:bg-slate-50/60 transition-colors cursor-pointer whitespace-nowrap" onClick={onToggle}>
+      <tr
+        className={cn('hover:bg-slate-50/60 transition-colors whitespace-nowrap', hasStudentDetails && 'cursor-pointer')}
+        onClick={hasStudentDetails ? onToggle : undefined}
+      >
         <td className="px-4 py-3 font-medium text-slate-700">
           <div className="flex items-center gap-2">
             <ChevronDown
-              className={cn('h-4 w-4 text-slate-400 transition-transform', open && 'rotate-180')}
+              className={cn('h-4 w-4 text-slate-400 transition-transform', detailsOpen && 'rotate-180')}
               aria-hidden="true"
             />
             {name}
@@ -168,25 +190,33 @@ function TeacherRow({
           )}
         </td>
         <td className="px-4 py-3" aria-label="学生状态">
-          {r.students.length > 0 ? (
-            <button
-              type="button"
-              aria-expanded={open}
-              onClick={event => {
-                event.stopPropagation();
-                onToggle();
-              }}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 hover:text-brand-700"
-            >
-              {open ? '收起' : '查看'} {r.students.length} 名学生明细
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} aria-hidden="true" />
-            </button>
-          ) : (
-            <span className="text-xs text-slate-400">无学生明细</span>
-          )}
+          <div className="flex flex-col items-start gap-1">
+            {hasStudentDetails ? (
+              <button
+                type="button"
+                aria-expanded={detailsOpen}
+                onClick={event => {
+                  event.stopPropagation();
+                  onToggle();
+                }}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 hover:text-brand-700"
+              >
+                {detailsOpen ? '收起' : '查看'} {r.students.length} 名学生明细
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', detailsOpen && 'rotate-180')} aria-hidden="true" />
+              </button>
+            ) : !detailsMissing ? (
+              <span className="text-xs text-slate-400">无学生明细</span>
+            ) : null}
+            {detailsMissing && (
+              <span className="inline-flex items-center gap-1 text-xs text-amber-700">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                {hasStudentDetails ? '部分学生明细缺失' : '学生明细缺失'}：统计 {r.studentCount} 人，已返回 {r.students.length} 条
+              </span>
+            )}
+          </div>
         </td>
       </tr>
-      {open && (
+      {detailsOpen && (
         <tr className="bg-slate-50/30">
           <td colSpan={colSpan} className="px-4 pb-4">
             <div className="ml-10 border-l-2 border-slate-200 pl-4">
@@ -301,57 +331,61 @@ export default function TeacherViewEnhanced({
   const closeCellDetail = () => setCellDetail({ open: false, cell: null, type: 'mentor' });
 
   const cols = useMemo(() => tabColumns(tab), [tab]);
-  const renewedRows = rows.filter(r => typeof r.renewedCount === 'number');
-  const prepaidRows = rows.filter(r => typeof r.prepaidCount === 'number');
-  const nonGradRows = rows.filter(r => typeof r.extra?.prepaid_nongrad === 'number');
-  const maxRenewed = renewedRows.reduce((m, r) => Math.max(m, r.renewedCount ?? 0), 0);
-  const maxPrepaid = prepaidRows.reduce((m, r) => Math.max(m, r.prepaidCount ?? 0), 0);
-  const maxNonGrad = nonGradRows.reduce((m, r) => Math.max(m, r.extra.prepaid_nongrad ?? 0), 0);
+  const teacherRankingMode: RenewalRankingMode = tab === 'stage' || tab === 'hours'
+    ? 'pre'
+    : tab === 'mentor'
+      ? rateMode
+      : 'renew';
+  const rankedRows = rankByRenewalMetric(rows, teacherRankingMode, teacherDisplayName);
+  const rankedManagers = rateOverview
+    ? rankByRenewalMetric(rateOverview.byManager, rateMode, item => item.managerName)
+    : [];
+  const rankedGroups = rateOverview
+    ? rankByRenewalMetric(rateOverview.byGroup, rateMode, item => item.subjectGroup)
+    : [];
+  const renewedRows = rankedRows.filter(r => r.renewedCount !== undefined || r.renewRate !== undefined);
+  const prepaidRows = rankedRows.filter(r => r.prepaidCount !== undefined || r.prepaidRate !== undefined);
+  const nonGradRows = rankedRows.filter(r => typeof r.extra?.prepaid_nongrad === 'number');
+  const maxRenewed = renewedRows.reduce((m, r) => Math.max(m, finiteMetric(r.renewedCount)), 0);
+  const maxPrepaid = prepaidRows.reduce((m, r) => Math.max(m, finiteMetric(r.prepaidCount)), 0);
+  const maxNonGrad = nonGradRows.reduce((m, r) => Math.max(m, finiteMetric(r.extra.prepaid_nongrad)), 0);
+  const incompleteDetailCount = rows.filter(r => r.studentCount > r.students.length).length;
   const hasGapData = rows.some(r => typeof r.incentiveGap === 'number');
   const gapPositive = rows
     .filter(r => typeof r.incentiveGap === 'number' && r.incentiveGap > 0)
     .sort((a, b) => (b.incentiveGap ?? 0) - (a.incentiveGap ?? 0));
 
-  const renewalRanking: BarListRow[] = renewedRows.slice()
-    .sort((a, b) => (b.renewedCount ?? 0) - (a.renewedCount ?? 0))
-    .slice(0, 10)
-    .map((r, i) => ({
-      label: r.teacherName || '未知教师',
-      value: count(r.renewedCount),
-      rawValue: r.renewedCount ?? 0,
-      ratio: maxRenewed > 0 ? ((r.renewedCount ?? 0) / maxRenewed) * 100 : 0,
-      hint: '基数 ' + count(r.baseCount) + ' · 预存 ' + count(r.prepaidCount) + ' · 续科率 ' + pct(r.renewRate),
-      className: rankStyle(i),
-    }));
+  const renewalRanking: BarListRow[] = renewedRows.slice(0, 10).map((r, i) => ({
+    label: teacherDisplayName(r),
+    value: count(r.renewedCount),
+    rawValue: finiteMetric(r.renewedCount),
+    ratio: maxRenewed > 0 ? (finiteMetric(r.renewedCount) / maxRenewed) * 100 : 0,
+    hint: '续科率 ' + pct(r.renewRate) + ' · 基数 ' + count(r.baseCount) + ' · 预存 ' + count(r.prepaidCount),
+    className: rankStyle(i),
+  }));
 
-  const prepaidRanking: BarListRow[] = prepaidRows.slice()
-    .sort((a, b) => (b.prepaidCount ?? 0) - (a.prepaidCount ?? 0))
-    .slice(0, 10)
-    .map((r, i) => ({
-      label: r.teacherName || '未知教师',
-      value: count(r.prepaidCount),
-      rawValue: r.prepaidCount ?? 0,
-      ratio: maxPrepaid > 0 ? ((r.prepaidCount ?? 0) / maxPrepaid) * 100 : 0,
-      hint: '基数 ' + count(r.baseCount) + ' · 预存率 ' + pct(r.prepaidRate),
-      className: rankStyle(i),
-      color: 'bg-violet-500',
-    }));
+  const prepaidRanking: BarListRow[] = prepaidRows.slice(0, 10).map((r, i) => ({
+    label: teacherDisplayName(r),
+    value: count(r.prepaidCount),
+    rawValue: finiteMetric(r.prepaidCount),
+    ratio: maxPrepaid > 0 ? (finiteMetric(r.prepaidCount) / maxPrepaid) * 100 : 0,
+    hint: '预存率 ' + pct(r.prepaidRate) + ' · 基数 ' + count(r.baseCount),
+    className: rankStyle(i),
+    color: 'bg-violet-500',
+  }));
 
-  const nonGradRanking: BarListRow[] = nonGradRows.slice()
-    .sort((a, b) => (b.extra.prepaid_nongrad ?? 0) - (a.extra.prepaid_nongrad ?? 0))
-    .slice(0, 10)
-    .map((r, i) => ({
-      label: r.teacherName || '未知教师',
-      value: count(r.extra.prepaid_nongrad),
-      rawValue: r.extra.prepaid_nongrad ?? 0,
-      ratio: maxNonGrad > 0 ? ((r.extra.prepaid_nongrad ?? 0) / maxNonGrad) * 100 : 0,
-      hint: '非毕业班在读 ' + count(r.extra.enroll_nongrad),
-      className: rankStyle(i),
-      color: 'bg-emerald-500',
-    }));
+  const nonGradRanking: BarListRow[] = nonGradRows.slice(0, 10).map((r, i) => ({
+    label: teacherDisplayName(r),
+    value: count(r.extra.prepaid_nongrad),
+    rawValue: finiteMetric(r.extra.prepaid_nongrad),
+    ratio: maxNonGrad > 0 ? (finiteMetric(r.extra.prepaid_nongrad) / maxNonGrad) * 100 : 0,
+    hint: '非毕业班在读 ' + count(r.extra.enroll_nongrad) + ' · 总预存率 ' + pct(r.prepaidRate),
+    className: rankStyle(i),
+    color: 'bg-emerald-500',
+  }));
 
   const gapRanking: BarListRow[] = gapPositive.slice(0, 10).map((r, i) => ({
-    label: r.teacherName || '未知教师',
+    label: teacherDisplayName(r),
     value: count(r.incentiveGap),
     rawValue: r.incentiveGap ?? 0,
     ratio: 0,
@@ -360,25 +394,14 @@ export default function TeacherViewEnhanced({
     color: 'bg-amber-500',
   }));
 
+  const primaryRanking = teacherRankingMode === 'pre'
+    ? { key: 'prepaid', title: '预存率优先 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid }
+    : { key: 'renewal', title: '续科率优先 TOP 10', rows: renewalRanking, maxValue: maxRenewed };
   const rankingSections = tab === 'stage'
-    ? [
-        { key: 'prepaid', title: '预存人数 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid },
-        { key: 'nongrad', title: '非毕业班预存 TOP 10', rows: nonGradRanking, maxValue: maxNonGrad },
-      ]
-    : tab === 'incentive'
-      ? [
-          { key: 'renewal', title: '续科人数 TOP 10', rows: renewalRanking, maxValue: maxRenewed },
-          ...(hasGapData ? [{ key: 'gap', title: '激励差额 TOP 10', rows: gapRanking, maxValue: undefined }] : []),
-        ]
-      : tab === 'hours'
-        ? [
-            { key: 'prepaid', title: '预存人数 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid },
-            { key: 'renewal', title: '续科人数 TOP 10', rows: renewalRanking, maxValue: maxRenewed },
-          ]
-        : [
-            { key: 'renewal', title: '续科人数 TOP 10', rows: renewalRanking, maxValue: maxRenewed },
-            { key: 'prepaid', title: '预存人数 TOP 10', rows: prepaidRanking, maxValue: maxPrepaid },
-          ];
+    ? [primaryRanking, { key: 'nongrad', title: '非毕业班预存 TOP 10', rows: nonGradRanking, maxValue: maxNonGrad }]
+    : tab === 'incentive' && hasGapData
+      ? [primaryRanking, { key: 'gap', title: '激励差额 TOP 10', rows: gapRanking, maxValue: undefined }]
+      : [primaryRanking];
   const visibleRankings = rankingSections.filter(section => section.rows.length > 0 || section.key === 'gap');
 
   if (rows.length === 0) {
@@ -464,29 +487,30 @@ export default function TeacherViewEnhanced({
                 <Target className="h-4 w-4 text-brand-600" />
                 续存概览
               </h3>
+              <p className="-mt-1 mb-3 text-xs text-slate-500">排序规则：{rankingRuleText(rateMode)}</p>
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="md:col-span-2">
                   <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">学管维度</h4>
                   <div className="space-y-2">
-                    {rateOverview.byManager.map(m => (
+                    {rankedManagers.map(m => (
                       <div key={m.managerName} className="rounded-lg bg-slate-50 p-3 border border-slate-100">
                         <div className="flex items-center justify-between text-sm">
                           <span className="font-medium text-slate-700">{m.managerName}</span>
                           <div className="flex items-center gap-4 text-xs text-slate-500">
                             <span className="flex items-center gap-1">
                               <span className="w-2 h-2 rounded-full bg-purple-500" aria-hidden="true" />
-                              预存 {pct(m.prepaidRate)}
+                              预存 {count(m.prepaidCount)} 人 · {pct(m.prepaidRate)}
                             </span>
                             <span className="flex items-center gap-1">
                               <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
-                              续费 {pct(m.renewRate)}
+                              续费 {count(m.renewedCount)} 人 · {pct(m.renewRate)}
                             </span>
                           </div>
                         </div>
                         <div className="mt-2 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-gradient-to-r from-purple-500 to-emerald-500 rounded-full"
-                            style={{ width: rateMode === 'pre' ? m.prepaidRate + '%' : m.renewRate + '%' }}
+                            style={{ width: rateBarWidth(rateMode === 'pre' ? m.prepaidRate : m.renewRate) }}
                           />
                         </div>
                       </div>
@@ -496,25 +520,25 @@ export default function TeacherViewEnhanced({
                 <div>
                   <h4 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">科组维度</h4>
                   <div className="space-y-2">
-                    {rateOverview.byGroup.map(g => (
+                    {rankedGroups.map(g => (
                       <div key={g.subjectGroup} className="rounded-lg bg-slate-50 p-3 border border-slate-100">
                         <div className="flex items-center justify-between text-sm">
                           <span className="font-medium text-slate-700">{g.subjectGroup}</span>
                           <div className="flex items-center gap-4 text-xs text-slate-500">
                             <span className="flex items-center gap-1">
                               <span className="w-2 h-2 rounded-full bg-purple-500" aria-hidden="true" />
-                              预存 {pct(g.prepaidRate)}
+                              预存 {count(g.prepaidCount)} 人 · {pct(g.prepaidRate)}
                             </span>
                             <span className="flex items-center gap-1">
                               <span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden="true" />
-                              续费 {pct(g.renewRate)}
+                              续费 {count(g.renewedCount)} 人 · {pct(g.renewRate)}
                             </span>
                           </div>
                         </div>
                         <div className="mt-2 h-1.5 bg-slate-200 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-gradient-to-r from-purple-500 to-emerald-500 rounded-full"
-                            style={{ width: rateMode === 'pre' ? g.prepaidRate + '%' : g.renewRate + '%' }}
+                            style={{ width: rateBarWidth(rateMode === 'pre' ? g.prepaidRate : g.renewRate) }}
                           />
                         </div>
                       </div>
@@ -523,7 +547,7 @@ export default function TeacherViewEnhanced({
                 </div>
               </div>
               <div className="mt-4 flex items-center gap-2">
-                <span className="text-xs text-slate-500">显示：</span>
+                <span className="text-xs text-slate-500">排序：</span>
                 <div className="flex rounded-lg bg-slate-100 p-1" role="radiogroup" aria-label="预存/续费切换">
                   {(['pre', 'renew'] as const).map(mode => (
                     <button
@@ -539,7 +563,7 @@ export default function TeacherViewEnhanced({
                           : 'text-slate-600 hover:text-slate-800',
                       )}
                     >
-                      {mode === 'pre' ? '预存率' : '续费率'}
+                      {mode === 'pre' ? '预存率优先' : '续费率优先'}
                     </button>
                   ))}
                 </div>
@@ -843,6 +867,17 @@ export default function TeacherViewEnhanced({
           </div>
           )}
 
+          {incompleteDetailCount > 0 && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800" role="note" aria-label="学生明细数据质量提示">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+              <p>数据质量提示：{incompleteDetailCount} 名教师的统计人数与已返回学生明细条数不一致。缺失明细不代表真实无学生，排名仍使用接口统计字段。</p>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500">
+            教师表格与主榜单排序：{rankingRuleText(teacherRankingMode)}；榜单条形长度按人数显示，名次由上述规则决定。
+          </p>
+
           {/* 每个 tab 只展示有接口字段支撑的榜单。 */}
           {visibleRankings.length > 0 ? (
             <div className="grid gap-4 lg:grid-cols-2">
@@ -890,17 +925,20 @@ export default function TeacherViewEnhanced({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {rows.map((r, idx) => {
-                    const name = r.teacherName || ('行 ' + idx);
+                  {rankedRows.map((r, idx) => {
+                    const name = teacherDisplayName(r);
+                    const rowKey = r.teacherStatId !== undefined
+                      ? `teacher-stat:${r.teacherStatId}`
+                      : `legacy:${name}:${r.teacherNo ?? ''}:${r.subjectGroup ?? ''}:${idx}`;
                     return (
                       <TeacherRow
-                        key={idx}
+                        key={rowKey}
                         r={r}
                         name={name}
-                        open={expanded.has(name)}
+                        open={expanded.has(rowKey)}
                         cols={cols}
                         colSpan={8 + cols.length}
-                        onToggle={() => toggleTeacher(name)}
+                        onToggle={() => toggleTeacher(rowKey)}
                       />
                     );
                   })}

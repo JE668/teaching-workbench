@@ -86,6 +86,8 @@ export interface ReportSummary {
 /** 教师统计行（4 个 tab 共用形状，extra 装 tab 特有拆分列） */
 export interface TeacherStatRow {
   tab: string;
+  /** 后端稳定行 ID；旧缓存/测试夹具可缺省并按行回退。 */
+  teacherStatId?: number;
   teacherName: string | null;
   teacherNo: string | null;
   subjectGroup: string | null;
@@ -159,6 +161,9 @@ export function buildRenewalOverview(rows: TeacherStatRow[]): RenewalOverview {
   };
 }
 
+export type CashflowProductKey = 'one2one' | 'one2many' | 'small' | 'other';
+export type ProductAmounts = Record<CashflowProductKey, number | null>;
+
 /** 学管业绩行 */
 export interface ManagerPerfRow {
   managerName: string;
@@ -168,6 +173,9 @@ export interface ManagerPerfRow {
   tutoredCount: number | null;
   renewRate: number | null;
   taskAmount: number | null;
+  importedTaskAmount?: number | null;
+  productTargets?: ProductAmounts;
+  productCashflow?: ProductAmounts & { total: number | null };
   cashflowTotal: number | null;
   completionRate: number | null;
   actualStudents: number | null;

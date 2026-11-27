@@ -1,4 +1,5 @@
 import { renewalDb } from './db.js';
+import type { ManagerProductTargets } from './managerTargetService.js';
 
 /**
  * 续费看板指标聚合。
@@ -38,6 +39,8 @@ export interface AnalyticsStudentDto {
 
 /** 教师统计明细（含每个学生及其颜色状态） */
 export interface TeacherStatFull extends TeacherStatDto {
+  /** 稳定行身份：同名教师的学生明细与展开状态不能共用姓名键。 */
+  teacherStatId: number;
   students: (AnalyticsStudentDto & { slot: number })[];
 }
 
@@ -61,7 +64,15 @@ export interface ManagerPerfDto {
   renewedCount: number | null;
   tutoredCount: number | null;
   renewRate: number | null;
+  /** 有效总任务：人工覆盖优先，否则沿用 Excel。 */
   taskAmount: number | null;
+  /** Excel 导入的总任务原值，不随人工覆盖变化。 */
+  importedTaskAmount: number | null;
+  /** 与早期任务编辑契约兼容的同义字段。 */
+  importedTargetAmount: number | null;
+  productTargets: ManagerProductTargets;
+  /** 四产品分别为续费+新签；total 始终取 Excel 的真实现金流合计。 */
+  productCashflow: ManagerProductTargets & { total: number | null };
   cashflowTotal: number | null;
   completionRate: number | null;
   actualStudents: number | null;
@@ -267,6 +278,7 @@ export function getTeacherStats(reportId: number, tab: string): TeacherStatFull[
       ?? [];
     return {
       tab,
+      teacherStatId: r.id,
       teacherName: r.teacher_name,
       teacherNo: r.teacher_no,
       subjectGroup: r.subject_group,
@@ -313,40 +325,76 @@ export function getGroupComparison(reportId: number, tab: string): GroupSummary[
   }));
 }
 
-/** 学管业绩 */
-export function getManagerPerf(reportId: number): ManagerPerfDto[] {
+/** 学管业绩：产品现金流只汇总分项，合计仍保留 Excel 导入的真实值。 */
+export function getManagerPerf(reportId: number, userId: number): ManagerPerfDto[] {
   const rows = renewalDb.prepare(`
-    SELECT manager_name,
-           renew_1v1, renew_1vN, renew_small, renew_other, renew_total,
-           newsign_1v1, newsign_1vN, newsign_small, newsign_other, newsign_total,
-           renewed_count, tutored_count, renew_rate, task_amount, cashflow_total,
-           completion_rate, actual_students, per_student, avg_order, gap_80
-    FROM manager_perf
-    WHERE report_id = ?
-    ORDER BY cashflow_total DESC
-  `).all(reportId) as any[];
+    SELECT p.manager_name,
+           p.renew_1v1, p.renew_1vN, p.renew_small, p.renew_other, p.renew_total,
+           p.newsign_1v1, p.newsign_1vN, p.newsign_small, p.newsign_other, p.newsign_total,
+           p.renewed_count, p.tutored_count, p.renew_rate, p.task_amount, p.cashflow_total,
+           p.completion_rate, p.actual_students, p.per_student, p.avg_order, p.gap_80,
+           t.target_amount AS target_override,
+           t.one2one_target, t.one2many_target, t.small_target, t.other_target
+    FROM manager_perf p
+    LEFT JOIN renewal_manager_target t
+      ON t.report_id = p.report_id AND t.user_id = ? AND t.manager_name = p.manager_name
+    WHERE p.report_id = ?
+    ORDER BY p.cashflow_total DESC
+  `).all(userId, reportId) as any[];
 
-  return rows.map(r => ({
-    managerName: r.manager_name,
-    renew: {
-      one2one: r.renew_1v1, one2many: r.renew_1vN, small: r.renew_small,
-      other: r.renew_other, total: r.renew_total,
-    },
-    newsign: {
-      one2one: r.newsign_1v1, one2many: r.newsign_1vN, small: r.newsign_small,
-      other: r.newsign_other, total: r.newsign_total,
-    },
-    renewedCount: r.renewed_count,
-    tutoredCount: r.tutored_count,
-    renewRate: r.renew_rate,
-    taskAmount: r.task_amount,
-    cashflowTotal: r.cashflow_total,
-    completionRate: r.completion_rate,
-    actualStudents: r.actual_students,
-    perStudent: r.per_student,
-    avgOrder: r.avg_order,
-    gap80: r.gap_80,
-  }));
+  const addNullable = (left: number | null, right: number | null): number | null => {
+    if (left === null && right === null) return null;
+    return (left ?? 0) + (right ?? 0);
+  };
+
+  return rows.map(r => {
+    const taskAmount = r.target_override ?? r.task_amount;
+    // 有有效任务时重算；旧 Excel 只有完成率、没有任务额时保留导入的百分比。
+    const completionRate = taskAmount === null
+      ? r.completion_rate
+      : r.cashflow_total !== null && taskAmount > 0
+        ? (r.cashflow_total / taskAmount) * 100
+        : null;
+    const gap80 = r.cashflow_total !== null && taskAmount !== null
+      ? taskAmount * 0.8 - r.cashflow_total
+      : null;
+    return {
+      managerName: r.manager_name,
+      renew: {
+        one2one: r.renew_1v1, one2many: r.renew_1vN, small: r.renew_small,
+        other: r.renew_other, total: r.renew_total,
+      },
+      newsign: {
+        one2one: r.newsign_1v1, one2many: r.newsign_1vN, small: r.newsign_small,
+        other: r.newsign_other, total: r.newsign_total,
+      },
+      renewedCount: r.renewed_count,
+      tutoredCount: r.tutored_count,
+      renewRate: r.renew_rate,
+      taskAmount,
+      importedTaskAmount: r.task_amount,
+      importedTargetAmount: r.task_amount,
+      productTargets: {
+        one2one: r.one2one_target,
+        one2many: r.one2many_target,
+        small: r.small_target,
+        other: r.other_target,
+      },
+      productCashflow: {
+        one2one: addNullable(r.renew_1v1, r.newsign_1v1),
+        one2many: addNullable(r.renew_1vN, r.newsign_1vN),
+        small: addNullable(r.renew_small, r.newsign_small),
+        other: addNullable(r.renew_other, r.newsign_other),
+        total: r.cashflow_total,
+      },
+      cashflowTotal: r.cashflow_total,
+      completionRate,
+      actualStudents: r.actual_students,
+      perStudent: r.per_student,
+      avgOrder: r.avg_order,
+      gap80,
+    };
+  });
 }
 
 /** 续生漏斗（按学管聚合） */
@@ -499,15 +547,18 @@ function loadMentorStudents(reportId: number): MentorStudent[] {
     const studentName = row.student_name?.trim();
     if (!studentName) continue;
     const studentId = row.student_id?.trim() || null;
-    const candidates = studentId
-      ? funnelById.get(studentId) ?? []
-      : funnelByName.get(studentName) ?? [];
+    const idCandidates = studentId ? funnelById.get(studentId) ?? [] : [];
+    const nameCandidates = funnelByName.get(studentName) ?? [];
+    // 编号命中时只信任编号；编号未命中时，可用唯一姓名补齐旧表缺失的编号列。
+    // 若姓名记录明确指向另一个编号，则保留冲突，绝不把一个学生并到另一个学管。
+    const candidates = idCandidates.length > 0 ? idCandidates : nameCandidates;
     const candidateIds = identityValues(candidates, 'student_id');
     const candidateNames = identityValues(candidates, 'student_name');
     const managerNames = identityValues(candidates, 'manager_name');
     const grades = identityValues(candidates, 'grade');
-    // legacy 同名对应多个不同 ID 时，任何学管/年级归属都无法确定。
-    const identityAmbiguous = !studentId && candidateIds.size > 1;
+    const conflictingId = idCandidates.length === 0 && Boolean(studentId)
+      && Array.from(candidateIds).some(candidateId => candidateId !== studentId);
+    const identityAmbiguous = conflictingId || (!studentId && candidateIds.size > 1);
     const ambiguous = identityAmbiguous
       || candidateNames.size > 1
       || managerNames.size > 1
@@ -518,10 +569,11 @@ function loadMentorStudents(reportId: number): MentorStudent[] {
     const grade = !identityAmbiguous && grades.size === 1
       ? Array.from(grades)[0]
       : null;
+    const resolvedStudentId = studentId ?? (candidateIds.size === 1 ? Array.from(candidateIds)[0] : null);
     students.push({
       teacherName: row.teacher_name?.trim() || '未填写教师',
       studentName,
-      studentId,
+      studentId: resolvedStudentId,
       identityKey: `grid:${row.id}`,
       ambiguous,
       managerName,

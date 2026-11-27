@@ -130,6 +130,24 @@ export function initRenewalDb(database: Database.Database = renewalDb): void {
   );
   CREATE INDEX IF NOT EXISTS idx_manager_perf_report ON manager_perf(report_id);
 
+  -- 学管任务的人工覆盖值；NULL 表示该字段沿用 Excel 或保持未设置。
+  -- user_id 是隔离键的一部分，同一报表被不同用户访问时也绝不会串用任务设置。
+  CREATE TABLE IF NOT EXISTS renewal_manager_target (
+    report_id INTEGER NOT NULL REFERENCES renewal_report(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL,
+    manager_name TEXT NOT NULL,
+    target_amount REAL,
+    one2one_target REAL,
+    one2many_target REAL,
+    small_target REAL,
+    other_target REAL,
+    created_at TEXT NOT NULL DEFAULT (${SQL_NOW}),
+    updated_at TEXT NOT NULL DEFAULT (${SQL_NOW}),
+    PRIMARY KEY (report_id, user_id, manager_name)
+  );
+  CREATE INDEX IF NOT EXISTS idx_renewal_manager_target_user
+    ON renewal_manager_target(user_id, report_id);
+
   -- 续生率明细（漏斗 + 风险清单数据源）
   CREATE TABLE IF NOT EXISTS student_funnel (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
