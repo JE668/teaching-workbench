@@ -1,4 +1,5 @@
 import type { TeacherStatRow } from './renewal';
+import { normalizeStatus, StandardStatus } from '@shared/statusDictionary.js';
 
 /**
  * 教师统计表(课时)学生网格的五档分组。
@@ -40,7 +41,7 @@ export function hourBucketCounts(
   for (const student of row.students) {
     if (student.slot < bucket.minSlot || student.slot > bucket.maxSlot) continue;
     enrolled += 1;
-    if (student.status === 'prepaid') prepaid += 1;
+    if (normalizeStatus(student.status as StandardStatus) === 'prepaid') prepaid += 1;
   }
   return { enrolled, prepaid };
 }

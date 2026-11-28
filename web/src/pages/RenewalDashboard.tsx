@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, CalendarRange, Download, RefreshCw, TrendingUp, Upload } from 'lucide-react';
+import { AlertTriangle, CalendarRange, Download, RefreshCw, TrendingUp, Upload, Filter, BarChart3 } from 'lucide-react';
 import { api } from '../api/client';
 import Button from '../components/ui/Button';
 import EmptyState from '../components/ui/EmptyState';
@@ -12,6 +12,12 @@ import FunnelViewEnhanced from '../components/renewal/FunnelViewEnhanced';
 import RiskViewEnhanced from '../components/renewal/RiskViewEnhanced';
 import RenewalOverviewKpis from '../components/renewal/RenewalOverviewKpis';
 import RenewalComparison from '../components/renewal/RenewalComparison';
+import FilterBar, { FilterState } from '../components/renewal/FilterBar';
+import { useAutoRefresh } from '../hooks/useRefresh';
+import { ToastProvider, useToastManager } from '../components/Toast';
+import type { RefreshEvent } from '../hooks/useRefresh';
+import TrendChart from '../components/renewal/TrendChart';
+import MultiPeriodComparison from '../components/renewal/MultiPeriodComparison';
 import { downloadCsv } from '../lib/exportCsv';
 import { cn } from '../lib/utils';
 import {
@@ -28,9 +34,9 @@ import {
   type TeacherGradeMatrix,
   type TeacherStatRow,
 } from '../lib/renewal';
-
-type View = 'teacher' | 'group' | 'manager' | 'funnel' | 'risk';
 type Section = 'teacher' | 'group' | 'manager' | 'funnel' | 'risk' | 'status' | 'matrices';
+type View = "teacher" | "group" | "manager" | "funnel" | "risk";
+
 
 const VIEWS: { key: View; label: string }[] = [
   { key: 'teacher', label: '教师统计' },
@@ -105,6 +111,66 @@ export default function RenewalDashboard() {
   const [groupGradeMatrix, setGroupGradeMatrix] = useState<GroupGradeMatrix | null>(null);
   const [rateOverview, setRateOverview] = useState<RateOverview | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Phase 2: 全局筛选器状态
+  const [filters, setFilters] = useState<FilterState>({
+    centerIds: [],
+    statMonths: [],
+    teacherIds: [],
+    managerIds: [],
+    subjectGroups: [],
+    grades: [],
+    tab: 'incentive',
+  });
+  const [filterOptions, setFilterOptions] = useState<{
+    centers: { id: number; name: string }[];
+    statMonths: string[];
+    teachers: { id: number; name: string; subjectGroup?: string }[];
+    managers: { id: number; name: string }[];
+    subjectGroups: string[];
+    grades: string[];
+  }>({
+    centers: [],
+    statMonths: [],
+    teachers: [],
+    managers: [],
+    subjectGroups: [],
+    grades: [],
+  });
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+
+  // Phase 2: 多期对比数据
+  const [comparisonData, setComparisonData] = useState<{
+    snapshots: Array<{
+      reportId: number;
+      statMonth: string;
+      centerName: string | null;
+      uploadedAt: string;
+      overview: any;
+      teacherCount: number;
+    }>;
+  } | null>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [showTrendChart, setShowTrendChart] = useState(false);
+
+  // Real-time refresh integration
+  const toast = useToastManager();
+  const { isConnected, lastEvent, refresh: triggerRefresh } = useAutoRefresh({
+    reportId,
+    enabled: !!reportId,
+    onRefresh: (event: RefreshEvent) => {
+      if (event.type === 'data_changed' || event.type === 'report_updated') {
+        toast.refresh('数据已更新', '检测到续费数据变更，正在刷新看板…', { duration: 3000 });
+        // 触发当前视图重新加载
+        if (currentReport) {
+          void loadAll(currentReport.reportId, tabRef.current);
+        }
+      } else if (event.type === 'connected') {
+        toast.success('实时连接已建立', '将自动接收数据更新推送', { duration: 2000 });
+      }
+    },
+    preferSSE: true,
+  });
 
   const [loadedSections, setLoadedSections] = useState<Set<Section>>(new Set());
   const [pendingSections, setPendingSections] = useState<Set<Section>>(new Set());
@@ -197,7 +263,7 @@ export default function RenewalDashboard() {
           api.get(`/renewal/analytics/mentor-matrix?reportId=${id}`),
           api.get(`/renewal/analytics/teacher-grade-matrix?reportId=${id}`),
           api.get(`/renewal/analytics/group-grade-matrix?reportId=${id}`),
-          api.get(`/renewal/analytics/rate-overview?reportId=${id}`),
+          api.get(`/renewal/analytics/rate-overview?reportId=${id}&tab=${currentTab}`),
         ]);
         if (!isCurrent()) return;
         setMentorMatrix((mentor as { matrix?: MentorMatrix | null }).matrix ?? null);
@@ -253,6 +319,61 @@ export default function RenewalDashboard() {
     await Promise.all(sections.map(section => loadSection(section, id, currentTab)));
   }, [loadSection]);
 
+  // Phase 2: 加载筛选器选项
+  const loadFilterOptions = useCallback(async (id: number, currentTab: string) => {
+    try {
+      const [centersRes, monthsRes, teacherRes, managerRes] = await Promise.all([
+        api.get('/renewal/analytics/centers'),
+        api.get('/renewal/analytics/stat-months'),
+        api.get(`/renewal/dashboard/teacher-stats?tab=${currentTab}&reportId=${id}`),
+        api.get(`/renewal/analytics/manager-perf?reportId=${id}`),
+      ]);
+
+      const teacherRows = teacherRes.rows || [];
+      const managerRows = managerRes.rows || [];
+
+      const teachers = teacherRows.map((r: any) => ({
+        id: r.teacherStatId || 0,
+        name: r.teacherName || '未命名',
+        subjectGroup: r.subjectGroup,
+      })).filter((t: any) => t.id > 0);
+
+      const managers = managerRows.map((r: any) => ({
+        id: r.managerId || 0,
+        name: r.managerName || '未命名',
+      })).filter((m: any) => m.id > 0);
+
+      const subjectGroups = [...new Set(teacherRows.map((r: any) => r.subjectGroup).filter(Boolean))] as string[];
+      const grades = [...new Set(teacherRows.map((r: any) => r.extra?.grade).filter(Boolean))] as string[];
+
+      setFilterOptions({
+        centers: centersRes.centers || [],
+        statMonths: monthsRes.months || [],
+        teachers,
+        managers,
+        subjectGroups,
+        grades,
+      });
+    } catch (e) {
+      console.warn('加载筛选选项失败:', e);
+    }
+  }, []);
+
+  // Phase 2: 加载多期对比数据
+  const loadComparisonData = useCallback(async (userId: number, centerName?: string) => {
+    setComparisonLoading(true);
+    try {
+      const response = await api.get(`/renewal/analytics/multi-period?userId=${userId}${centerName ? '&centerName=' + encodeURIComponent(centerName) : ''}&limit=12`);
+      if (response.comparison) {
+        setComparisonData(response.comparison);
+      }
+    } catch (e) {
+      console.warn('加载多期对比失败:', e);
+    } finally {
+      setComparisonLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadReports();
     return () => { reportsRequestRef.current += 1; };
@@ -271,6 +392,13 @@ export default function RenewalDashboard() {
     if (loadedSections.has('risk') || pendingSections.has('risk') || errors.risk) return;
     void loadSection('risk', reportId, tabRef.current);
   }, [errors.risk, loadSection, loadedSections, pendingSections, reportId, view]);
+
+  // Phase 2: 报表变更时加载筛选器选项
+  useEffect(() => {
+    if (reportId !== null) {
+      void loadFilterOptions(reportId, tab);
+    }
+  }, [loadFilterOptions, reportId, tab]);
 
   const selectReport = (id: number) => {
     resetReportData();
@@ -430,7 +558,8 @@ export default function RenewalDashboard() {
   };
 
   return (
-    <div className="space-y-6">
+    <ToastProvider position="top-right" maxToasts={5}>
+      <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-800">续费看板</h1>
@@ -503,6 +632,28 @@ export default function RenewalDashboard() {
             ))}
           </div>
 
+          {/* Phase 2: 全局筛选器 */}
+          <FilterBar
+            filters={filters}
+            setFilters={setFilters}
+            options={filterOptions}
+            currentTab={tab}
+            setTab={selectTab}
+            reportId={reportId}
+            centerName={currentReport?.centerName || ''}
+            statMonth={currentReport?.statMonth || ''}
+            open={filterPanelOpen}
+            setOpen={setFilterPanelOpen}
+            onApply={() => {
+              const id = reportIdRef.current;
+              if (id !== null) void loadAll(id, tabRef.current);
+            }}
+            onCompare={() => setShowComparison(prev => !prev)}
+            comparisonOpen={showComparison}
+            onTrend={() => setShowTrendChart(prev => !prev)}
+            trendOpen={showTrendChart}
+          />
+
           {backgroundErrors.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4" role="alert">
               <p className="text-sm font-medium text-amber-800">部分数据更新失败，页面保留各模块上次成功数据</p>
@@ -518,8 +669,30 @@ export default function RenewalDashboard() {
 
           {currentLoaded && currentPending && <p className="text-xs text-slate-400" role="status">正在刷新，当前显示上次成功数据…</p>}
           {renderCurrentView()}
+
+          {/* Phase 2: 多期趋势图 */}
+          {showTrendChart && comparisonData && (
+            <div className="mt-6" role="region" aria-label="多期趋势对比">
+              <TrendChart
+                snapshots={comparisonData.snapshots}
+                currentReportId={reportId}
+              />
+            </div>
+          )}
+
+          {/* Phase 2: 多期对比表格 */}
+          {showComparison && comparisonData && (
+            <div className="mt-6" role="region" aria-label="多期数据对比">
+              <MultiPeriodComparison
+                snapshots={comparisonData.snapshots}
+                currentReportId={reportId}
+              />
+            </div>
+          )}
         </>
       )}
     </div>
+    </ToastProvider>
   );
 }
+

@@ -4,7 +4,7 @@ export interface SparklineProps {
   /** 数据点数组（建议 12-24 个点） */
   data: number[];
   /** 颜色主题 */
-  tone?: 'brand' | 'emerald' | 'violet' | 'amber' | 'red' | 'sky';
+  tone?: 'brand' | 'emerald' | 'violet' | 'amber' | 'red' | 'sky' | 'slate';
   /** 宽度（默认 120px） */
   width?: number;
   /** 高度（默认 32px） */
@@ -22,6 +22,7 @@ const TONES = {
   amber: { stroke: '#F59E0B', fill: 'rgba(245, 158, 11, 0.12)', dot: '#F59E0B' },
   red: { stroke: '#EF4444', fill: 'rgba(239, 68, 68, 0.12)', dot: '#EF4444' },
   sky: { stroke: '#0EA5E9', fill: 'rgba(14, 165, 233, 0.12)', dot: '#0EA5E9' },
+  slate: { stroke: '#64748B', fill: 'rgba(100, 116, 139, 0.12)', dot: '#64748B' },
 } as const;
 
 /**

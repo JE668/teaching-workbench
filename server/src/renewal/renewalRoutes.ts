@@ -25,7 +25,14 @@ import {
   getTeacherGradeMatrix,
   getGroupGradeMatrix,
   getRateOverview,
+  getMultiPeriodComparison,
+  getAvailableStatMonths,
+  getAvailableCenters,
+  getCellDetail,
 } from './analytics.js';
+import { buildExport, type ExportOptions } from './exportService.js';
+import { generateExportBuffer } from './excelExport.js';
+import { refreshManager } from './refreshManager.js';
 import { ManagerTargetError, saveManagerTargets } from './managerTargetService.js';
 
 /**
@@ -224,12 +231,13 @@ router.get('/analytics/group-grade-matrix', asyncHandler(async (req: Authenticat
   res.json({ matrix });
 }));
 
-/** 整体续费概览（仅 mentor tab） */
+/** 整体续费概览（支持指定 tab，默认 mentor） */
 router.get('/analytics/rate-overview', asyncHandler(async (req: AuthenticatedRequest, res) => {
   const reportId = Number(req.query.reportId);
   if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
   if (!ownsReport(reportId, req.userId!)) return res.status(404).json({ error: '报表不存在' });
-  const overview = getRateOverview(reportId);
+  const tab = String(req.query.tab || 'mentor');
+  const overview = getRateOverview(reportId, tab);
   res.json({ overview });
 }));
 
@@ -325,6 +333,34 @@ router.get('/analytics/risk-list', (req: AuthenticatedRequest, res) => {
   res.json({ reportId, ...getRiskStudentsPage(reportId, page, pageSize) });
 });
 
+
+/** 矩阵单元格学生明细（分页、筛选、排序） */
+router.get('/analytics/cell-detail', asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const reportId = Number(req.query.reportId);
+  if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+  if (!ownsReport(reportId, req.userId!)) return res.status(404).json({ error: '报表不存在' });
+
+  const type = String(req.query.type || '');
+  if (!['mentor', 'grade', 'group'].includes(type)) {
+    return res.status(400).json({ error: 'type 必须是 mentor、grade 或 group' });
+  }
+
+  const rowKey = String(req.query.rowKey || '');
+  const colKey = String(req.query.colKey || '');
+  if (!rowKey || !colKey) {
+    return res.status(400).json({ error: 'rowKey 和 colKey 必填' });
+  }
+
+  const page = Number(req.query.page) || 1;
+  const pageSize = Math.min(200, Number(req.query.pageSize) || 50);
+  const sortBy = String(req.query.sortBy || 'name');
+  const sortDir = String(req.query.sortDir || 'asc');
+  const statusFilter = req.query.statusFilter ? String(req.query.statusFilter) : undefined;
+
+  const result = getCellDetail({ reportId, type: type as any, rowKey, colKey, page, pageSize, sortBy: sortBy as any, sortDir: sortDir as any, statusFilter });
+  res.json({ reportId, ...result });
+}));
+
 /** 学生网格状态分布 */
 router.get('/analytics/student-status', (req: AuthenticatedRequest, res) => {
   const reportId = resolveReportId(req.query.reportId, req.userId!);
@@ -333,6 +369,34 @@ router.get('/analytics/student-status', (req: AuthenticatedRequest, res) => {
     return;
   }
   res.json({ reportId, rows: getStudentStatusSummary(reportId) });
+});
+
+/** 多期对比：趋势数据（支持按校区、月份筛选） */
+router.get('/analytics/multi-period', asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const userId = req.userId!;
+  const centerName = req.query.centerName ? String(req.query.centerName) : undefined;
+  const limit = Number(req.query.limit) || 12;
+  const months = req.query.months ? String(req.query.months).split(',').map(s => s.trim()).filter(Boolean) : undefined;
+
+  try {
+    const comparison = getMultiPeriodComparison({ userId, centerName, limit, months });
+    res.json({ comparison });
+  } catch (err) {
+    log.error({ err }, '多期对比读取失败');
+    res.status(400).json({ error: '多期对比读取失败，请稍后重试' });
+  }
+}));
+
+/** 可用统计月份列表（供前端下拉选择） */
+router.get('/analytics/stat-months', (req: AuthenticatedRequest, res) => {
+  const months = getAvailableStatMonths(req.userId!);
+  res.json({ months });
+});
+
+/** 可用校区列表（供前端下拉选择） */
+router.get('/analytics/centers', (req: AuthenticatedRequest, res) => {
+  const centers = getAvailableCenters(req.userId!);
+  res.json({ centers });
 });
 
 /** 解析报表 id：显式传则用它，否则取最新一份 */
@@ -346,5 +410,150 @@ function resolveReportId(raw: unknown, userId: number): number | null {
   }
   return reportId && ownsReport(reportId, userId) ? reportId : null;
 }
+
+
+/**
+ * 导出续费看板数据
+ * 支持多种模板：standard、detailed、matrix、funnel、risk、executive、multi-period
+ */
+router.get('/export', asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const userId = req.userId!;
+  
+  const template = String(req.query.template || 'standard');
+  const reportId = Number(req.query.reportId);
+  const centerName = req.query.centerName ? String(req.query.centerName) : undefined;
+  const months = req.query.months ? String(req.query.months).split(',').map(s => s.trim()).filter(Boolean) : undefined;
+
+  // For multi-period, reportId is not required
+  if (template !== 'multi-period') {
+    if (!Number.isFinite(reportId)) return res.status(400).json({ error: 'reportId 必填' });
+    if (!ownsReport(reportId, userId)) return res.status(404).json({ error: '报表不存在' });
+  }
+
+  const options: ExportOptions = {
+    reportId: template === 'multi-period' ? 0 : reportId,
+    userId,
+    template: template as any,
+    centerName,
+    months,
+  };
+
+  try {
+    const buffer = await generateExportBuffer(options);
+    const fileName = `renewal-${template}-${reportId || 'multi'}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+  } catch (error) {
+    log.error({ err: error, template, reportId }, '导出失败');
+    res.status(500).json({ error: '导出生成失败，请稍后重试' });
+  }
+}));
+
+/**
+ * 获取可用的导出模板列表
+ */
+
+/**
+ * 实时数据刷新 - SSE (Server-Sent Events) 端点
+ * 前端通过 EventSource 连接获取实时更新
+ */
+router.get('/refresh/stream', (req: AuthenticatedRequest, res) => {
+  const userId = req.userId!;
+  const reportId = Number(req.query.reportId);
+
+  if (!Number.isFinite(reportId)) {
+    return res.status(400).json({ error: 'reportId 必填' });
+  }
+
+  if (!ownsReport(reportId, userId)) {
+    return res.status(404).json({ error: '报表不存在' });
+  }
+
+  // 设置 SSE 头部
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  // 发送初始连接确认
+  res.write('data: ' + JSON.stringify({ type: 'connected', reportId, timestamp: new Date().toISOString() }) + '\n\n');
+
+  // 订阅刷新事件
+  const unsubscribe = refreshManager.subscribe(reportId, (event) => {
+    if (event.userId === userId || event.type === 'data_changed') {
+      res.write('data: ' + JSON.stringify(event) + '\n\n');
+    }
+  });
+
+  // 定期发送心跳保持连接
+  const heartbeat = setInterval(() => {
+    res.write('data: ' + JSON.stringify({ type: 'heartbeat', timestamp: new Date().toISOString() }) + '\n\n');
+  }, 30000);
+
+  // 客户端断开时清理
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});
+
+/**
+ * 手动触发数据刷新（供导入完成后调用）
+ */
+router.post('/refresh/trigger', asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const userId = req.userId!;
+  const { reportId, type = 'data_changed' } = req.body as { reportId: number; type?: string };
+
+  if (!Number.isFinite(reportId)) {
+    return res.status(400).json({ error: 'reportId 必填' });
+  }
+
+  if (!ownsReport(reportId, userId)) {
+    return res.status(404).json({ error: '报表不存在' });
+  }
+
+  refreshManager.triggerRefresh(reportId, userId, type as any);
+  
+  res.json({ success: true, message: '刷新已触发' });
+}));
+
+/**
+ * 获取刷新状态
+ */
+router.get('/refresh/status', (req: AuthenticatedRequest, res) => {
+  const userId = req.userId!;
+  const reportId = Number(req.query.reportId);
+
+  if (!Number.isFinite(reportId)) {
+    return res.status(400).json({ error: 'reportId 必填' });
+  }
+
+  if (!ownsReport(reportId, userId)) {
+    return res.status(404).json({ error: '报表不存在' });
+  }
+
+  res.json({
+    reportId,
+    subscriberCount: refreshManager.getSubscriberCount(reportId),
+    isPolling: false,
+  });
+});
+
+router.get('/export/templates', (req: AuthenticatedRequest, res) => {
+  res.json({
+    templates: [
+      { id: 'standard', name: '标准导出', description: '概览 + 4个Tab教师统计 + 科组对比 + 学管业绩 + 漏斗' },
+      { id: 'detailed', name: '详细导出', description: '标准导出 + 所有学生明细 + 矩阵数据' },
+      { id: 'matrix', name: '矩阵导出', description: '教师×学管、教师×年级、科组×年级 三种矩阵完整导出' },
+      { id: 'funnel', name: '漏斗导出', description: '整体漏斗 + 学生状态分布' },
+      { id: 'risk', name: '风险导出', description: '风险学生清单（含课消、在读天数、系数等）' },
+      { id: 'executive', name: '高管视图', description: '精简版：概览 + 学管业绩 + 多期对比趋势' },
+      { id: 'multi-period', name: '多期对比', description: '跨月份/校区的趋势对比（不需要 reportId）' },
+    ],
+  });
+});
 
 export default router;

@@ -118,7 +118,7 @@ class ApiClient {
     return this.token;
   }
 
-  async request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  async request<T = any>(path: string, options: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
     if (path.startsWith('/api/') || path === '/api') {
       throw new Error('API 路径配置错误：request() 已自动添加 /api 前缀');
     }
@@ -134,10 +134,12 @@ class ApiClient {
       headers['Authorization'] = 'Bearer ' + this.token;
     }
 
-    const { signal: mergedSignal, cleanup } = withTimeout(options.signal, DEFAULT_TIMEOUTS.request);
+    // 大多数请求保持 15 秒超时；分页提取等长任务可显式放宽，且不把自定义字段传给 fetch。
+    const { timeoutMs = DEFAULT_TIMEOUTS.request, ...fetchOptions } = options;
+    const { signal: mergedSignal, cleanup } = withTimeout(options.signal, timeoutMs);
     try {
     const response = await fetchApi(BASE_URL + path, {
-      ...options,
+      ...fetchOptions,
       headers,
       signal: mergedSignal,
     });
@@ -559,12 +561,12 @@ class ApiClient {
     return { blob: await res.blob(), filename: filenameFromHeaders(res.headers) || '下载文件' };
   }
 
-  get(path: string) {
-    return this.request(path);
+  get<T = any>(path: string): Promise<T> {
+    return this.request<T>(path);
   }
 
-  post(path: string, body: any) {
-    return this.request(path, { method: 'POST', body: JSON.stringify(body) });
+  post<T = any>(path: string, body: any): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: JSON.stringify(body) });
   }
 
   put(path: string, body: any) {

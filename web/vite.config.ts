@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
 // 后端地址：E2E 场景下通过环境变量指向测试实例
 // 开发/预览时的后端地址。
@@ -29,6 +30,11 @@ const injectCsp = (): Plugin => ({
 
 export default defineConfig({
   plugins: [react(), injectCsp()],
+  resolve: {
+    alias: {
+      '@shared': path.resolve(__dirname, '../shared'),
+    },
+  },
   // 路由级分包之后，再手动切一层 vendor，避免每个页面 chunk 都各自重复打包 react。
   // 注意：这里只放「稳定不变的第三方库」。
   // 业务模块（含 framer-motion，被多个页面共享）交给 Rollup 的动态分块处理，

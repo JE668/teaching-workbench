@@ -1,5 +1,5 @@
 import { Filter, PieChart } from 'lucide-react';
-import FunnelChart, { type FunnelStep } from '../../components/renewal/FunnelChart';
+import FunnelChart from '../../components/renewal/FunnelChart';
 import StatusDonut from '../../components/renewal/StatusDonut';
 import EmptyState from '../../components/ui/EmptyState';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
@@ -11,15 +11,13 @@ import { count, NOT_AVAILABLE_YET, pct, type FunnelRow } from '../../lib/renewal
  * 右侧是学管维度的漏斗明细 + 学生色块状态分布。
  */
 export default function FunnelView({
-  steps,
   rows,
   statusRows,
 }: {
-  steps: FunnelStep[];
   rows: FunnelRow[];
   statusRows: { status: string; count: number }[];
 }) {
-  if (steps.length === 0 && rows.length === 0 && statusRows.length === 0) {
+  if (rows.length === 0 && statusRows.length === 0) {
     return (
       <Card>
         <CardBody>
@@ -38,7 +36,7 @@ export default function FunnelView({
       <Card>
         <CardHeader title="整体续生漏斗" description="按续生率 sheet 的标记列逐层收窄" icon={<Filter className="h-5 w-5" />} />
         <CardBody>
-          <FunnelChart steps={steps} />
+          <FunnelChart rows={rows} />
           {statusRows.length > 0 && (
             <>
               <div className="my-6 h-px bg-slate-100" />

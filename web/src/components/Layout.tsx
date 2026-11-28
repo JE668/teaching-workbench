@@ -19,6 +19,7 @@ import {
   TrendingUp,
   NotebookPen,
   Activity,
+  DatabaseZap,
   Library,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -35,6 +36,7 @@ const navItems = [
   { to: '/reports', label: '月度总结规划', icon: CalendarRange },
   { to: '/lesson-planner', label: 'AI 备课助手', icon: NotebookPen },
   { to: '/review', label: '教学复盘', icon: Activity },
+  { to: '/teaching-data', label: '教学数据提取', icon: DatabaseZap },
   { to: '/knowledge', label: '教研知识库', icon: Library },
   { to: '/ai-metrics', label: 'AI 指标看板', icon: BarChart3 },
   { to: '/renewal/upload', label: '续费上传', icon: FileUp, end: true },

@@ -250,9 +250,13 @@ async function runRenewalImport(
     workbook, parsedTeachers, parsedPerf, parsedFunnel,
   );
   const hasErrors = issues.some((issue) => issue.severity === 'error');
+  // formula_cache_missing 是预期行为（原表空值按空值导入），不应阻塞 committed 状态
+  const hasBlockingWarnings = issues.some(
+    (issue) => issue.severity === 'warning' && issue.errorType !== 'formula_cache_missing',
+  );
   const status = hasErrors
     ? 'rejected'
-    : issues.length > 0 ? 'committed_with_warnings' : 'committed';
+    : hasBlockingWarnings ? 'committed_with_warnings' : 'committed';
 
   const run = renewalDb.transaction(() => {
     const info = insReport.run(fileName, fileSize, fileHash, uploadedBy);

@@ -51,6 +51,7 @@ const RenewalUpload = lazy(() => import('./pages/RenewalUpload'));
 const RenewalDashboard = lazy(() => import('./pages/RenewalDashboard'));
 const LessonPlanner = lazy(() => import('./pages/LessonPlanner'));
 const TeachingReview = lazy(() => import('./pages/TeachingReview'));
+const TeachingData = lazy(() => import('./pages/TeachingData'));
 const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -113,6 +114,7 @@ function AppRoutes() {
           <Route path="reports/:id" element={<ReportEdit />} />
           <Route path="lesson-planner" element={<LessonPlanner />} />
           <Route path="review" element={<TeachingReview />} />
+          <Route path="teaching-data" element={<TeachingData />} />
           <Route path="knowledge" element={<KnowledgeBase />} />
           <Route path="ai-metrics" element={<AiMetrics />} />
           <Route path="renewal" element={<RenewalDashboard />} />

@@ -12,6 +12,7 @@ import { securityHeaders } from './middleware/securityHeaders.js';
 import { log } from './utils/logger.js';
 import { observeHttpRequest, renderPrometheus } from './utils/metrics.js';
 import authRoutes from './routes/auth.js';
+import teachingDataRoutes from './routes/teachingData.js';
 import studentRoutes from './routes/students.js';
 import followupRoutes from './routes/followups.js';
 import uploadRoutes from './routes/uploads.js';
@@ -229,6 +230,7 @@ export async function createApp() {
 
   // ========== 路由 ==========
   app.use('/api/auth', authRoutes);
+  app.use('/api/teaching-data', authMiddleware, teachingDataRoutes);
   app.use('/api/students', authMiddleware, studentRoutes);
   app.use('/api/followups', authMiddleware, followupRoutes);
   app.use('/api/settings', authMiddleware, settingsRoutes);

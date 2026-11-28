@@ -263,6 +263,20 @@ export function rankStyle(index: number): string {
 /** 空数据占位：本期缺失、下月开启 */
 export const NOT_AVAILABLE_YET = '下月开启'; // "下月开启"
 
+/** 统一矩阵单元格接口（用于 MatrixHeatmap 组件） */
+export interface MatrixCellData {
+  rowKey: string;
+  rowLabel: string;
+  colKey: string;
+  colLabel: string;
+  studentCount: number;
+  prepaidCount: number;
+  renewedCount: number;
+  prepaidRate: number | null;
+  renewRate: number | null;
+  students: { name: string; status: string }[];
+}
+
 /** 教师 × 年级 矩阵单元格 */
 export interface TeacherGradeMatrixCell {
   teacherName: string;
@@ -305,6 +319,45 @@ export interface GroupGradeMatrix {
   totalPrepaid: number;
   totalRenewed: number;
   totalStudents: number;
+}
+
+
+/** 矩阵单元格学生明细 */
+export interface CellDetailStudent {
+  studentId: string | null;
+  studentName: string;
+  status: string;
+  grade: string | null;
+  enrollDays: number | null;
+  courseProduct: string | null;
+  classLast1: number | null;
+  classLast2: number | null;
+  coef: number | null;
+  type: string | null;
+  managerName: string | null;
+  subjectGroup: string | null;
+}
+
+export interface CellDetailSummary {
+  studentCount: number;
+  prepaidCount: number;
+  renewedCount: number;
+  stoppedCount: number;
+  closedCount: number;
+  grade3Count: number;
+  normalCount: number;
+  prepaidRate: number | null;
+  renewRate: number | null;
+}
+
+export interface CellDetailPage {
+  rows: CellDetailStudent[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  hasMore: boolean;
+  summary: CellDetailSummary;
 }
 
 /** 整体续费概览 */
