@@ -416,23 +416,24 @@ export function getManagerPerf(reportId: number, userId: number): ManagerPerfDto
       ON rmt.report_id = mp.report_id AND rmt.user_id = ? AND rmt.manager_name = mp.manager_name
     WHERE mp.report_id = ?
     ORDER BY COALESCE(mp.source_row, 2147483647), mp.id
-  `).all(reportId, userId) as any[];
+  `).all(userId, reportId) as any[];
 
   return rows.map(r => {
     const importedTaskAmount = r.task_amount ?? null;
     const effectiveTaskAmount = r.effective_task_amount ?? r.task_amount ?? null;
     const importedTargetAmount = importedTaskAmount; // 兼容旧字段
     const productTargets: ManagerProductTargets = {
-      one2one: r.one2one_target ?? r.renew_1v1 ?? 0,
-      one2many: r.one2many_target ?? r.renew_1vN ?? 0,
-      small: r.small_target ?? r.renew_small ?? 0,
-      other: r.other_target ?? r.renew_other ?? 0,
+      one2one: r.one2one_target ?? null,
+      one2many: r.one2many_target ?? null,
+      small: r.small_target ?? null,
+      other: r.other_target ?? null,
     };
+    const hasProductData = (r.renew_1v1 ?? 0) + (r.renew_1vN ?? 0) + (r.renew_small ?? 0) + (r.renew_other ?? 0) + (r.newsign_1v1 ?? 0) + (r.newsign_1vN ?? 0) + (r.newsign_small ?? 0) + (r.newsign_other ?? 0) > 0;
     const productCashflow = {
-      one2one: (r.renew_1v1 ?? 0) + (r.newsign_1v1 ?? 0),
-      one2many: (r.renew_1vN ?? 0) + (r.newsign_1vN ?? 0),
-      small: (r.renew_small ?? 0) + (r.newsign_small ?? 0),
-      other: (r.renew_other ?? 0) + (r.newsign_other ?? 0),
+      one2one: hasProductData ? (r.renew_1v1 ?? 0) + (r.newsign_1v1 ?? 0) : null,
+      one2many: hasProductData ? (r.renew_1vN ?? 0) + (r.newsign_1vN ?? 0) : null,
+      small: hasProductData ? (r.renew_small ?? 0) + (r.newsign_small ?? 0) : null,
+      other: hasProductData ? (r.renew_other ?? 0) + (r.newsign_other ?? 0) : null,
       total: r.cashflow_total ?? 0,
     };
     return {
@@ -448,11 +449,21 @@ export function getManagerPerf(reportId: number, userId: number): ManagerPerfDto
       productTargets,
       productCashflow,
       cashflowTotal: r.cashflow_total,
-      completionRate: r.completion_rate,
+      completionRate: (() => {
+        const taskAmt = r.effective_task_amount ?? r.task_amount ?? null;
+        const cashAmt = r.cashflow_total ?? 0;
+        // If effective task amount is 0 (explicitly cleared), return null
+        if (taskAmt === 0) return null;
+        return (taskAmt && taskAmt > 0 && cashAmt > 0) ? Math.round((cashAmt / taskAmt) * 10000) / 100 : (r.completion_rate ?? null);
+      })(),
       actualStudents: r.actual_students,
       perStudent: r.per_student,
       avgOrder: r.avg_order,
-      gap80: r.gap_80,
+      gap80: (() => {
+        const taskAmt = r.effective_task_amount ?? r.task_amount ?? null;
+        const cashAmt = r.cashflow_total ?? 0;
+        return (taskAmt && taskAmt > 0) ? Math.round((taskAmt * 0.8 - cashAmt) * 100) / 100 : (r.gap_80 ?? null);
+      })(),
     };
   });
 }
@@ -482,7 +493,7 @@ export function getFunnel(reportId: number): FunnelDto[] {
 
 /** 风险学生分页（未续费且近期无课消） */
 export function getRiskStudentsPage(reportId: number, page: number, pageSize: number): RiskStudentPage {
-  const total = renewalDb.prepare('SELECT COUNT(*) AS cnt FROM student_funnel WHERE report_id = ? AND renewed = 0').get(reportId) as { cnt: number };
+  const total = renewalDb.prepare('SELECT COUNT(*) AS cnt FROM student_funnel WHERE report_id = ? AND renewed = 0 AND class_last1 = 0').get(reportId) as { cnt: number };
   const totalCount = total.cnt;
   const totalPages = Math.ceil(totalCount / pageSize);
   const offset = (page - 1) * pageSize;
@@ -492,7 +503,7 @@ export function getRiskStudentsPage(reportId: number, page: number, pageSize: nu
            grade, enroll_days, coef, type, course_product,
            class_last1, class_last2
     FROM student_funnel
-    WHERE report_id = ? AND renewed = 0
+    WHERE report_id = ? AND renewed = 0 AND class_last1 = 0
     ORDER BY COALESCE(source_row, 2147483647), id
     LIMIT ? OFFSET ?
   `).all(reportId, pageSize, offset) as any[];
@@ -501,7 +512,7 @@ export function getRiskStudentsPage(reportId: number, page: number, pageSize: nu
     rows: rows.map(r => ({
       managerName: r.manager_name,
       studentId: r.student_id,
-      studentKey: r.student_id ?? `src:${r.source_row}`,
+      studentKey: r.student_id ?? `source_row:${r.source_row}`,
       sourceRow: r.source_row,
       studentName: r.student_name,
       grade: r.grade,
@@ -519,6 +530,13 @@ export function getRiskStudentsPage(reportId: number, page: number, pageSize: nu
     hasMore: page < totalPages,
   };
 }
+/** 获取所有风险学生（不分页，用于简单场景） */
+export function getRiskStudents(reportId: number): RiskStudentPage['rows'] {
+  const page = getRiskStudentsPage(reportId, 1, 10000);
+  return page.rows;
+}
+
+
 
 /** 加载 mentor 网格学生（含学管、年级、科组）用于矩阵与概览 */
 interface MentorStudent {
@@ -530,36 +548,173 @@ interface MentorStudent {
   studentId: string | null;
   studentName: string | null;
   sourceRow: number;
+  slotIndex: number;
+  ambiguous?: boolean;
 }
-function loadMentorStudents(reportId: number): MentorStudent[] {
-  const rows = renewalDb.prepare(`
+function loadMentorStudents(reportId: number): MentorStudent[] { // First, get all grid students for mentor tab
+  const gridRows = renewalDb.prepare(`
     SELECT gs.teacher_name, gs.student_name, gs.status, gs.student_id, gs.source_row,
-           ts.manager_name, ts.subject_group, sf.grade
+           gs.teacher_stat_id, gs.slot_index
     FROM grid_students gs
-    LEFT JOIN teacher_stats ts ON ts.id = gs.teacher_stat_id
-    LEFT JOIN student_funnel sf ON sf.report_id = gs.report_id AND sf.student_id = gs.student_id
     WHERE gs.report_id = ? AND gs.tab = 'mentor'
     ORDER BY gs.slot_index, gs.id
   `).all(reportId) as any[];
 
-  return rows.map(r => ({
-    teacherName: r.teacher_name ?? '未分配教师',
-    managerName: r.manager_name ?? '未分配学管',
-    subjectGroup: r.subject_group ?? '未知科组',
-    grade: r.grade,
-    status: r.status,
-    studentId: r.student_id,
-    studentName: r.student_name,
-    sourceRow: r.source_row,
-  }));
+  // Get all funnel students for this report
+  const funnelRows = renewalDb.prepare(`
+    SELECT student_id, student_name, manager_name, grade, source_row
+    FROM student_funnel
+    WHERE report_id = ?
+  `).all(reportId) as any[];
+
+  // Get teacher_stats for subject_group
+  const teacherStats = new Map<number, { subject_group: string }>();
+  for (const ts of renewalDb.prepare('SELECT id, subject_group FROM teacher_stats WHERE report_id = ?').all(reportId) as any[]) {
+    teacherStats.set(ts.id, { subject_group: ts.subject_group });
+  }
+
+  // Build lookup maps for funnel students - deduplicate by (student_id, manager_name, grade)
+  // This handles legacy Excel import duplicates
+  const funnelByStudentId = new Map<string, any[]>();
+  const funnelByName = new Map<string, any[]>();
+  const funnelNamesWithStudentId = new Set<string>();
+  
+  // Track unique combinations to deduplicate
+  const seenFunnelKeys = new Set<string>();
+  for (const f of funnelRows) {
+    const key = `${f.student_id || ''}|${f.manager_name}|${f.grade}`;
+    if (seenFunnelKeys.has(key)) continue;
+    seenFunnelKeys.add(key);
+    
+    if (f.student_id) {
+      const arr = funnelByStudentId.get(f.student_id) || [];
+      arr.push(f);
+      funnelByStudentId.set(f.student_id, arr);
+      funnelNamesWithStudentId.add(f.student_name);
+    }
+    const nameArr = funnelByName.get(f.student_name) || [];
+    nameArr.push(f);
+    funnelByName.set(f.student_name, nameArr);
+  }
+
+  // Count grid students by (name, source_row) for ambiguity detection
+  // Same name + same source_row = same student entry (legacy duplicate)
+  // Same name + different source_row = different students
+  const gridNameSourceCount = new Map<string, number>();
+  for (const gs of gridRows) {
+    const key = `${gs.student_name}|${gs.source_row}`;
+    gridNameSourceCount.set(key, (gridNameSourceCount.get(key) || 0) + 1);
+  }
+
+  // Also count by name only for fallback matching
+  const gridNameCount = new Map<string, number>();
+  for (const gs of gridRows) {
+    gridNameCount.set(gs.student_name, (gridNameCount.get(gs.student_name) || 0) + 1);
+  }
+
+  // Match grid students to funnel students
+  return gridRows.map(gs => {
+    let managerName = '未分配学管';
+    let grade: string | null = null;
+    let funnelSourceRow: number | null = null;
+    let ambiguous = false;
+    let matchedStudentId: string | null = gs.student_id;
+
+    // Try exact student_id match first
+    if (gs.student_id) {
+      const matches = funnelByStudentId.get(gs.student_id);
+      if (matches && matches.length > 0) {
+        // After deduplication, if still multiple matches with different managers/grades -> ambiguous
+        if (matches.length > 1) {
+          ambiguous = true;
+          managerName = '未分配学管';
+        } else {
+          // Single match - check if student_name also matches
+          const match = matches[0];
+          if (match.student_name !== gs.student_name) {
+            // student_id matches but name doesn't - ambiguous
+            ambiguous = true;
+            managerName = '未分配学管';
+          } else {
+            managerName = match.manager_name && match.manager_name.trim() ? match.manager_name : '未分配学管';
+            grade = match.grade && match.grade.trim() ? match.grade : '未分配年级';
+            funnelSourceRow = match.source_row;
+          }
+        }
+      } else {
+        // Grid has student_id but no match in funnel by ID
+        // Check if funnel has this name with null student_id (legacy data)
+        // If so, and name is unique, we can match by name
+        const nameMatches = funnelByName.get(gs.student_name);
+        const funnelHasStudentIdForName = funnelNamesWithStudentId.has(gs.student_name);
+        
+        if (nameMatches && nameMatches.length > 0 && !funnelHasStudentIdForName) {
+          // Funnel has this name but no student_id for it - can try name match
+          if (nameMatches.length > 1 || (gridNameCount.get(gs.student_name) || 0) > 1) {
+            ambiguous = true;
+            managerName = '未分配学管';
+          } else {
+            const match = nameMatches[0];
+            managerName = match.manager_name && match.manager_name.trim() ? match.manager_name : '未分配学管';
+            grade = match.grade && match.grade.trim() ? match.grade : '未分配年级';
+            funnelSourceRow = match.source_row;
+            matchedStudentId = match.student_id ?? gs.student_id;
+          }
+        } else {
+          // Funnel has a different student_id for this name, or no match at all
+          ambiguous = true;
+          managerName = '未分配学管';
+        }
+      }
+    }
+
+    // Fallback: match by student_name ONLY if grid has NO student_id
+    if (managerName === '未分配学管' && !ambiguous && !gs.student_id) {
+      const nameMatches = funnelByName.get(gs.student_name);
+      if (nameMatches && nameMatches.length > 0) {
+        // Check for ambiguity: multiple funnel students with same name, or multiple grid students with same name+source_row
+        if (nameMatches.length > 1 || (gridNameSourceCount.get(`${gs.student_name}|${gs.source_row}`) || 0) > 1) {
+          ambiguous = true;
+          managerName = '未分配学管';
+        } else {
+          // Single match in both grid and funnel
+          const match = nameMatches[0];
+          managerName = match.manager_name && match.manager_name.trim() ? match.manager_name : '未分配学管';
+          grade = match.grade && match.grade.trim() ? match.grade : '未分配年级';
+          funnelSourceRow = match.source_row;
+          matchedStudentId = match.student_id;
+        }
+      }
+    }
+
+    const subjectGroup = gs.teacher_stat_id ? teacherStats.get(gs.teacher_stat_id)?.subject_group : null;
+
+    return {
+      teacherName: gs.teacher_name ?? '未分配教师',
+      managerName,
+      subjectGroup: subjectGroup ?? '未知科组',
+      grade,
+      status: gs.status,
+      studentId: matchedStudentId,
+      studentName: gs.student_name,
+      sourceRow: gs.source_row,
+      slotIndex: gs.slot_index,
+      ambiguous,
+    };
+  });
 }
 
 function toAnalyticsStudent(s: MentorStudent): AnalyticsStudentDto {
+  // Include slotIndex in identityKey to distinguish same-name, same-sourceRow students
+  const identityKey = s.studentId 
+    ? `sid:${s.studentId}` 
+    : `src:${s.sourceRow}:${s.slotIndex ?? 0}`;
   return {
     name: s.studentName ?? '',
     status: s.status,
     studentId: s.studentId,
-    identityKey: s.studentId ? `sid:${s.studentId}` : `src:${s.sourceRow}`,
+    identityKey,
+    ambiguous: s.ambiguous,
   };
 }
 

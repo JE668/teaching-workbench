@@ -208,8 +208,8 @@ router.get('/analytics/mentor-matrix', (req: AuthenticatedRequest, res) => {
     const matrix = getMentorMatrix(reportId);
     res.json({ matrix }); // 返回 { matrix: ... } 以兼容前端
   } catch (err) {
-    log.error({ err }, '续费学管矩阵读取失败');
-    res.status(400).json({ error: '学管矩阵读取失败，请稍后重试' });
+    log.error({ err: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined }, '续费学管矩阵读取失败');
+    res.status(400).json({ error: '学管矩阵读取失败: ' + (err instanceof Error ? err.message : String(err)) });
   }
 });
 
